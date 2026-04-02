@@ -112,6 +112,10 @@ async function main() {
         evaluationQueue = evaluationQueue
           .then(() => abortDone) // wait for abort to fully complete
           .then(async () => {
+            // If client disconnected, bail — prevents stale queue handlers
+            // from racing with a new client's evaluations on the shared engine.
+            if (ws.readyState !== ws.OPEN) return;
+
             // If a newer FEN arrived since we queued, skip this one
             if (gen !== evalGeneration) {
               console.log(`[server] skipping stale eval gen ${gen} (current: ${evalGeneration})`);
