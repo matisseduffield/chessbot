@@ -18,6 +18,7 @@ let lastPieceCount = 0;  // to detect animation mid-flight (piece count changes)
 let initialReadDone = false; // guard against duplicate initialRead calls
 let pendingInitialFen = null; // FEN read before WS was ready, to send on connect
 let currentDepth = 15; // analysis depth, updated from popup settings
+let isDragging = false; // true while user is dragging a piece
 
 // ── Site detection ───────────────────────────────────────────
 const SITE = detectSite();
@@ -253,6 +254,28 @@ function observeBoard(boardEl) {
     });
   }
 
+  // Drag detection — suppress board reads while user is holding a piece
+  const dragTarget = boardEl.shadowRoot || boardEl;
+  dragTarget.addEventListener("mousedown", (e) => {
+    // Only track left-click on piece elements
+    if (e.button !== 0) return;
+    isDragging = true;
+  }, true);
+  // Use document-level mouseup so we catch drops outside the board
+  document.addEventListener("mouseup", (e) => {
+    if (!isDragging) return;
+    isDragging = false;
+    // After the piece settles, do a fresh read
+    setTimeout(() => { if (enabled && boardReady) readAndSend(); }, 150);
+  }, true);
+  // Also handle touch for mobile/tablet
+  dragTarget.addEventListener("touchstart", () => { isDragging = true; }, true);
+  document.addEventListener("touchend", () => {
+    if (!isDragging) return;
+    isDragging = false;
+    setTimeout(() => { if (enabled && boardReady) readAndSend(); }, 150);
+  }, true);
+
   // Polling fallback — check every 800ms regardless of observer
   pollTimer = setInterval(() => {
     if (!enabled || !boardReady) return;
@@ -288,6 +311,7 @@ function countPieces(boardFen) {
 
 function readAndSend() {
   if (!boardReady) return;
+  if (isDragging) return; // user is holding a piece — wait for drop
   const fen = boardToFen();
   if (!fen) return; // no board or pieces yet — silent skip
 
