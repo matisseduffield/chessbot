@@ -354,6 +354,17 @@ function readAndSend() {
   renderGeneration++; // new position — invalidate any in-flight responses
   const myGen = renderGeneration;
 
+  // Detect new game: piece count jumped back to 32 (or close) from fewer,
+  // OR the board reset to the starting position. Reset cached player color
+  // so we re-detect which side we're playing.
+  const isStartPos = boardPart === "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+  if ((prevBoard && pieceCount === 32 && countPieces(prevBoard) < 30) || isStartPos) {
+    console.log("[chessbot] new game detected — resetting player color cache");
+    cachedPlayerColor = null;
+    waitingForOpponent = false;
+    lastSentFen = "";
+  }
+
   // Determine whose turn it is by diffing board positions
   const turn = inferTurn(prevBoard, boardPart);
   const playerColor = getPlayerColor();
