@@ -20,6 +20,8 @@ let pendingInitialFen = null; // FEN read before WS was ready, to send on connec
 let currentDepth = 15; // analysis depth, updated from popup settings
 let isDragging = false; // true while user is dragging a piece
 let waitingForOpponent = false; // true after our move, until board changes again
+let cachedPlayerColor = null; // cached once per game to avoid flicker
+let renderGeneration = 0; // increments on each board change — prevents stale overlays
 
 // ── Site detection ───────────────────────────────────────────
 const SITE = detectSite();
@@ -51,6 +53,8 @@ function findBoard() {
   boardReady = false;
   initialReadDone = false;
   pendingInitialFen = null;
+  cachedPlayerColor = null; // reset for new game
+  waitingForOpponent = false;
   _initialStableAttempts = 0;
   waitForBoard().then((boardEl) => {
     console.log("[chessbot] board found, starting observer");
@@ -100,13 +104,18 @@ function initialRead() {
 
   console.log(`[chessbot] initial load — turn=${turn} player=${playerColor} pieces=${pieceCount}`);
 
-  if (turn !== playerColor) {
+  if (!turn) {
+    // Can't determine turn — for initial load, assume it's the player's turn
+    // (the starting position is white, and if we just opened the page mid-game
+    // this gives us a 50/50 chance rather than showing nothing)
+    console.log("[chessbot] turn unknown on initial load — assuming player's turn");
+  } else if (turn !== playerColor) {
     console.log("[chessbot] not our turn on initial load — waiting");
     return;
   }
 
   const parts = fen.split(" ");
-  parts[1] = turn;
+  parts[1] = turn || playerColor; // use detected turn, or player color as fallback
   const correctedFen = parts.join(" ");
 
   if (sendFen(correctedFen)) {
@@ -162,6 +171,7 @@ function connectWS() {
           const responseBoardPart = msg.fen.split(" ")[0];
           if (responseBoardPart !== lastBoardFen) {
             console.log("[chessbot] ignoring stale bestmove (board changed)");
+            pendingEval = false;
             return;
           }
         }
@@ -341,12 +351,20 @@ function readAndSend() {
   const prevBoard = lastBoardFen;
   lastBoardFen = boardPart;
   lastPieceCount = pieceCount;
+  renderGeneration++; // new position — invalidate any in-flight responses
+  const myGen = renderGeneration;
 
   // Determine whose turn it is by diffing board positions
   const turn = inferTurn(prevBoard, boardPart);
   const playerColor = getPlayerColor();
 
   console.log(`[chessbot] turn=${turn} player=${playerColor}`);
+
+  // If turn detection failed entirely, don't guess — wait for next poll
+  if (!turn) {
+    console.log("[chessbot] turn unknown — skipping this cycle");
+    return;
+  }
 
   // Only show move suggestions when it's our turn
   if (turn !== playerColor) {
@@ -437,13 +455,28 @@ function chesscomBoardToFen() {
 }
 
 function isChesscomFlipped(board) {
-  // Chess.com adds "flipped" class when playing as black
+  // Method 1: "flipped" class on board element
   if (board.classList.contains("flipped")) return true;
-  // Also check via attribute (some versions use this)
+  // Method 2: attribute
   if (board.getAttribute("flipped") !== null) return true;
-  // Check for coordinates: if file 'a' is on the right, board is flipped
-  const coords = document.querySelector(".coordinates-row, .coords-row");
+  // Method 3: Check for coordinates — if file 'h' is on the left, board is flipped
+  const coords = document.querySelector(".coordinates-row, .coords-row, coords-files");
   if (coords && coords.textContent.trim().startsWith("h")) return true;
+  // Method 4: Check board coordinate elements — if the bottom-left file label is 'h', flipped
+  const fileLabels = board.querySelectorAll("[class*='coord'], text");
+  for (const lbl of fileLabels) {
+    const txt = lbl.textContent.trim();
+    // If we find a single character 'a' or 'h' positioned at the bottom-left area
+    if (txt === "h" || txt === "a") {
+      const rect = lbl.getBoundingClientRect();
+      const boardRect = board.getBoundingClientRect();
+      const isLeft = rect.left - boardRect.left < boardRect.width * 0.15;
+      const isBottom = boardRect.bottom - rect.bottom < boardRect.height * 0.15;
+      if (isLeft && isBottom) {
+        return txt === "h"; // 'h' at bottom-left means flipped
+      }
+    }
+  }
   return false;
 }
 
@@ -574,40 +607,57 @@ function inferTurn(prevBoardFen, currentBoardFen) {
   const clockTurn = detectTurnFromClocks();
   if (clockTurn) return clockTurn;
 
-  // Last resort: assume it's our turn (better to show a suggestion than nothing)
-  const fallback = getPlayerColor();
-  console.log(`[chessbot] turn detection uncertain, assuming player's turn: ${fallback}`);
-  return fallback;
+  // Last resort: DON'T assume — return null so callers can handle uncertainty
+  console.log(`[chessbot] turn detection uncertain — all methods failed`);
+  return null;
 }
 
 /** Read the move list panel to determine whose turn it is.
  *  If the last move in the list was made by black, it's white's turn (and vice versa). */
 function detectTurnFromMoveList() {
   if (SITE === "chesscom") {
-    // Chess.com move list: each row has a white move and optionally a black move
-    // The last move node tells us who moved last
-    const moveNodes = document.querySelectorAll(
-      ".main-line-ply, [data-ply], .move-text-component, move-list-ply"
+    // Chess.com move list: try multiple known selector patterns
+    // Pattern 1: modern chess.com — each ply is a separate node
+    let moveNodes = document.querySelectorAll(
+      ".main-line-ply, [data-ply], move-list-ply"
     );
+    // Filter to actual move nodes (exclude move numbers, annotations, etc.)
     if (moveNodes.length > 0) {
-      const lastPly = moveNodes.length; // ply count: 1=white, 2=black, 3=white...
-      return lastPly % 2 === 0 ? "w" : "b"; // even plies = black just moved → white's turn
+      const realMoves = Array.from(moveNodes).filter(el => {
+        const text = el.textContent.trim();
+        // Must contain at least one letter (a-h or piece letter) and not be just a number
+        return text && /[a-hNBRQKO]/.test(text) && !/^\d+\.?$/.test(text);
+      });
+      if (realMoves.length > 0) {
+        const lastPly = realMoves.length;
+        return lastPly % 2 === 0 ? "w" : "b";
+      }
     }
 
-    // Alternative: look for vertical move list with numbered rows
+    // Pattern 2: move-text-component elements (older chess.com)
+    moveNodes = document.querySelectorAll(".move-text-component");
+    if (moveNodes.length > 0) {
+      const realMoves = Array.from(moveNodes).filter(el => {
+        const text = el.textContent.trim();
+        return text && /[a-hNBRQKO]/.test(text) && !/^\d+\.?$/.test(text);
+      });
+      if (realMoves.length > 0) {
+        return realMoves.length % 2 === 0 ? "w" : "b";
+      }
+    }
+
+    // Pattern 3: vertical move list with numbered rows
     const rows = document.querySelectorAll(
       ".move-list .move, [class*='move-list'] [class*='move']"
     );
     if (rows.length > 0) {
       const lastRow = rows[rows.length - 1];
       const text = lastRow.textContent.trim();
-      // If the row has two moves (white and black), black moved last → white's turn
-      // If only one move shown, white moved last → black's turn
       const parts = text.replace(/^\d+\.?\s*/, "").trim().split(/\s+/);
       if (parts.length >= 2 && parts[1] && !parts[1].match(/^[\d.]+$/)) {
-        return "w"; // black completed the row
+        return "w";
       }
-      return "b"; // only white's move in the last row
+      return "b";
     }
   }
 
@@ -805,12 +855,17 @@ function detectTurnFromClocks() {
 }
 
 function getPlayerColor() {
-  if (SITE === "lichess") return isLichessFlipped() ? "b" : "w";
-  if (SITE === "chesscom") {
+  // Return cached value if set (stable for the duration of a game)
+  if (cachedPlayerColor) return cachedPlayerColor;
+  let color = "w";
+  if (SITE === "lichess") {
+    color = isLichessFlipped() ? "b" : "w";
+  } else if (SITE === "chesscom") {
     const board = getBoardElement();
-    return board && isChesscomFlipped(board) ? "b" : "w";
+    color = board && isChesscomFlipped(board) ? "b" : "w";
   }
-  return "w";
+  cachedPlayerColor = color;
+  return color;
 }
 
 // ── FEN helpers ──────────────────────────────────────────────
@@ -1211,10 +1266,15 @@ function drawEvalBar(bestLine, source) {
   }
 
   // Calculate white's advantage percentage (0-100)
+  // Score from Stockfish is from the side-to-move perspective.
+  // We set side-to-move = playerColor, so score > 0 means good for player.
   let whitePct = 50;
   if (bestLine.mate !== undefined && bestLine.mate !== null) {
-    whitePct = bestLine.mate > 0 ? (playerColor === "w" ? 98 : 2) : (playerColor === "w" ? 2 : 98);
+    // mate > 0 = player is winning
+    const playerWinning = bestLine.mate > 0;
+    whitePct = (playerColor === "w") === playerWinning ? 98 : 2;
   } else if (bestLine.score !== undefined && bestLine.score !== null) {
+    // Convert player-relative centipawns to white-relative
     const cpFromWhite = playerColor === "w" ? bestLine.score : -bestLine.score;
     whitePct = Math.min(98, Math.max(2, 50 + cpFromWhite / 10));
   }
@@ -1307,7 +1367,7 @@ function drawEvalBar(bestLine, source) {
 
 // ── Re-evaluate current position (after settings change) ─────
 function resendCurrentPosition() {
-  if (!enabled || !lastSentFen) return;
+  if (!enabled || !lastSentFen || waitingForOpponent) return;
   console.log(`[chessbot] re-evaluating current position after settings change`);
   pendingEval = true;
   clearMoveIndicators();
