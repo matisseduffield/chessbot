@@ -1330,12 +1330,15 @@ function drawEvalBar(bestLine, source) {
   const blackPct = 100 - whitePct;
 
   // Top section (white if not flipped, black if flipped)
+  // The top div's height = the LOSING side's percentage, so the winning side fills the rest.
+  // Not flipped: top=white, so top height = 100-whitePct (white fills from bottom)
+  // Flipped: top=black, so top height = 100-blackPct = whitePct (black fills from bottom)
   const topColor = flipped ? "#333" : "#f0f0f0";
   const botColor = flipped ? "#f0f0f0" : "#333";
-  const topPct = flipped ? blackPct : whitePct;
+  const topHeight = flipped ? whitePct : (100 - whitePct);
 
   const topDiv = document.createElement("div");
-  topDiv.style.cssText = `background:${topColor};height:${100 - topPct}%;transition:height 0.5s ease;`;
+  topDiv.style.cssText = `background:${topColor};height:${topHeight}%;transition:height 0.5s ease;`;
   container.appendChild(topDiv);
 
   const botDiv = document.createElement("div");
