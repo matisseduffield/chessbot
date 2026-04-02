@@ -69,16 +69,10 @@ function initialRead() {
   lastBoardFen = boardPart;
   lastPieceCount = pieceCount;
 
-  // Determine turn using all available methods (no diff on first read)
+  // Determine whose turn it is using all available methods
   const turn = inferTurn("", boardPart);
-  const playerColor = getPlayerColor();
 
-  console.log(`[chessbot] initial load — turn=${turn} player=${playerColor} pieces=${pieceCount}`);
-
-  if (turn !== playerColor) {
-    console.log("[chessbot] not our turn on initial load — waiting");
-    return;
-  }
+  console.log(`[chessbot] initial load — turn=${turn} pieces=${pieceCount}`);
 
   const parts = fen.split(" ");
   parts[1] = turn;
@@ -255,17 +249,8 @@ function readAndSend() {
 
   // Determine whose turn it is by diffing board positions
   const turn = inferTurn(prevBoard, boardPart);
-  const playerColor = getPlayerColor();
 
-  console.log(`[chessbot] turn=${turn} player=${playerColor}`);
-
-  // Only analyse when it is our turn
-  if (turn !== playerColor) {
-    clearArrow();
-    lastSentFen = ""; // reset so we re-analyse when it's our turn again
-    pendingEval = false;
-    return;
-  }
+  console.log(`[chessbot] turn=${turn}`);
 
   // Build FEN with correct side-to-move
   const parts = fen.split(" ");
