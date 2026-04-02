@@ -1273,6 +1273,15 @@ function drawEvalBar(bestLine, source) {
   parent.appendChild(container);
 }
 
+// ── Re-evaluate current position (after settings change) ─────
+function resendCurrentPosition() {
+  if (!enabled || !lastSentFen) return;
+  console.log(`[chessbot] re-evaluating current position after settings change`);
+  pendingEval = true;
+  clearMoveIndicators();
+  sendFen(lastSentFen);
+}
+
 // ── Listen for messages from popup ───────────────────────────
 if (typeof chrome !== "undefined" && chrome.runtime) {
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -1287,16 +1296,21 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "set_option", name: msg.name, value: msg.value }));
         console.log(`[chessbot] set_option: ${msg.name} = ${msg.value}`);
+        // Re-evaluate with new setting applied
+        resendCurrentPosition();
       }
     }
     if (msg.type === "set_depth") {
       currentDepth = Number(msg.value) || 15;
       console.log(`[chessbot] depth set to ${currentDepth}`);
+      // Re-evaluate at new depth
+      resendCurrentPosition();
     }
-    // Relay backend queries from popup
+    // Relay backend queries from popup (switch_engine/book/syzygy trigger re-eval on response)
     if (["list_files", "get_settings", "switch_engine", "switch_book", "switch_syzygy"].includes(msg.type)) {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(msg));
+        const isSwitch = msg.type.startsWith("switch_");
         // Listen for the response and relay back to popup
         const handler = (evt) => {
           try {
@@ -1305,6 +1319,10 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
             if (responseTypes.includes(resp.type)) {
               ws.removeEventListener("message", handler);
               sendResponse(resp);
+              // Re-evaluate after a successful resource switch
+              if (isSwitch && resp.type !== "error") {
+                resendCurrentPosition();
+              }
             }
           } catch {}
         };
