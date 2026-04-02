@@ -71,8 +71,14 @@ function initialRead() {
 
   // Determine whose turn it is using all available methods
   const turn = inferTurn("", boardPart);
+  const playerColor = getPlayerColor();
 
-  console.log(`[chessbot] initial load — turn=${turn} pieces=${pieceCount}`);
+  console.log(`[chessbot] initial load — turn=${turn} player=${playerColor} pieces=${pieceCount}`);
+
+  if (turn !== playerColor) {
+    console.log("[chessbot] not our turn on initial load — waiting");
+    return;
+  }
 
   const parts = fen.split(" ");
   parts[1] = turn;
@@ -249,8 +255,17 @@ function readAndSend() {
 
   // Determine whose turn it is by diffing board positions
   const turn = inferTurn(prevBoard, boardPart);
+  const playerColor = getPlayerColor();
 
-  console.log(`[chessbot] turn=${turn}`);
+  console.log(`[chessbot] turn=${turn} player=${playerColor}`);
+
+  // Only show move suggestions when it's our turn
+  if (turn !== playerColor) {
+    clearMoveIndicators(); // clear stale move suggestions, keep eval bar
+    lastSentFen = ""; // reset so we re-analyse when it's our turn again
+    pendingEval = false;
+    return;
+  }
 
   // Build FEN with correct side-to-move
   const parts = fen.split(" ");
@@ -261,7 +276,7 @@ function readAndSend() {
   lastSentFen = correctedFen;
   pendingEval = true;
   console.log(`[chessbot] → FEN: ${correctedFen}`);
-  clearArrow();
+  clearMoveIndicators();
   sendFen(correctedFen);
 }
 
@@ -743,12 +758,16 @@ function uciToSquares(uci) {
   };
 }
 
-function clearArrow() {
+/** Clear move arrows and eval badges, but keep the eval bar. */
+function clearMoveIndicators() {
   const existing = document.getElementById("chessbot-arrow-svg");
   if (existing) existing.remove();
-  // Also clear HTML eval badges
   document.querySelectorAll(".chessbot-eval-badge").forEach((el) => el.remove());
-  // Clear eval bar
+}
+
+/** Clear everything — move indicators AND eval bar. */
+function clearArrow() {
+  clearMoveIndicators();
   const bar = document.getElementById("chessbot-eval-bar");
   if (bar) bar.remove();
 }
