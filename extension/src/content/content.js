@@ -455,28 +455,64 @@ function chesscomBoardToFen() {
 }
 
 function isChesscomFlipped(board) {
-  // Method 1: "flipped" class on board element
+  // Method 1: "flipped" class on board element or its shadow host
   if (board.classList.contains("flipped")) return true;
-  // Method 2: attribute
+  // Method 2: attribute (chess.com web component may use this)
   if (board.getAttribute("flipped") !== null) return true;
-  // Method 3: Check for coordinates — if file 'h' is on the left, board is flipped
-  const coords = document.querySelector(".coordinates-row, .coords-row, coords-files");
-  if (coords && coords.textContent.trim().startsWith("h")) return true;
-  // Method 4: Check board coordinate elements — if the bottom-left file label is 'h', flipped
-  const fileLabels = board.querySelectorAll("[class*='coord'], text");
-  for (const lbl of fileLabels) {
-    const txt = lbl.textContent.trim();
-    // If we find a single character 'a' or 'h' positioned at the bottom-left area
-    if (txt === "h" || txt === "a") {
-      const rect = lbl.getBoundingClientRect();
-      const boardRect = board.getBoundingClientRect();
-      const isLeft = rect.left - boardRect.left < boardRect.width * 0.15;
-      const isBottom = boardRect.bottom - rect.bottom < boardRect.height * 0.15;
-      if (isLeft && isBottom) {
-        return txt === "h"; // 'h' at bottom-left means flipped
+  // Check shadow root for flipped class/attribute
+  const root = board.shadowRoot;
+  if (root) {
+    const inner = root.querySelector("[class*='flipped'], [flipped]");
+    if (inner) return true;
+  }
+
+  // Method 3: Check coordinate labels — both in regular DOM and shadow DOM
+  // If file 'h' appears on the left side of the board, it's flipped
+  const searchRoots = [document];
+  if (root) searchRoots.push(root);
+  for (const sr of searchRoots) {
+    const coords = sr.querySelectorAll(
+      ".coordinates-row, .coords-row, .coords-files, coords-files, [class*='coord']"
+    );
+    for (const c of coords) {
+      const txt = c.textContent.trim();
+      if (txt.startsWith("h")) return true;
+      if (txt.startsWith("a")) return false;
+    }
+  }
+
+  // Method 4: Use piece positions — compare visual position to square class.
+  // On a non-flipped board, square-11 (a1) is bottom-left.
+  // On a flipped board, square-11 is top-right.
+  const pieces = findChesscomPieces(board);
+  if (pieces && pieces.length > 0) {
+    const boardRect = board.getBoundingClientRect();
+    if (boardRect.width > 0) {
+      for (const piece of pieces) {
+        const cls = typeof piece.className === "string" ? piece.className : (piece.getAttribute("class") || "");
+        const sqMatch = cls.match(/\bsquare-(\d)(\d)\b/);
+        if (!sqMatch) continue;
+        const sqFile = parseInt(sqMatch[1], 10); // 1=a, 8=h
+        const sqRank = parseInt(sqMatch[2], 10); // 1=rank1, 8=rank8
+        // Get visual position
+        const pieceRect = piece.getBoundingClientRect();
+        if (pieceRect.width === 0) continue;
+        const cx = pieceRect.left + pieceRect.width / 2 - boardRect.left;
+        const visFile = cx / (boardRect.width / 8); // 0-8 range
+        // On normal board: square-1x is on the left (visFile ≈ 0.5)
+        // On flipped board: square-1x is on the right (visFile ≈ 7.5)
+        // sqFile=1 should be at visFile≈0.5 if not flipped, ≈7.5 if flipped
+        const expectedNormal = sqFile - 0.5;
+        const expectedFlipped = 8.5 - sqFile;
+        const diffNormal = Math.abs(visFile - expectedNormal);
+        const diffFlipped = Math.abs(visFile - expectedFlipped);
+        if (Math.abs(diffNormal - diffFlipped) > 1) {
+          return diffFlipped < diffNormal;
+        }
       }
     }
   }
+
   return false;
 }
 
