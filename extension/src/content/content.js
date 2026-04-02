@@ -19,6 +19,7 @@ let initialReadDone = false; // guard against duplicate initialRead calls
 let pendingInitialFen = null; // FEN read before WS was ready, to send on connect
 let currentDepth = 15; // analysis depth, updated from popup settings
 let isDragging = false; // true while user is dragging a piece
+let waitingForOpponent = false; // true after our move, until board changes again
 
 // ── Site detection ───────────────────────────────────────────
 const SITE = detectSite();
@@ -317,8 +318,14 @@ function readAndSend() {
 
   const boardPart = fen.split(" ")[0];
 
-  // Board hasn't changed — skip unless we never successfully sent for this position
-  if (boardPart === lastBoardFen && lastSentFen) return;
+  // Board hasn't changed — skip
+  if (boardPart === lastBoardFen) {
+    // If we're waiting for the opponent, don't re-analyze the same position
+    if (waitingForOpponent || lastSentFen) return;
+  } else {
+    // Board actually changed — clear the opponent-wait flag
+    waitingForOpponent = false;
+  }
 
   // Animation guard: if piece count suddenly dropped by more than 1, a piece
   // may be mid-flight (temporarily off both squares). Wait for next poll.
@@ -345,6 +352,7 @@ function readAndSend() {
   if (turn !== playerColor) {
     clearMoveIndicators(); // clear stale move suggestions, keep eval bar
     lastSentFen = ""; // reset so we re-analyse when it's our turn again
+    waitingForOpponent = true; // don't re-analyze until board changes
     pendingEval = false;
     return;
   }
