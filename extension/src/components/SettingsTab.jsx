@@ -65,7 +65,10 @@ function sendMsg(msg) {
   return new Promise((resolve) => {
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
-        chrome.tabs.sendMessage(tabs[0].id, msg, (resp) => resolve(resp))
+        chrome.tabs.sendMessage(tabs[0].id, msg, (resp) => {
+          if (chrome.runtime.lastError) return resolve(null)
+          resolve(resp)
+        })
       } else {
         resolve(null)
       }
@@ -76,7 +79,9 @@ function sendMsg(msg) {
 function sendOption(name, value) {
   chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
     if (tabs[0]?.id) {
-      chrome.tabs.sendMessage(tabs[0].id, { type: 'set_option', name, value })
+      chrome.tabs.sendMessage(tabs[0].id, { type: 'set_option', name, value }, () => {
+        void chrome.runtime.lastError // suppress
+      })
     }
   })
 }

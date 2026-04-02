@@ -7,6 +7,7 @@ export default function StatusTab({ connected, enabled, onToggle }) {
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'get_status' }, (resp) => {
+          if (chrome.runtime.lastError) return; // content script not loaded
           if (resp) setStatus(resp)
         })
       }

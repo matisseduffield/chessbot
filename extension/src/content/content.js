@@ -455,19 +455,25 @@ function chesscomBoardToFen() {
 }
 
 function isChesscomFlipped(board) {
-  // Method 1: "flipped" class on board element or its shadow host
+  // Method 1: JS property on the custom element (wc-chess-board exposes this)
+  try {
+    if (board.isFlipped === true || board.flipped === true) return true;
+    if (board.isFlipped === false || board.flipped === false) return false;
+  } catch (_) {}
+
+  // Method 2: "flipped" class on board element
   if (board.classList.contains("flipped")) return true;
-  // Method 2: attribute (chess.com web component may use this)
+  // Method 3: "flipped" attribute
   if (board.getAttribute("flipped") !== null) return true;
-  // Check shadow root for flipped class/attribute
+
+  // Method 4: Shadow DOM flipped indicator
   const root = board.shadowRoot;
   if (root) {
     const inner = root.querySelector("[class*='flipped'], [flipped]");
     if (inner) return true;
   }
 
-  // Method 3: Check coordinate labels — both in regular DOM and shadow DOM
-  // If file 'h' appears on the left side of the board, it's flipped
+  // Method 5: Coordinate labels — both in regular DOM and shadow DOM
   const searchRoots = [document];
   if (root) searchRoots.push(root);
   for (const sr of searchRoots) {
@@ -481,34 +487,33 @@ function isChesscomFlipped(board) {
     }
   }
 
-  // Method 4: Use piece positions — compare visual position to square class.
-  // On a non-flipped board, square-11 (a1) is bottom-left.
-  // On a flipped board, square-11 is top-right.
+  // Method 6: Compare average Y position of white vs black pieces.
+  // On a non-flipped board, white pieces are near the bottom (high Y).
+  // On a flipped board, white pieces are near the top (low Y).
+  // This is the most robust fallback — works regardless of DOM structure.
   const pieces = findChesscomPieces(board);
-  if (pieces && pieces.length > 0) {
+  if (pieces && pieces.length >= 4) {
     const boardRect = board.getBoundingClientRect();
-    if (boardRect.width > 0) {
+    if (boardRect.height > 0) {
+      let whiteSumY = 0, whiteCount = 0;
+      let blackSumY = 0, blackCount = 0;
       for (const piece of pieces) {
-        const cls = typeof piece.className === "string" ? piece.className : (piece.getAttribute("class") || "");
-        const sqMatch = cls.match(/\bsquare-(\d)(\d)\b/);
-        if (!sqMatch) continue;
-        const sqFile = parseInt(sqMatch[1], 10); // 1=a, 8=h
-        const sqRank = parseInt(sqMatch[2], 10); // 1=rank1, 8=rank8
-        // Get visual position
-        const pieceRect = piece.getBoundingClientRect();
-        if (pieceRect.width === 0) continue;
-        const cx = pieceRect.left + pieceRect.width / 2 - boardRect.left;
-        const visFile = cx / (boardRect.width / 8); // 0-8 range
-        // On normal board: square-1x is on the left (visFile ≈ 0.5)
-        // On flipped board: square-1x is on the right (visFile ≈ 7.5)
-        // sqFile=1 should be at visFile≈0.5 if not flipped, ≈7.5 if flipped
-        const expectedNormal = sqFile - 0.5;
-        const expectedFlipped = 8.5 - sqFile;
-        const diffNormal = Math.abs(visFile - expectedNormal);
-        const diffFlipped = Math.abs(visFile - expectedFlipped);
-        if (Math.abs(diffNormal - diffFlipped) > 1) {
-          return diffFlipped < diffNormal;
-        }
+        const cls = typeof piece.className === "string"
+          ? piece.className
+          : (piece.getAttribute("class") || "");
+        const m = cls.match(/\b([wb])[prnbqk]\b/);
+        if (!m) continue;
+        const r = piece.getBoundingClientRect();
+        if (r.height === 0) continue;
+        const cy = r.top + r.height / 2 - boardRect.top;
+        if (m[1] === "w") { whiteSumY += cy; whiteCount++; }
+        else { blackSumY += cy; blackCount++; }
+      }
+      if (whiteCount >= 2 && blackCount >= 2) {
+        const whiteAvgY = whiteSumY / whiteCount;
+        const blackAvgY = blackSumY / blackCount;
+        // White avg Y < black avg Y → white is higher on screen → board is flipped
+        return whiteAvgY < blackAvgY;
       }
     }
   }
