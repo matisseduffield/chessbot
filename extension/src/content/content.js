@@ -843,8 +843,9 @@ function drawSingleMove(uci, bestLine) {
   clearArrow();
   if (!uci || uci.length < 4) return;
   const geo = getBoardGeometry();
-  if (!geo) return;
+  if (!geo) { console.log("[chessbot] drawSingleMove: no board geometry"); return; }
   const { board, rect, sqSize, flipped } = geo;
+  console.log(`[chessbot] drawing move ${uci} on board ${rect.width}x${rect.height} sq=${sqSize} flipped=${flipped}`);
   const { from, to } = uciToSquares(uci);
 
   const src = squareTopLeft(from.file, from.rank, sqSize, flipped);
@@ -1056,8 +1057,10 @@ function injectOverlay(board, svg) {
     const pos = getComputedStyle(parent).position;
     if (pos === "static") parent.style.position = "relative";
     parent.appendChild(svg);
+    console.log(`[chessbot] overlay injected into ${parent.tagName}.${parent.className}`);
   } else {
     board.appendChild(svg);
+    console.log(`[chessbot] overlay injected into board directly`);
   }
 }
 
