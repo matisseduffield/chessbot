@@ -20,7 +20,6 @@ let pendingInitialFen = null; // FEN read before WS was ready, to send on connec
 let currentDepth = 15; // analysis depth, updated from popup settings
 let isDragging = false; // true while user is dragging a piece
 let waitingForOpponent = false; // true after our move, until board changes again
-let cachedPlayerColor = null; // cached once per game to avoid flicker
 let renderGeneration = 0; // increments on each board change — prevents stale overlays
 
 // ── Site detection ───────────────────────────────────────────
@@ -53,7 +52,6 @@ function findBoard() {
   boardReady = false;
   initialReadDone = false;
   pendingInitialFen = null;
-  cachedPlayerColor = null; // reset for new game
   waitingForOpponent = false;
   _initialStableAttempts = 0;
   waitForBoard().then((boardEl) => {
@@ -359,8 +357,7 @@ function readAndSend() {
   // so we re-detect which side we're playing.
   const isStartPos = boardPart === "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
   if ((prevBoard && pieceCount === 32 && countPieces(prevBoard) < 30) || isStartPos) {
-    console.log("[chessbot] new game detected — resetting player color cache");
-    cachedPlayerColor = null;
+    console.log("[chessbot] new game detected — resetting state");
     waitingForOpponent = false;
     lastSentFen = "";
   }
@@ -907,8 +904,9 @@ function detectTurnFromClocks() {
 }
 
 function getPlayerColor() {
-  // Return cached value if set (stable for the duration of a game)
-  if (cachedPlayerColor) return cachedPlayerColor;
+  // Always detect from current board state — no caching.
+  // Chess.com flips the board AFTER rendering the start position,
+  // so caching during transitions produces stale values.
   let color = "w";
   if (SITE === "lichess") {
     color = isLichessFlipped() ? "b" : "w";
@@ -916,7 +914,6 @@ function getPlayerColor() {
     const board = getBoardElement();
     color = board && isChesscomFlipped(board) ? "b" : "w";
   }
-  cachedPlayerColor = color;
   return color;
 }
 
