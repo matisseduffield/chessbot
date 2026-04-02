@@ -1,0 +1,242 @@
+const { spawn } = require("child_process");
+const fs = require("fs");
+const config = require("./config");
+
+class StockfishBridge {
+  constructor() {
+    this.process = null;
+    this.ready = false;
+    this._pendingResolve = null;
+    this._handleLine = this._defaultLineHandler.bind(this);
+    this._settings = {
+      Threads: 1,
+      Hash: 16,
+      MultiPV: 1,
+      "Skill Level": 20,
+      UCI_ShowWDL: true,
+    };
+  }
+
+  /** Spawn Stockfish and wait for the initial UCI handshake. */
+  start() {
+    return new Promise((resolve, reject) => {
+      console.log(`[stockfish] spawning: ${config.stockfishPath}`);
+      this.process = spawn(config.stockfishPath);
+
+      this.process.on("error", (err) => {
+        console.error("[stockfish] failed to start:", err.message);
+        reject(err);
+      });
+
+      this.process.stderr.on("data", (data) => {
+        console.error("[stockfish][stderr]", data.toString().trim());
+      });
+
+      let buffer = "";
+
+      this.process.stdout.on("data", (chunk) => {
+        buffer += chunk.toString();
+        const lines = buffer.split("\n");
+        // Keep the last (possibly incomplete) line in the buffer
+        buffer = lines.pop();
+
+        for (const raw of lines) {
+          const line = raw.trim();
+          if (!line) continue;
+          this._handleLine(line);
+        }
+      });
+
+      // Kick off UCI handshake
+      this._send("uci");
+
+      // Wait for "uciok"
+      const onLine = this._handleLine.bind(this);
+      this._handleLine = (line) => {
+        console.log(`[stockfish] ${line}`);
+        if (line === "uciok") {
+          this.ready = true;
+          this._handleLine = onLine; // restore
+
+          // Configure Syzygy tablebases if the path exists
+          if (config.syzygyPath && fs.existsSync(config.syzygyPath)) {
+            this._send(`setoption name SyzygyPath value ${config.syzygyPath}`);
+            console.log(`[stockfish] Syzygy tablebases: ${config.syzygyPath}`);
+          } else {
+            console.log("[stockfish] Syzygy tablebases: not configured");
+          }
+
+          this._send("isready");
+          // Wait for "readyok" before resolving
+          this._handleLine = (l) => {
+            console.log(`[stockfish] ${l}`);
+            if (l === "readyok") {
+              this._handleLine = this._defaultLineHandler.bind(this);
+              // Enable WDL by default
+              this._send("setoption name UCI_ShowWDL value true");
+              console.log("[stockfish] engine ready");
+              resolve();
+            }
+          };
+        }
+      };
+    });
+  }
+
+  /** Send a FEN to Stockfish and return evaluation results.
+   *  Returns { bestmove, lines: [{ move, score, mate, pv }] } */
+  evaluate(fen, depth = 15) {
+    return new Promise((resolve, reject) => {
+      if (!this.ready) return reject(new Error("Engine not ready"));
+
+      console.log(`[stockfish] evaluating: ${fen} (depth ${depth})`);
+
+      const multiPV = Number(this._settings.MultiPV) || 1;
+      const pvLines = {}; // multipv index → latest info at highest depth
+
+      this._pendingResolve = resolve;
+      this._pendingPV = pvLines;
+      this._pendingMultiPV = multiPV;
+      this._pendingTargetDepth = depth;
+
+      // Safety-net timeout: if Stockfish doesn't respond within 20s, force resolve
+      clearTimeout(this._evalTimeout);
+      this._evalTimeout = setTimeout(() => {
+        if (this._pendingResolve) {
+          console.warn("[stockfish] evaluation timeout — forcing stop");
+          this._send("stop"); // will trigger bestmove immediately
+        }
+      }, 20_000);
+
+      this._send(`position fen ${fen}`);
+      this._send(`go depth ${depth}`);
+    });
+  }
+
+  /** Abort the current evaluation. Stockfish will emit bestmove immediately.
+   *  Returns a promise that resolves once the bestmove response is consumed. */
+  abort() {
+    if (!this._pendingResolve) return Promise.resolve();
+    console.log("[stockfish] aborting current evaluation");
+    this._send("stop");
+    // Return a promise that resolves when the bestmove line arrives
+    return new Promise((resolve) => {
+      this._abortResolve = resolve;
+    });
+  }
+
+  /** Set a UCI option (e.g. Threads, Hash, MultiPV, Skill Level). */
+  setOption(name, value) {
+    if (!this.ready) return;
+    // Whitelist of safe UCI options
+    const allowed = [
+      "Threads", "Hash", "MultiPV", "Skill Level",
+      "UCI_Chess960", "UCI_ShowWDL", "SyzygyPath",
+      "SyzygyProbeDepth", "Syzygy50MoveRule", "SyzygyProbeLimit",
+    ];
+    if (!allowed.includes(name)) {
+      console.warn(`[stockfish] option "${name}" not in whitelist, ignoring`);
+      return;
+    }
+    this._send(`setoption name ${name} value ${value}`);
+    this._settings[name] = value;
+    console.log(`[stockfish] option ${name} = ${value}`);
+  }
+
+  /** Get current settings (for syncing to UI). */
+  getSettings() {
+    return { ...this._settings };
+  }
+
+  /** Stop the engine process. */
+  stop() {
+    if (this.process) {
+      this._send("quit");
+      this.process = null;
+      this.ready = false;
+      console.log("[stockfish] stopped");
+    }
+  }
+
+  // ── internals ──────────────────────────────────────────
+
+  _send(cmd) {
+    if (!this.process) return;
+    console.log(`[stockfish] >>> ${cmd}`);
+    this.process.stdin.write(cmd + "\n");
+  }
+
+  _defaultLineHandler(line) {
+    // Collect info lines with multipv data
+    if (line.startsWith("info") && line.includes(" pv ")) {
+      console.log(`[stockfish] ${line}`);
+
+      // Parse: info depth D ... multipv N score cp X ... pv MOVE1 MOVE2 ...
+      // or:   info depth D ... multipv N score mate M ... pv MOVE1 ...
+      const depthMatch = line.match(/\bdepth (\d+)/);
+      const pvIdxMatch = line.match(/\bmultipv (\d+)/);
+      const cpMatch = line.match(/\bscore cp (-?\d+)/);
+      const mateMatch = line.match(/\bscore mate (-?\d+)/);
+      const pvMatch = line.match(/\bpv (.+)/);
+
+      if (depthMatch && pvMatch) {
+        const d = parseInt(depthMatch[1], 10);
+        const idx = pvIdxMatch ? parseInt(pvIdxMatch[1], 10) : 1;
+        const pv = pvMatch[1].trim().split(/\s+/);
+        const entry = { move: pv[0], pv, depth: d };
+
+        if (cpMatch) entry.score = parseInt(cpMatch[1], 10);
+        if (mateMatch) entry.mate = parseInt(mateMatch[1], 10);
+
+        // Parse WDL if present: "wdl 553 367 80"
+        const wdlMatch = line.match(/\bwdl (\d+) (\d+) (\d+)/);
+        if (wdlMatch) {
+          entry.wdl = {
+            win: parseInt(wdlMatch[1], 10),
+            draw: parseInt(wdlMatch[2], 10),
+            loss: parseInt(wdlMatch[3], 10),
+          };
+        }
+
+        // Keep latest (highest depth) per multipv index
+        if (this._pendingPV) {
+          const prev = this._pendingPV[idx];
+          if (!prev || d >= prev.depth) {
+            this._pendingPV[idx] = entry;
+          }
+        }
+      }
+    } else if (line.startsWith("info")) {
+      console.log(`[stockfish] ${line}`);
+    }
+
+    // The bestmove line resolves the pending promise
+    if (line.startsWith("bestmove")) {
+      console.log(`[stockfish] ${line}`);
+      clearTimeout(this._evalTimeout);
+      const bestmove = line.split(" ")[1];
+
+      // Build lines array from collected PV data
+      const lines = [];
+      if (this._pendingPV) {
+        const indices = Object.keys(this._pendingPV).map(Number).sort((a, b) => a - b);
+        for (const idx of indices) {
+          lines.push(this._pendingPV[idx]);
+        }
+      }
+
+      if (this._pendingResolve) {
+        this._pendingResolve({ bestmove, lines });
+        this._pendingResolve = null;
+        this._pendingPV = null;
+      }
+      // If we were aborting, signal that the abort is complete
+      if (this._abortResolve) {
+        this._abortResolve();
+        this._abortResolve = null;
+      }
+    }
+  }
+}
+
+module.exports = StockfishBridge;

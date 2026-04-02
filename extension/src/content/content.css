@@ -1,0 +1,8 @@
+/* Arrow overlay styles */
+#chessbot-arrow-svg {
+  pointer-events: none !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  z-index: 1000 !important;
+}
