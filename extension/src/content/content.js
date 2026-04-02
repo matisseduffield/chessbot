@@ -1233,17 +1233,21 @@ function drawMultiPV(lines) {
 
 // ── Inject SVG overlay into board container ──────────────────
 
-/** Return the overlay parent and the pixel offset of the board within it. */
+/** Return the overlay parent and the pixel offset of the board within it.
+ *  On lichess we inject directly into cg-board to avoid offset issues
+ *  (cg-board → cg-container → cg-wrap introduces fractional pixel drift). */
 function getOverlayTarget(board) {
-  const parent = board.closest(".board-layout-component, .cg-wrap, .board") || board.parentElement;
+  if (SITE === "lichess") {
+    // Inject straight into cg-board — pieces are positioned relative to it
+    const pos = getComputedStyle(board).position;
+    if (pos === "static") board.style.position = "relative";
+    return { target: board, dx: 0, dy: 0 };
+  }
+  const parent = board.closest(".board-layout-component, .board") || board.parentElement;
   if (!parent) return { target: board, dx: 0, dy: 0 };
   const pos = getComputedStyle(parent).position;
   if (pos === "static") parent.style.position = "relative";
-  // On lichess, cg-board is nested inside cg-container inside cg-wrap.
-  // Compute the offset so overlays align with the actual board surface.
-  const pr = parent.getBoundingClientRect();
-  const br = board.getBoundingClientRect();
-  return { target: parent, dx: br.left - pr.left, dy: br.top - pr.top };
+  return { target: parent, dx: 0, dy: 0 };
 }
 
 function injectOverlay(board, svg) {
@@ -1420,10 +1424,13 @@ function drawEvalBar(bestLine, source) {
     }
   }
 
-  // On lichess .cg-wrap has overflow:hidden which clips the eval bar and WDL.
-  // Override to visible so the bar (left:-28px) and WDL (bottom:-22px) are shown.
-  if (SITE === "lichess" && parent.classList.contains("cg-wrap")) {
+  // On lichess, we inject into cg-board directly. Both cg-board and its
+  // ancestor cg-wrap may clip overflow. Override so the eval bar (left:-28px)
+  // and WDL bar (bottom:-22px) are visible.
+  if (SITE === "lichess") {
     parent.style.overflow = "visible";
+    const cgWrap = parent.closest(".cg-wrap");
+    if (cgWrap) cgWrap.style.overflow = "visible";
   }
   parent.appendChild(container);
 }
