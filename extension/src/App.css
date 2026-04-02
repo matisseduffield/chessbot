@@ -179,8 +179,27 @@
 .settings-tab {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
+
+/* Section headers */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.section-icon { font-size: 13px; }
+.section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888;
+}
+
 .setting-row {
   padding: 10px 12px;
   background: rgba(255,255,255,0.04);
@@ -285,4 +304,107 @@
 .tab-content::-webkit-scrollbar-thumb {
   background: rgba(255,255,255,0.1);
   border-radius: 2px;
+}
+
+/* ── Setting badges ────────────────────────────────────── */
+.setting-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+}
+.setting-badge.active {
+  background: rgba(59,204,110,0.15);
+  color: #3bcc6e;
+}
+.setting-badge.switching {
+  background: rgba(243,156,18,0.15);
+  color: #f39c12;
+}
+.setting-empty {
+  font-size: 11px;
+  color: #555;
+  padding: 6px 0;
+}
+.setting-empty code {
+  color: #888;
+  font-size: 10px;
+}
+
+/* ── Download links ────────────────────────────────────── */
+.download-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.download-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 8px;
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.15s;
+}
+.download-link:hover {
+  background: rgba(255,255,255,0.08);
+}
+.dl-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  width: 28px;
+  text-align: center;
+}
+.dl-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e0e0e8;
+}
+.dl-sub {
+  font-size: 10px;
+  color: #666;
+}
+.download-link div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* ── Status details ────────────────────────────────────── */
+.status-details {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.detail-label {
+  font-size: 11px;
+  color: #666;
+  font-weight: 600;
+}
+.detail-value {
+  font-size: 11px;
+  color: #aaa;
+}
+.detail-value.ok { color: #3bcc6e; }
+.detail-value.err { color: #e74c3c; }
+.detail-value.mono {
+  font-family: monospace;
+  font-size: 9px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

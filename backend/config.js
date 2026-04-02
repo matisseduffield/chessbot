@@ -1,6 +1,19 @@
 const path = require("path");
 
 module.exports = {
+  // ── Directories (for scanning available files) ────────
+  engineDir:
+    process.env.ENGINE_DIR ||
+    path.join(__dirname, "..", "engine"),
+
+  booksDir:
+    process.env.BOOKS_DIR ||
+    path.join(__dirname, "..", "books"),
+
+  syzygyDir:
+    process.env.SYZYGY_DIR ||
+    path.join(__dirname, "..", "syzygy"),
+
   // ── Engine ────────────────────────────────────────────
   stockfishPath:
     process.env.STOCKFISH_PATH ||

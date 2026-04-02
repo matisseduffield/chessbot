@@ -1,4 +1,18 @@
+import { useState, useEffect } from 'react'
+
 export default function StatusTab({ connected, enabled, onToggle }) {
+  const [status, setStatus] = useState(null)
+
+  useEffect(() => {
+    chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]?.id) {
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'get_status' }, (resp) => {
+          if (resp) setStatus(resp)
+        })
+      }
+    })
+  }, [])
+
   return (
     <div className="status-tab">
       <div className="status-card">
@@ -27,7 +41,9 @@ export default function StatusTab({ connected, enabled, onToggle }) {
         <div className="status-text">
           <span className="status-label">{connected ? 'Engine Online' : 'Engine Offline'}</span>
           <span className="status-sub">
-            {connected ? 'Stockfish is ready for analysis' : 'Run: cd backend && npm start'}
+            {connected
+              ? 'Stockfish is ready for analysis'
+              : 'Start backend: cd backend && node server.js'}
           </span>
         </div>
       </div>
@@ -43,6 +59,24 @@ export default function StatusTab({ connected, enabled, onToggle }) {
         </svg>
         <span>{enabled ? 'Analysis On' : 'Analysis Off'}</span>
       </button>
+
+      {/* Live status details */}
+      <div className="status-details">
+        <div className="detail-row">
+          <span className="detail-label">Site</span>
+          <span className="detail-value">{status?.site === 'chesscom' ? 'chess.com' : status?.site === 'lichess' ? 'lichess.org' : 'Not detected'}</span>
+        </div>
+        <div className="detail-row">
+          <span className="detail-label">WebSocket</span>
+          <span className={`detail-value ${status?.connected ? 'ok' : 'err'}`}>
+            {status?.connected ? 'Connected' : 'Disconnected'}
+          </span>
+        </div>
+        <div className="detail-row">
+          <span className="detail-label">Last FEN</span>
+          <span className="detail-value mono">{status?.lastFen ? status.lastFen.split(' ')[0].slice(0, 24) + '…' : '—'}</span>
+        </div>
+      </div>
 
       <div className="info-cards">
         <div className="info-card">

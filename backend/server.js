@@ -1,11 +1,60 @@
 const { WebSocketServer } = require("ws");
+const fs = require("fs");
+const path = require("path");
 const StockfishBridge = require("./stockfishBridge");
 const OpeningBook = require("./openingBook");
 const config = require("./config");
 
+// ── File scanner helpers ─────────────────────────────────
+
+/** Recursively find files matching extensions in a directory */
+function scanFiles(dir, extensions) {
+  const results = [];
+  if (!fs.existsSync(dir)) return results;
+  const walk = (d) => {
+    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+      const full = path.join(d, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (extensions.some((ext) => entry.name.toLowerCase().endsWith(ext))) {
+        results.push({ name: entry.name, path: full });
+      }
+    }
+  };
+  walk(dir);
+  return results;
+}
+
+function listEngines() {
+  return scanFiles(config.engineDir, [".exe"]);
+}
+
+function listBooks() {
+  return scanFiles(config.booksDir, [".bin"]);
+}
+
+function listSyzygyDirs() {
+  // Return directories that contain .rtbw or .rtbz files
+  const results = [];
+  if (!fs.existsSync(config.syzygyDir)) return results;
+  // Check root
+  const rootFiles = fs.readdirSync(config.syzygyDir);
+  const hasTB = rootFiles.some((f) => f.endsWith(".rtbw") || f.endsWith(".rtbz"));
+  if (hasTB) results.push({ name: path.basename(config.syzygyDir), path: config.syzygyDir });
+  // Check subdirs
+  for (const entry of fs.readdirSync(config.syzygyDir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      const subPath = path.join(config.syzygyDir, entry.name);
+      const subFiles = fs.readdirSync(subPath);
+      const subHasTB = subFiles.some((f) => f.endsWith(".rtbw") || f.endsWith(".rtbz"));
+      if (subHasTB) results.push({ name: entry.name, path: subPath });
+    }
+  }
+  return results;
+}
 async function main() {
   // ── 1. Start the Stockfish engine ──────────────────────
-  const engine = new StockfishBridge();
+  let engine = new StockfishBridge();
   try {
     await engine.start();
   } catch (err) {
@@ -14,7 +63,7 @@ async function main() {
   }
 
   // ── 2. Load opening book (optional) ───────────────────
-  const book = new OpeningBook(config.openingBookPath);
+  let book = new OpeningBook(config.openingBookPath);
   await book.init();
 
   // ── 3. Start WebSocket server ──────────────────────────
@@ -41,7 +90,7 @@ async function main() {
     const remote = req.socket.remoteAddress;
     console.log(`[server] client connected (${remote})`);
 
-    ws.on("message", (data) => {
+    ws.on("message", async (data) => {
       let msg;
       try {
         msg = JSON.parse(data);
@@ -126,7 +175,101 @@ async function main() {
 
       if (msg.type === "get_settings") {
         if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: "settings", settings: engine.getSettings() }));
+          ws.send(JSON.stringify({
+            type: "settings",
+            settings: engine.getSettings(),
+            activeEngine: path.basename(config.stockfishPath),
+            activeBook: book.enabled ? path.basename(book.bookPath) : null,
+            activeSyzygy: config.syzygyPath || null,
+          }));
+        }
+      }
+
+      // ── File listing ───────────────────────────────────
+      if (msg.type === "list_files") {
+        const engines = listEngines().map((e) => e.name);
+        const books = listBooks().map((b) => b.name);
+        const syzygy = listSyzygyDirs().map((s) => s.name);
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({
+            type: "files",
+            engines,
+            books,
+            syzygy,
+            activeEngine: path.basename(config.stockfishPath),
+            activeBook: book.enabled ? path.basename(book.bookPath) : null,
+            activeSyzygy: config.syzygyPath ? path.basename(config.syzygyPath) : null,
+          }));
+        }
+      }
+
+      // ── Switch engine ──────────────────────────────────
+      if (msg.type === "switch_engine" && msg.name) {
+        const found = listEngines().find((e) => e.name === msg.name);
+        if (!found) {
+          ws.send(JSON.stringify({ type: "error", message: `Engine not found: ${msg.name}` }));
+          return;
+        }
+        console.log(`[server] switching engine to: ${found.name}`);
+        try {
+          engine.stop();
+          config.stockfishPath = found.path;
+          engine = new StockfishBridge();
+          await engine.start();
+          // Re-apply existing settings
+          evalGeneration++;
+          ws.send(JSON.stringify({ type: "engine_switched", name: found.name }));
+        } catch (err) {
+          console.error(`[server] failed to switch engine: ${err.message}`);
+          ws.send(JSON.stringify({ type: "error", message: `Failed to start ${msg.name}: ${err.message}` }));
+        }
+      }
+
+      // ── Switch opening book ────────────────────────────
+      if (msg.type === "switch_book" && msg.name !== undefined) {
+        try {
+          await book.close();
+          if (msg.name === "" || msg.name === null) {
+            // Disable book
+            book = new OpeningBook("");
+            config.openingBookPath = "";
+            console.log("[server] opening book disabled");
+            ws.send(JSON.stringify({ type: "book_switched", name: null }));
+          } else {
+            const found = listBooks().find((b) => b.name === msg.name);
+            if (!found) {
+              ws.send(JSON.stringify({ type: "error", message: `Book not found: ${msg.name}` }));
+              return;
+            }
+            config.openingBookPath = found.path;
+            book = new OpeningBook(found.path);
+            await book.init();
+            console.log(`[server] switched book to: ${found.name}`);
+            ws.send(JSON.stringify({ type: "book_switched", name: found.name }));
+          }
+        } catch (err) {
+          console.error(`[server] failed to switch book: ${err.message}`);
+          ws.send(JSON.stringify({ type: "error", message: err.message }));
+        }
+      }
+
+      // ── Switch Syzygy tablebases ───────────────────────
+      if (msg.type === "switch_syzygy" && msg.name !== undefined) {
+        if (msg.name === "" || msg.name === null) {
+          config.syzygyPath = "";
+          engine.setOption("SyzygyPath", "");
+          console.log("[server] Syzygy tablebases disabled");
+          ws.send(JSON.stringify({ type: "syzygy_switched", name: null }));
+        } else {
+          const found = listSyzygyDirs().find((s) => s.name === msg.name);
+          if (!found) {
+            ws.send(JSON.stringify({ type: "error", message: `Syzygy dir not found: ${msg.name}` }));
+            return;
+          }
+          config.syzygyPath = found.path;
+          engine.setOption("SyzygyPath", found.path);
+          console.log(`[server] switched Syzygy to: ${found.path}`);
+          ws.send(JSON.stringify({ type: "syzygy_switched", name: found.name }));
         }
       }
     });

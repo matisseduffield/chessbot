@@ -17,6 +17,7 @@ let pendingEval = false; // true while waiting for a bestmove response
 let lastPieceCount = 0;  // to detect animation mid-flight (piece count changes)
 let initialReadDone = false; // guard against duplicate initialRead calls
 let pendingInitialFen = null; // FEN read before WS was ready, to send on connect
+let currentDepth = 15; // analysis depth, updated from popup settings
 
 // ── Site detection ───────────────────────────────────────────
 const SITE = detectSite();
@@ -186,7 +187,7 @@ function connectWS() {
 
 function sendFen(fen) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-  ws.send(JSON.stringify({ type: "fen", fen }));
+  ws.send(JSON.stringify({ type: "fen", fen, depth: currentDepth }));
   return true;
 }
 
@@ -1233,6 +1234,34 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "set_option", name: msg.name, value: msg.value }));
         console.log(`[chessbot] set_option: ${msg.name} = ${msg.value}`);
+      }
+    }
+    if (msg.type === "set_depth") {
+      currentDepth = Number(msg.value) || 15;
+      console.log(`[chessbot] depth set to ${currentDepth}`);
+    }
+    // Relay backend queries from popup
+    if (["list_files", "get_settings", "switch_engine", "switch_book", "switch_syzygy"].includes(msg.type)) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(msg));
+        // Listen for the response and relay back to popup
+        const handler = (evt) => {
+          try {
+            const resp = JSON.parse(evt.data);
+            const responseTypes = ["files", "settings", "engine_switched", "book_switched", "syzygy_switched", "error"];
+            if (responseTypes.includes(resp.type)) {
+              ws.removeEventListener("message", handler);
+              sendResponse(resp);
+            }
+          } catch {}
+        };
+        ws.addEventListener("message", handler);
+        // Timeout cleanup
+        setTimeout(() => ws.removeEventListener("message", handler), 5000);
+        return true; // keep channel open for async response
+      } else {
+        sendResponse({ type: "error", message: "Not connected to backend" });
+        return true;
       }
     }
     if (msg.type === "get_status") {
