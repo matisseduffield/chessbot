@@ -928,39 +928,79 @@ function drawMultiPV(lines) {
 
   const pad = 2;
 
+  // Group lines by source and destination squares to handle overlaps
+  const srcKey = (from) => `${from.file},${from.rank}`;
+  const dstKey = (to) => `${to.file},${to.rank}`;
+
+  // Collect colors per source square and count badges per destination square
+  const srcColors = {}; // "file,rank" → [color, ...]
+  const dstSlots = {};  // "file,rank" → count of badges placed so far
+
+  const parsed = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line.move || line.move.length < 4) continue;
-
     const { from, to } = uciToSquares(line.move);
-    const src = squareTopLeft(from.file, from.rank, sqSize, flipped);
-    const dst = squareTopLeft(to.file, to.rank, sqSize, flipped);
     const color = EVAL_COLORS[i] || EVAL_COLORS[EVAL_COLORS.length - 1];
+    const sk = srcKey(from);
+    const dk = dstKey(to);
+    if (!srcColors[sk]) srcColors[sk] = [];
+    srcColors[sk].push(color);
+    if (!dstSlots[dk]) dstSlots[dk] = 0;
+    parsed.push({ line, from, to, color, sk, dk });
+  }
+
+  // Draw source square outlines — split into segments when multiple lines share a source
+  for (const [key, colors] of Object.entries(srcColors)) {
+    const [file, rank] = key.split(",").map(Number);
+    const src = squareTopLeft(file, rank, sqSize, flipped);
+    const x = src.x + pad;
+    const y = src.y + pad;
+    const w = sqSize - pad * 2;
+    const h = sqSize - pad * 2;
+
+    if (colors.length === 1) {
+      const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      r.setAttribute("x", x); r.setAttribute("y", y);
+      r.setAttribute("width", w); r.setAttribute("height", h);
+      r.setAttribute("fill", "none"); r.setAttribute("stroke", colors[0]);
+      r.setAttribute("stroke-width", "3"); r.setAttribute("rx", "2");
+      r.setAttribute("opacity", "0.9");
+      svg.appendChild(r);
+    } else {
+      // Draw each side of the rectangle in alternating colors
+      const perimeter = 2 * w + 2 * h;
+      const segLen = perimeter / colors.length;
+      for (let ci = 0; ci < colors.length; ci++) {
+        const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        r.setAttribute("x", x); r.setAttribute("y", y);
+        r.setAttribute("width", w); r.setAttribute("height", h);
+        r.setAttribute("fill", "none"); r.setAttribute("stroke", colors[ci]);
+        r.setAttribute("stroke-width", "3"); r.setAttribute("rx", "2");
+        r.setAttribute("opacity", "0.9");
+        r.setAttribute("stroke-dasharray", `${segLen} ${perimeter - segLen}`);
+        r.setAttribute("stroke-dashoffset", `${-ci * segLen}`);
+        svg.appendChild(r);
+      }
+    }
+  }
+
+  // Draw destination eval badges — stack vertically when sharing a square
+  const badgeH = sqSize * 0.32;
+  for (const { line, to, color, dk } of parsed) {
+    const dst = squareTopLeft(to.file, to.rank, sqSize, flipped);
     const scoreText = formatScore(line);
+    const slot = dstSlots[dk]++;
 
-    // Source square outline — same color as the eval badge
-    const srcRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    srcRect.setAttribute("x", src.x + pad);
-    srcRect.setAttribute("y", src.y + pad);
-    srcRect.setAttribute("width", sqSize - pad * 2);
-    srcRect.setAttribute("height", sqSize - pad * 2);
-    srcRect.setAttribute("fill", "none");
-    srcRect.setAttribute("stroke", color);
-    srcRect.setAttribute("stroke-width", "3");
-    srcRect.setAttribute("rx", "2");
-    srcRect.setAttribute("opacity", "0.9");
-    svg.appendChild(srcRect);
-
-    // Destination eval badge
     const badge = document.createElement("div");
     badge.className = "chessbot-eval-badge";
     const fontSize = Math.max(10, sqSize * 0.22);
     badge.style.cssText = `
       position: absolute;
       left: ${dst.x}px;
-      top: ${dst.y}px;
+      top: ${dst.y + slot * badgeH}px;
       width: ${sqSize}px;
-      height: ${sqSize * 0.36}px;
+      height: ${badgeH}px;
       display: flex;
       align-items: center;
       justify-content: center;
