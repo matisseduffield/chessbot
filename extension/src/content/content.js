@@ -16,6 +16,7 @@ let debounceTimer = null;
 let pendingEval = false; // true while waiting for a bestmove response
 let lastPieceCount = 0;  // to detect animation mid-flight (piece count changes)
 let initialReadDone = false; // guard against duplicate initialRead calls
+let pendingInitialFen = null; // FEN read before WS was ready, to send on connect
 
 // ── Site detection ───────────────────────────────────────────
 const SITE = detectSite();
@@ -46,13 +47,13 @@ function init() {
 function findBoard() {
   boardReady = false;
   initialReadDone = false;
+  pendingInitialFen = null;
   waitForBoard().then((boardEl) => {
     console.log("[chessbot] board found, starting observer");
     boardReady = true;
     observeBoard(boardEl);
-    // On initial load, do a forced read (no previous board to diff)
-    // Use a short delay for chess.com's pieces to fully render
-    setTimeout(() => initialRead(), 500);
+    // Read the board immediately — initialRead handles null/retry internally
+    initialRead();
   });
 }
 
@@ -62,10 +63,9 @@ function initialRead() {
   const fen = boardToFen();
   if (!fen) {
     // Pieces not rendered yet, try again shortly
-    setTimeout(() => initialRead(), 500);
+    setTimeout(() => initialRead(), 200);
     return;
   }
-  initialReadDone = true; // guard against duplicate calls
 
   const boardPart = fen.split(" ")[0];
   const pieceCount = countPieces(boardPart);
@@ -80,19 +80,24 @@ function initialRead() {
 
   if (turn !== playerColor) {
     console.log("[chessbot] not our turn on initial load — waiting");
+    initialReadDone = true;
     return;
   }
 
   const parts = fen.split(" ");
   parts[1] = turn;
   const correctedFen = parts.join(" ");
-  pendingEval = true;
-  console.log(`[chessbot] → initial FEN: ${correctedFen}`);
+
   if (sendFen(correctedFen)) {
     lastSentFen = correctedFen;
+    pendingEval = true;
+    initialReadDone = true;
+    console.log(`[chessbot] → initial FEN: ${correctedFen}`);
   } else {
-    console.log("[chessbot] WS not ready, will retry on connect");
-    pendingEval = false;
+    // WS not ready — queue the FEN to send as soon as it connects
+    pendingInitialFen = correctedFen;
+    initialReadDone = true;
+    console.log(`[chessbot] WS not ready, queued FEN: ${correctedFen}`);
   }
 }
 
@@ -104,10 +109,28 @@ function connectWS() {
 
   ws.onopen = () => {
     console.log("[chessbot] connected to backend");
-    // If we have a board but nothing sent yet, trigger analysis now
-    if (boardReady && !lastSentFen) {
-      console.log("[chessbot] WS just connected, triggering initial read");
-      setTimeout(() => initialRead(), 100);
+    // If we queued a FEN before WS was ready, send it now
+    if (pendingInitialFen) {
+      // Verify the board hasn't changed since we queued the FEN
+      const currentFen = boardToFen();
+      const currentBoard = currentFen ? currentFen.split(" ")[0] : null;
+      const queuedBoard = pendingInitialFen.split(" ")[0];
+      if (currentBoard && currentBoard !== queuedBoard) {
+        console.log("[chessbot] board changed since queued — letting polling handle it");
+        pendingInitialFen = null;
+      } else {
+        console.log(`[chessbot] sending queued FEN: ${pendingInitialFen}`);
+        if (sendFen(pendingInitialFen)) {
+          lastSentFen = pendingInitialFen;
+          pendingEval = true;
+        }
+        pendingInitialFen = null;
+      }
+    } else if (boardReady && !lastSentFen) {
+      // Board found but no FEN queued or sent — try reading now
+      console.log("[chessbot] WS connected, triggering initial read");
+      initialReadDone = false;
+      initialRead();
     }
   };
 
