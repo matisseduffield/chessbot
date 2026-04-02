@@ -83,10 +83,14 @@ function initialRead() {
   const parts = fen.split(" ");
   parts[1] = turn;
   const correctedFen = parts.join(" ");
-  lastSentFen = correctedFen;
   pendingEval = true;
   console.log(`[chessbot] → initial FEN: ${correctedFen}`);
-  sendFen(correctedFen);
+  if (sendFen(correctedFen)) {
+    lastSentFen = correctedFen;
+  } else {
+    console.log("[chessbot] WS not ready, will retry on connect");
+    pendingEval = false;
+  }
 }
 
 // ── WebSocket ────────────────────────────────────────────────
@@ -95,7 +99,14 @@ function connectWS() {
 
   ws = new WebSocket(WS_URL);
 
-  ws.onopen = () => console.log("[chessbot] connected to backend");
+  ws.onopen = () => {
+    console.log("[chessbot] connected to backend");
+    // If we have a board but nothing sent yet, trigger analysis now
+    if (boardReady && !lastSentFen) {
+      console.log("[chessbot] WS just connected, triggering initial read");
+      setTimeout(() => initialRead(), 100);
+    }
+  };
 
   ws.onmessage = (evt) => {
     try {
@@ -132,8 +143,9 @@ function connectWS() {
 }
 
 function sendFen(fen) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
   ws.send(JSON.stringify({ type: "fen", fen }));
+  return true;
 }
 
 // ── Board DOM → FEN ──────────────────────────────────────────
@@ -237,8 +249,8 @@ function readAndSend() {
 
   const boardPart = fen.split(" ")[0];
 
-  // Board hasn't changed — nothing happened, skip
-  if (boardPart === lastBoardFen) return;
+  // Board hasn't changed — skip unless we never successfully sent for this position
+  if (boardPart === lastBoardFen && lastSentFen) return;
 
   // Animation guard: if piece count suddenly dropped by more than 1, a piece
   // may be mid-flight (temporarily off both squares). Wait for next poll.
@@ -273,11 +285,14 @@ function readAndSend() {
   const correctedFen = parts.join(" ");
 
   if (correctedFen === lastSentFen) return;
-  lastSentFen = correctedFen;
   pendingEval = true;
   console.log(`[chessbot] → FEN: ${correctedFen}`);
   clearMoveIndicators();
-  sendFen(correctedFen);
+  if (sendFen(correctedFen)) {
+    lastSentFen = correctedFen;
+  } else {
+    pendingEval = false;
+  }
 }
 
 // ── Chess.com board reader ───────────────────────────────────
