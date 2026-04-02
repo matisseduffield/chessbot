@@ -117,9 +117,6 @@ class StockfishBridge {
    *  Returns a promise that resolves once the bestmove response is consumed. */
   abort() {
     // Resolve any previously pending abort promise to prevent queue deadlock.
-    // Rapid FENs can call abort() multiple times before the engine outputs
-    // bestmove, which would overwrite _abortResolve and leave earlier abort
-    // promises stuck forever — deadlocking the evaluation queue.
     if (this._abortResolve) {
       this._abortResolve();
       this._abortResolve = null;
@@ -127,9 +124,20 @@ class StockfishBridge {
     if (!this._pendingResolve) return Promise.resolve();
     console.log("[stockfish] aborting current evaluation");
     this._send("stop");
-    // Return a promise that resolves when the bestmove line arrives
+    // Return a promise that resolves when the bestmove line arrives,
+    // with a safety timeout in case the engine is already idle
+    // (stop sent to an idle engine produces no bestmove output).
     return new Promise((resolve) => {
       this._abortResolve = resolve;
+      this._abortTimeout = setTimeout(() => {
+        if (this._abortResolve === resolve) {
+          console.log("[stockfish] abort timeout — engine likely idle, unblocking queue");
+          this._abortResolve = null;
+          this._pendingResolve = null;
+          this._pendingPV = null;
+          resolve();
+        }
+      }, 500);
     });
   }
 
@@ -222,6 +230,7 @@ class StockfishBridge {
     if (line.startsWith("bestmove")) {
       console.log(`[stockfish] ${line}`);
       clearTimeout(this._evalTimeout);
+      clearTimeout(this._abortTimeout);
       const bestmove = line.split(" ")[1];
 
       // Build lines array from collected PV data
