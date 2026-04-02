@@ -1,4 +1,16 @@
 const path = require("path");
+const fs = require("fs");
+
+// Auto-detect the first .bin book in books/
+function findFirstBook(dir) {
+  try {
+    const files = fs.readdirSync(dir);
+    const bin = files.find((f) => f.toLowerCase().endsWith(".bin"));
+    return bin ? path.join(dir, bin) : "";
+  } catch { return ""; }
+}
+
+const booksDir = process.env.BOOKS_DIR || path.join(__dirname, "..", "books");
 
 module.exports = {
   // ── Directories (for scanning available files) ────────
@@ -6,9 +18,7 @@ module.exports = {
     process.env.ENGINE_DIR ||
     path.join(__dirname, "..", "engine"),
 
-  booksDir:
-    process.env.BOOKS_DIR ||
-    path.join(__dirname, "..", "books"),
+  booksDir,
 
   syzygyDir:
     process.env.SYZYGY_DIR ||
@@ -20,10 +30,9 @@ module.exports = {
     path.join(__dirname, "..", "engine", "stockfish", "stockfish-windows-x86-64-avx2.exe"),
 
   // ── Opening Book (Polyglot .bin) ──────────────────────
-  // Set to "" or remove the file to disable book lookups.
+  // Auto-detects the first .bin in books/ if OPENING_BOOK_PATH is not set.
   openingBookPath:
-    process.env.OPENING_BOOK_PATH ||
-    path.join(__dirname, "..", "books", "book.bin"),
+    process.env.OPENING_BOOK_PATH || findFirstBook(booksDir),
 
   // ── Syzygy Endgame Tablebases ─────────────────────────
   // Set to "" to disable. Separate multiple folders with ";".

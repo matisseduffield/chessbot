@@ -165,14 +165,15 @@ function connectWS() {
         }
         console.log(`[chessbot] bestmove: ${msg.bestmove} (${msg.source})`);
         pendingEval = false;
+        const source = msg.source || "engine";
         const lines = msg.lines || [];
         const bestLine = lines[0] || null;
         if (lines.length > 1) {
-          drawMultiPV(lines);
+          drawMultiPV(lines, source);
         } else {
-          drawSingleMove(msg.bestmove, bestLine);
+          drawSingleMove(msg.bestmove, bestLine, source);
         }
-        drawEvalBar(bestLine);
+        drawEvalBar(bestLine, source);
       }
     } catch { /* ignore malformed */ }
   };
@@ -858,7 +859,7 @@ function squareCenter(file, rank, sqSize, flipped) {
 
 // ── Single best move: source highlight + red destination outline ──
 
-function drawSingleMove(uci, bestLine) {
+function drawSingleMove(uci, bestLine, source) {
   clearArrow();
   if (!uci || uci.length < 4) return;
   const geo = getBoardGeometry();
@@ -866,6 +867,7 @@ function drawSingleMove(uci, bestLine) {
   const { board, rect, sqSize, flipped } = geo;
   console.log(`[chessbot] drawing move ${uci} on board ${rect.width}x${rect.height} sq=${sqSize} flipped=${flipped}`);
   const { from, to } = uciToSquares(uci);
+  const isBook = source === "book";
 
   const src = squareTopLeft(from.file, from.rank, sqSize, flipped);
   const dst = squareTopLeft(to.file, to.rank, sqSize, flipped);
@@ -876,38 +878,62 @@ function drawSingleMove(uci, bestLine) {
   svg.setAttribute("height", rect.height);
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
-  // Source square — subtle blue outline
+  // Source square outline
   const pad = 2;
+  const srcColor = isBook ? "#d4a017" : "#3498db";
+  const srcFill = isBook ? "rgba(212,160,23,0.15)" : "rgba(52,152,219,0.15)";
   const srcRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
   srcRect.setAttribute("x", src.x + pad);
   srcRect.setAttribute("y", src.y + pad);
   srcRect.setAttribute("width", sqSize - pad * 2);
   srcRect.setAttribute("height", sqSize - pad * 2);
-  srcRect.setAttribute("fill", "rgba(52,152,219,0.15)");
-  srcRect.setAttribute("stroke", "#3498db");
+  srcRect.setAttribute("fill", srcFill);
+  srcRect.setAttribute("stroke", srcColor);
   srcRect.setAttribute("stroke-width", "2.5");
   srcRect.setAttribute("rx", "2");
   srcRect.setAttribute("opacity", "0.9");
   svg.appendChild(srcRect);
 
-  // Destination square — red outline
+  // Destination square outline
+  const dstColor = isBook ? "#d4a017" : "#e74c3c";
+  const dstFill = isBook ? "rgba(212,160,23,0.12)" : "rgba(231,76,60,0.12)";
   const dstRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
   dstRect.setAttribute("x", dst.x + pad);
   dstRect.setAttribute("y", dst.y + pad);
   dstRect.setAttribute("width", sqSize - pad * 2);
   dstRect.setAttribute("height", sqSize - pad * 2);
-  dstRect.setAttribute("fill", "rgba(231,76,60,0.12)");
-  dstRect.setAttribute("stroke", "#e74c3c");
+  dstRect.setAttribute("fill", dstFill);
+  dstRect.setAttribute("stroke", dstColor);
   dstRect.setAttribute("stroke-width", "3");
   dstRect.setAttribute("rx", "2");
   dstRect.setAttribute("opacity", "0.9");
   svg.appendChild(dstRect);
 
-  // Eval score badge on destination square
-  if (bestLine) {
+  // Badge on destination square — "OB" for book, eval score for engine
+  const badgeH = sqSize * 0.32;
+  const fontSize = Math.max(9, sqSize * 0.18);
+  if (isBook) {
+    const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bg.setAttribute("x", dst.x);
+    bg.setAttribute("y", dst.y + sqSize - badgeH);
+    bg.setAttribute("width", sqSize);
+    bg.setAttribute("height", badgeH);
+    bg.setAttribute("fill", "rgba(160,120,0,0.85)");
+    bg.setAttribute("rx", "2");
+    svg.appendChild(bg);
+
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", dst.x + sqSize / 2);
+    text.setAttribute("y", dst.y + sqSize - 4);
+    text.setAttribute("text-anchor", "middle");
+    text.setAttribute("font-size", fontSize);
+    text.setAttribute("font-weight", "800");
+    text.setAttribute("font-family", "monospace");
+    text.setAttribute("fill", "#fff");
+    text.textContent = "OB";
+    svg.appendChild(text);
+  } else if (bestLine) {
     const scoreText = formatScore(bestLine);
-    const fontSize = Math.max(9, sqSize * 0.18);
-    const badgeH = sqSize * 0.32;
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("x", dst.x + sqSize / 2);
     text.setAttribute("y", dst.y + sqSize - 4);
@@ -918,7 +944,6 @@ function drawSingleMove(uci, bestLine) {
     text.setAttribute("fill", "#fff");
     text.textContent = scoreText;
 
-    // Background for readability
     const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     bg.setAttribute("x", dst.x);
     bg.setAttribute("y", dst.y + sqSize - badgeH);
@@ -1085,12 +1110,13 @@ function injectOverlay(board, svg) {
 
 // ── Eval bar + WDL display ───────────────────────────────────
 
-function drawEvalBar(bestLine) {
+function drawEvalBar(bestLine, source) {
   // Remove existing
   const old = document.getElementById("chessbot-eval-bar");
   if (old) old.remove();
 
-  if (!bestLine) return;
+  const isBook = source === "book";
+  if (!bestLine && !isBook) return;
 
   const board = getBoardElement();
   if (!board) return;
@@ -1100,20 +1126,6 @@ function drawEvalBar(bestLine) {
 
   const rect = board.getBoundingClientRect();
   const playerColor = getPlayerColor();
-
-  // Calculate white's advantage percentage (0-100)
-  let whitePct = 50;
-  if (bestLine.mate !== undefined && bestLine.mate !== null) {
-    // For the player's perspective: positive mate = good for side to move
-    // We set the FEN with the player's color as side to move
-    whitePct = bestLine.mate > 0 ? (playerColor === "w" ? 98 : 2) : (playerColor === "w" ? 2 : 98);
-  } else if (bestLine.score !== undefined && bestLine.score !== null) {
-    // Score is from the side-to-move perspective (which is the player's color)
-    const cpFromWhite = playerColor === "w" ? bestLine.score : -bestLine.score;
-    whitePct = Math.min(98, Math.max(2, 50 + cpFromWhite / 10));
-  }
-
-  const blackPct = 100 - whitePct;
   const flipped = (SITE === "chesscom" && board && isChesscomFlipped(board)) ||
                   (SITE === "lichess" && isLichessFlipped());
 
@@ -1134,6 +1146,47 @@ function drawEvalBar(bestLine) {
     display: flex;
     flex-direction: column;
   `;
+
+  if (isBook) {
+    // Show gold "OB" bar for opening book moves
+    const bookBar = document.createElement("div");
+    bookBar.style.cssText = `background:linear-gradient(180deg,#d4a017,#b8860b);flex:1;display:flex;align-items:center;justify-content:center;`;
+    container.appendChild(bookBar);
+
+    const label = document.createElement("div");
+    label.style.cssText = `
+      position: absolute;
+      top: 50%;
+      left: 0;
+      width: 22px;
+      transform: translateY(-50%);
+      text-align: center;
+      font-size: 8px;
+      font-weight: 900;
+      font-family: monospace;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+      pointer-events: none;
+      z-index: 1;
+    `;
+    label.textContent = "OB";
+    container.appendChild(label);
+
+    const parentPos = getComputedStyle(parent).position;
+    if (parentPos === "static") parent.style.position = "relative";
+    parent.appendChild(container);
+    return;
+  }
+
+  // Calculate white's advantage percentage (0-100)
+  let whitePct = 50;
+  if (bestLine.mate !== undefined && bestLine.mate !== null) {
+    whitePct = bestLine.mate > 0 ? (playerColor === "w" ? 98 : 2) : (playerColor === "w" ? 2 : 98);
+  } else if (bestLine.score !== undefined && bestLine.score !== null) {
+    const cpFromWhite = playerColor === "w" ? bestLine.score : -bestLine.score;
+    whitePct = Math.min(98, Math.max(2, 50 + cpFromWhite / 10));
+  }
+  const blackPct = 100 - whitePct;
 
   // Top section (white if not flipped, black if flipped)
   const topColor = flipped ? "#333" : "#f0f0f0";
