@@ -1125,10 +1125,8 @@ function drawMultiPV(lines) {
   if (!geo) return;
   const { board, rect, sqSize, flipped } = geo;
 
-  const parent = board.closest(".board-layout-component, .cg-wrap, .board") || board.parentElement;
+  const { target: parent, dx, dy } = getOverlayTarget(board);
   if (!parent) return;
-  const pos = getComputedStyle(parent).position;
-  if (pos === "static") parent.style.position = "relative";
 
   // Create an SVG layer for source square outlines
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -1208,8 +1206,8 @@ function drawMultiPV(lines) {
     const fontSize = Math.max(10, sqSize * 0.22);
     badge.style.cssText = `
       position: absolute;
-      left: ${dst.x}px;
-      top: ${dst.y + slot * badgeH}px;
+      left: ${dst.x + dx}px;
+      top: ${dst.y + slot * badgeH + dy}px;
       width: ${sqSize}px;
       height: ${badgeH}px;
       display: flex;
@@ -1235,17 +1233,27 @@ function drawMultiPV(lines) {
 
 // ── Inject SVG overlay into board container ──────────────────
 
-function injectOverlay(board, svg) {
+/** Return the overlay parent and the pixel offset of the board within it. */
+function getOverlayTarget(board) {
   const parent = board.closest(".board-layout-component, .cg-wrap, .board") || board.parentElement;
-  if (parent) {
-    const pos = getComputedStyle(parent).position;
-    if (pos === "static") parent.style.position = "relative";
-    parent.appendChild(svg);
-    console.log(`[chessbot] overlay injected into ${parent.tagName}.${parent.className}`);
-  } else {
-    board.appendChild(svg);
-    console.log(`[chessbot] overlay injected into board directly`);
+  if (!parent) return { target: board, dx: 0, dy: 0 };
+  const pos = getComputedStyle(parent).position;
+  if (pos === "static") parent.style.position = "relative";
+  // On lichess, cg-board is nested inside cg-container inside cg-wrap.
+  // Compute the offset so overlays align with the actual board surface.
+  const pr = parent.getBoundingClientRect();
+  const br = board.getBoundingClientRect();
+  return { target: parent, dx: br.left - pr.left, dy: br.top - pr.top };
+}
+
+function injectOverlay(board, svg) {
+  const { target, dx, dy } = getOverlayTarget(board);
+  if (dx || dy) {
+    svg.style.left = `${dx}px`;
+    svg.style.top = `${dy}px`;
   }
+  target.appendChild(svg);
+  console.log(`[chessbot] overlay injected into ${target.tagName}.${target.className} (offset ${dx},${dy})`);
 }
 
 // ── Eval bar + WDL display ───────────────────────────────────
@@ -1261,7 +1269,7 @@ function drawEvalBar(bestLine, source) {
   const board = getBoardElement();
   if (!board) return;
 
-  const parent = board.closest(".board-layout-component, .cg-wrap, .board") || board.parentElement;
+  const { target: parent, dx, dy } = getOverlayTarget(board);
   if (!parent) return;
 
   const rect = board.getBoundingClientRect();
@@ -1274,8 +1282,8 @@ function drawEvalBar(bestLine, source) {
   container.id = "chessbot-eval-bar";
   container.style.cssText = `
     position: absolute;
-    left: -28px;
-    top: 0;
+    left: ${dx - 28}px;
+    top: ${dy}px;
     width: 22px;
     height: ${rect.height}px;
     border-radius: 3px;
@@ -1312,8 +1320,6 @@ function drawEvalBar(bestLine, source) {
     label.textContent = "OB";
     container.appendChild(label);
 
-    const parentPos = getComputedStyle(parent).position;
-    if (parentPos === "static") parent.style.position = "relative";
     parent.appendChild(container);
     return;
   }
@@ -1333,12 +1339,10 @@ function drawEvalBar(bestLine, source) {
   }
   const blackPct = 100 - whitePct;
 
-  // Top section (white if not flipped, black if flipped)
-  // The top div's height = the LOSING side's percentage, so the winning side fills the rest.
-  // Not flipped: top=white, so top height = 100-whitePct (white fills from bottom)
-  // Flipped: top=black, so top height = 100-blackPct = whitePct (black fills from bottom)
-  const topColor = flipped ? "#333" : "#f0f0f0";
-  const botColor = flipped ? "#f0f0f0" : "#333";
+  // Standard eval bar: black on top, white on bottom (matching unflipped board).
+  // When flipped: white on top, black on bottom.
+  const topColor = flipped ? "#f0f0f0" : "#333";
+  const botColor = flipped ? "#333" : "#f0f0f0";
   const topHeight = flipped ? whitePct : (100 - whitePct);
 
   const topDiv = document.createElement("div");
@@ -1363,9 +1367,9 @@ function drawEvalBar(bestLine, source) {
     font-family: monospace;
     pointer-events: none;
     z-index: 1;
-    ${isWhiteAdvantage === !flipped
-      ? `bottom: 2px; color: #333;`
-      : `top: 2px; color: #ccc;`}
+    ${isWhiteAdvantage !== flipped
+      ? `bottom: 2px;` : `top: 2px;`}
+    color: ${isWhiteAdvantage ? "#333" : "#ccc"};
   `;
   scoreLabel.textContent = scoreText;
   container.appendChild(scoreLabel);
@@ -1416,8 +1420,6 @@ function drawEvalBar(bestLine, source) {
     }
   }
 
-  const parentPos = getComputedStyle(parent).position;
-  if (parentPos === "static") parent.style.position = "relative";
   // On lichess .cg-wrap has overflow:hidden which clips the eval bar and WDL.
   // Override to visible so the bar (left:-28px) and WDL (bottom:-22px) are shown.
   if (SITE === "lichess" && parent.classList.contains("cg-wrap")) {
