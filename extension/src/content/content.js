@@ -15,6 +15,7 @@ let observer = null;
 let debounceTimer = null;
 let pendingEval = false; // true while waiting for a bestmove response
 let lastPieceCount = 0;  // to detect animation mid-flight (piece count changes)
+let initialReadDone = false; // guard against duplicate initialRead calls
 
 // ── Site detection ───────────────────────────────────────────
 const SITE = detectSite();
@@ -44,6 +45,7 @@ function init() {
 
 function findBoard() {
   boardReady = false;
+  initialReadDone = false;
   waitForBoard().then((boardEl) => {
     console.log("[chessbot] board found, starting observer");
     boardReady = true;
@@ -56,13 +58,14 @@ function findBoard() {
 
 /** First read after finding the board — forces analysis regardless of diff. */
 function initialRead() {
-  if (!boardReady || !enabled) return;
+  if (initialReadDone || !boardReady || !enabled) return;
   const fen = boardToFen();
   if (!fen) {
     // Pieces not rendered yet, try again shortly
     setTimeout(() => initialRead(), 500);
     return;
   }
+  initialReadDone = true; // guard against duplicate calls
 
   const boardPart = fen.split(" ")[0];
   const pieceCount = countPieces(boardPart);
