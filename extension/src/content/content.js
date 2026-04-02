@@ -20,7 +20,8 @@ let pendingInitialFen = null; // FEN read before WS was ready, to send on connec
 let currentDepth = 15; // analysis depth, updated from popup settings
 let isDragging = false; // true while user is dragging a piece
 let waitingForOpponent = false; // true after our move, until board changes again
-let renderGeneration = 0; // increments on each board change — prevents stale overlays
+let renderGeneration = 0;
+let dragHandlersAttached = false; // prevent duplicate drag listeners on reconnect // increments on each board change — prevents stale overlays
 
 // ── Site detection ───────────────────────────────────────────
 const SITE = detectSite();
@@ -234,6 +235,7 @@ let pollTimer = null;
 function observeBoard(boardEl) {
   if (observer) observer.disconnect();
   if (pollTimer) clearInterval(pollTimer);
+  if (debounceTimer) clearTimeout(debounceTimer);
 
   // MutationObserver — catches changes that DO bubble
   observer = new MutationObserver((mutations) => {
@@ -264,26 +266,26 @@ function observeBoard(boardEl) {
   }
 
   // Drag detection — suppress board reads while user is holding a piece
-  const dragTarget = boardEl.shadowRoot || boardEl;
-  dragTarget.addEventListener("mousedown", (e) => {
-    // Only track left-click on piece elements
-    if (e.button !== 0) return;
-    isDragging = true;
-  }, true);
-  // Use document-level mouseup so we catch drops outside the board
-  document.addEventListener("mouseup", (e) => {
-    if (!isDragging) return;
-    isDragging = false;
-    // After the piece settles, do a fresh read
-    setTimeout(() => { if (enabled && boardReady) readAndSend(); }, 150);
-  }, true);
-  // Also handle touch for mobile/tablet
-  dragTarget.addEventListener("touchstart", () => { isDragging = true; }, true);
-  document.addEventListener("touchend", () => {
-    if (!isDragging) return;
-    isDragging = false;
-    setTimeout(() => { if (enabled && boardReady) readAndSend(); }, 150);
-  }, true);
+  // Only attach once to avoid duplicate listeners on SPA reconnect
+  if (!dragHandlersAttached) {
+    dragHandlersAttached = true;
+    const dragTarget = boardEl.shadowRoot || boardEl;
+    dragTarget.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      isDragging = true;
+    }, true);
+    document.addEventListener("mouseup", (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      setTimeout(() => { if (enabled && boardReady) readAndSend(); }, 150);
+    }, true);
+    dragTarget.addEventListener("touchstart", () => { isDragging = true; }, true);
+    document.addEventListener("touchend", () => {
+      if (!isDragging) return;
+      isDragging = false;
+      setTimeout(() => { if (enabled && boardReady) readAndSend(); }, 150);
+    }, true);
+  }
 
   // Polling fallback — check every 800ms regardless of observer
   pollTimer = setInterval(() => {
@@ -335,13 +337,14 @@ function readAndSend() {
     waitingForOpponent = false;
   }
 
-  // Animation guard: if piece count suddenly dropped by more than 1, a piece
-  // may be mid-flight (temporarily off both squares). Wait for next poll.
-  // Update lastPieceCount so we don't get stuck if the drop is real (e.g. reload).
+  // Animation guard: if piece count dropped by more than 2, a piece is likely
+  // mid-flight (temporarily off both squares). Threshold of 2 allows en passant
+  // (which legitimately removes 2 pieces from view: captured pawn + moving pawn
+  // in transit). A drop of 3+ is almost certainly animation.
   const pieceCount = countPieces(boardPart);
-  if (lastPieceCount > 0 && pieceCount < lastPieceCount - 1) {
+  if (lastPieceCount > 0 && pieceCount < lastPieceCount - 2) {
     console.log(`[chessbot] piece count dropped ${lastPieceCount}→${pieceCount}, likely mid-animation — skipping`);
-    lastPieceCount = pieceCount; // accept the new count so we don't block forever
+    lastPieceCount = pieceCount;
     return;
   }
 
@@ -975,6 +978,7 @@ function getBoardGeometry() {
   const board = getBoardElement();
   if (!board) return null;
   const rect = board.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
   const sqSize = rect.width / 8;
   const flipped =
     (SITE === "chesscom" && isChesscomFlipped(board)) ||

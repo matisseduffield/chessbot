@@ -8,17 +8,24 @@ function App() {
   const [enabled, setEnabled] = useState(true)
   const [connected, setConnected] = useState(false)
 
-  // Check WS backend connectivity
+  // Check WS backend connectivity — poll every 5s so status updates if backend restarts
   useEffect(() => {
     let ws
-    try {
-      ws = new WebSocket('ws://localhost:8080')
-      ws.onopen = () => { setConnected(true); ws.close() }
-      ws.onerror = () => setConnected(false)
-    } catch {
-      setConnected(false)
+    const check = () => {
+      try {
+        ws = new WebSocket('ws://localhost:8080')
+        ws.onopen = () => { setConnected(true); ws.close() }
+        ws.onerror = () => setConnected(false)
+      } catch {
+        setConnected(false)
+      }
     }
-    return () => { if (ws) ws.close() }
+    check()
+    const interval = setInterval(check, 5000)
+    return () => {
+      clearInterval(interval)
+      if (ws && ws.readyState <= 1) ws.close()
+    }
   }, [])
 
   const toggle = () => {

@@ -82,13 +82,13 @@ async function main() {
 
   console.log(`[server] WebSocket server listening on ws://localhost:${config.port}`);
 
-  // Generation counter — only the latest evaluation's result is sent
-  let evalGeneration = 0;
-  let evaluationQueue = Promise.resolve();
-
   wss.on("connection", (ws, req) => {
     const remote = req.socket.remoteAddress;
     console.log(`[server] client connected (${remote})`);
+
+    // Per-client generation counter — prevents cross-client eval interference
+    let evalGeneration = 0;
+    let evaluationQueue = Promise.resolve();
 
     ws.on("message", async (data) => {
       let msg;
