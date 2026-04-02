@@ -1418,6 +1418,11 @@ function drawEvalBar(bestLine, source) {
 
   const parentPos = getComputedStyle(parent).position;
   if (parentPos === "static") parent.style.position = "relative";
+  // On lichess .cg-wrap has overflow:hidden which clips the eval bar and WDL.
+  // Override to visible so the bar (left:-28px) and WDL (bottom:-22px) are shown.
+  if (SITE === "lichess" && parent.classList.contains("cg-wrap")) {
+    parent.style.overflow = "visible";
+  }
   parent.appendChild(container);
 }
 

@@ -116,6 +116,14 @@ class StockfishBridge {
   /** Abort the current evaluation. Stockfish will emit bestmove immediately.
    *  Returns a promise that resolves once the bestmove response is consumed. */
   abort() {
+    // Resolve any previously pending abort promise to prevent queue deadlock.
+    // Rapid FENs can call abort() multiple times before the engine outputs
+    // bestmove, which would overwrite _abortResolve and leave earlier abort
+    // promises stuck forever — deadlocking the evaluation queue.
+    if (this._abortResolve) {
+      this._abortResolve();
+      this._abortResolve = null;
+    }
     if (!this._pendingResolve) return Promise.resolve();
     console.log("[stockfish] aborting current evaluation");
     this._send("stop");
