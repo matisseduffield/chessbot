@@ -48,6 +48,7 @@ function findBoard() {
   boardReady = false;
   initialReadDone = false;
   pendingInitialFen = null;
+  _initialStableAttempts = 0;
   waitForBoard().then((boardEl) => {
     console.log("[chessbot] board found, starting observer");
     boardReady = true;
@@ -57,7 +58,12 @@ function findBoard() {
   });
 }
 
-/** First read after finding the board — forces analysis regardless of diff. */
+/** First read after finding the board — forces analysis regardless of diff.
+ *  Waits for the position to stabilise (chess.com briefly shows the start
+ *  position before rendering the real game state on reload). */
+let _initialStableAttempts = 0;
+const MAX_STABLE_ATTEMPTS = 15; // 15 × 300ms = 4.5s max wait
+
 function initialRead() {
   if (initialReadDone || !boardReady || !enabled) return;
   const fen = boardToFen();
@@ -69,6 +75,19 @@ function initialRead() {
 
   const boardPart = fen.split(" ")[0];
   const pieceCount = countPieces(boardPart);
+
+  // On reload chess.com briefly shows the starting position before updating
+  // to the real game.  Wait until two consecutive reads return the same FEN.
+  if (boardPart !== lastBoardFen && _initialStableAttempts < MAX_STABLE_ATTEMPTS) {
+    lastBoardFen = boardPart;
+    lastPieceCount = pieceCount;
+    _initialStableAttempts++;
+    console.log(`[chessbot] initial read: position still changing, retry ${_initialStableAttempts}`);
+    setTimeout(() => initialRead(), 300);
+    return;
+  }
+
+  initialReadDone = true;
   lastBoardFen = boardPart;
   lastPieceCount = pieceCount;
 
@@ -80,7 +99,6 @@ function initialRead() {
 
   if (turn !== playerColor) {
     console.log("[chessbot] not our turn on initial load — waiting");
-    initialReadDone = true;
     return;
   }
 
@@ -91,12 +109,10 @@ function initialRead() {
   if (sendFen(correctedFen)) {
     lastSentFen = correctedFen;
     pendingEval = true;
-    initialReadDone = true;
     console.log(`[chessbot] → initial FEN: ${correctedFen}`);
   } else {
     // WS not ready — queue the FEN to send as soon as it connects
     pendingInitialFen = correctedFen;
-    initialReadDone = true;
     console.log(`[chessbot] WS not ready, queued FEN: ${correctedFen}`);
   }
 }
@@ -280,9 +296,11 @@ function readAndSend() {
 
   // Animation guard: if piece count suddenly dropped by more than 1, a piece
   // may be mid-flight (temporarily off both squares). Wait for next poll.
+  // Update lastPieceCount so we don't get stuck if the drop is real (e.g. reload).
   const pieceCount = countPieces(boardPart);
   if (lastPieceCount > 0 && pieceCount < lastPieceCount - 1) {
     console.log(`[chessbot] piece count dropped ${lastPieceCount}→${pieceCount}, likely mid-animation — skipping`);
+    lastPieceCount = pieceCount; // accept the new count so we don't block forever
     return;
   }
 
