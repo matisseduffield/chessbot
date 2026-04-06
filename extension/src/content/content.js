@@ -223,7 +223,10 @@ function waitForBoard() {
 
 function getBoardElement() {
   if (SITE === "chesscom") {
-    return document.querySelector("wc-chess-board, chess-board, .board");
+    // Prefer the web component (which has shadowRoot) over the outer .board div
+    return document.querySelector("wc-chess-board") ||
+           document.querySelector("chess-board") ||
+           document.querySelector(".board");
   }
   if (SITE === "lichess") {
     return document.querySelector("cg-board");
@@ -375,14 +378,24 @@ function readAndSend() {
 
   console.log(`[chessbot] turn=${turn} player=${playerColor}`);
 
-  // If turn detection failed entirely, don't guess — wait for next poll
+  // If turn detection failed entirely, use heuristic:
+  // - Starting position → always white's turn
+  // - Otherwise skip and wait for next poll
   if (!turn) {
-    console.log("[chessbot] turn unknown — skipping this cycle");
-    return;
+    if (isStartPos) {
+      // Starting position is definitely white's turn
+      console.log("[chessbot] starting position — assuming white's turn");
+    } else {
+      console.log("[chessbot] turn unknown — skipping this cycle");
+      return;
+    }
   }
 
+  // Effective turn: use detected turn, or "w" for starting position
+  const effectiveTurn = turn || "w";
+
   // Only show move suggestions when it's our turn
-  if (turn !== playerColor) {
+  if (effectiveTurn !== playerColor) {
     clearMoveIndicators(); // clear stale move suggestions, keep eval bar
     lastSentFen = ""; // reset so we re-analyse when it's our turn again
     waitingForOpponent = true; // don't re-analyze until board changes
@@ -392,7 +405,7 @@ function readAndSend() {
 
   // Build FEN with correct side-to-move
   const parts = fen.split(" ");
-  parts[1] = turn;
+  parts[1] = effectiveTurn;
   const correctedFen = parts.join(" ");
 
   if (correctedFen === lastSentFen) return;
@@ -409,7 +422,9 @@ function readAndSend() {
 // ── Chess.com board reader ───────────────────────────────────
 
 function chesscomBoardToFen() {
-  const board = document.querySelector("wc-chess-board, chess-board, .board");
+  const board = document.querySelector("wc-chess-board") ||
+                document.querySelector("chess-board") ||
+                document.querySelector(".board");
   if (!board) return null;
 
   // Chess.com renders pieces in various ways depending on version.
@@ -1142,9 +1157,6 @@ function drawMultiPV(lines) {
   if (!geo) return;
   const { board, rect, sqSize, flipped } = geo;
 
-  const { target: parent, dx, dy } = getOverlayTarget(board);
-  if (!parent) return;
-
   // Create an SVG layer for square highlights
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.id = "chessbot-arrow-svg";
@@ -1168,7 +1180,7 @@ function drawMultiPV(lines) {
     parsed.push({ line, to, color, dk: `${to.file},${to.rank}` });
   }
 
-  // Draw destination eval badges — stack vertically when sharing a square
+  // Draw destination eval badges as SVG elements — stack vertically when sharing a square
   const badgeH = sqSize * 0.32;
   const dstSlots = {};
   for (const { line, to, color, dk } of parsed) {
@@ -1176,32 +1188,27 @@ function drawMultiPV(lines) {
     const scoreText = formatScore(line);
     if (!dstSlots[dk]) dstSlots[dk] = 0;
     const slot = dstSlots[dk]++;
-
-    const badge = document.createElement("div");
-    badge.className = "chessbot-eval-badge";
     const fontSize = Math.max(10, sqSize * 0.22);
-    badge.style.cssText = `
-      position: absolute;
-      left: ${dst.x + dx}px;
-      top: ${dst.y + slot * badgeH + dy}px;
-      width: ${sqSize}px;
-      height: ${badgeH}px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: ${color};
-      color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
-      font-size: ${fontSize}px;
-      font-weight: 800;
-      pointer-events: none;
-      z-index: 1001;
-      border-radius: 0 0 3px 3px;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.4);
-      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-    `;
-    badge.textContent = scoreText;
-    parent.appendChild(badge);
+
+    const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bg.setAttribute("x", dst.x);
+    bg.setAttribute("y", dst.y + slot * badgeH);
+    bg.setAttribute("width", sqSize);
+    bg.setAttribute("height", badgeH);
+    bg.setAttribute("fill", color);
+    bg.setAttribute("rx", "3");
+    svg.appendChild(bg);
+
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", dst.x + sqSize / 2);
+    text.setAttribute("y", dst.y + slot * badgeH + badgeH * 0.75);
+    text.setAttribute("text-anchor", "middle");
+    text.setAttribute("font-size", fontSize);
+    text.setAttribute("font-weight", "800");
+    text.setAttribute("font-family", "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, monospace");
+    text.setAttribute("fill", "#fff");
+    text.textContent = scoreText;
+    svg.appendChild(text);
   }
 
   injectOverlay(board, svg);
