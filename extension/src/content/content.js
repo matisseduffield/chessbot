@@ -14,6 +14,8 @@ let enabled = true;
 let observer = null;
 let debounceTimer = null;
 let pendingEval = false; // true while waiting for a bestmove response
+let evalSentAt = 0;     // timestamp when last eval was sent — for client-side timeout
+const EVAL_TIMEOUT_MS = 25000; // 25s client-side timeout for eval responses
 let lastPieceCount = 0;  // to detect animation mid-flight (piece count changes)
 let initialReadDone = false; // guard against duplicate initialRead calls
 let pendingInitialFen = null; // FEN read before WS was ready, to send on connect
@@ -181,6 +183,11 @@ function connectWS() {
   ws.onmessage = (evt) => {
     try {
       const msg = JSON.parse(evt.data);
+      if (msg.type === "error") {
+        console.error(`[chessbot] server error: ${msg.message}`);
+        pendingEval = false;
+        return;
+      }
       if (msg.type === "bestmove" && msg.bestmove) {
         // Ignore stale responses for positions we didn't request
         if (msg.fen && lastSentFen) {
@@ -376,6 +383,15 @@ function countPieces(boardFen) {
 function readAndSend() {
   if (!boardReady) return;
   if (isDragging) return; // user is holding a piece — wait for drop
+
+  // Client-side eval timeout: if we've been waiting too long for a response,
+  // reset state so we can re-analyze on the next board change
+  if (pendingEval && evalSentAt && (Date.now() - evalSentAt > EVAL_TIMEOUT_MS)) {
+    console.warn(`[chessbot] eval timeout (${EVAL_TIMEOUT_MS}ms) — resetting state`);
+    pendingEval = false;
+    lastSentFen = "";
+  }
+
   const fen = boardToFen();
   if (!fen) return; // no board or pieces yet — silent skip
 
@@ -456,6 +472,7 @@ function readAndSend() {
 
   if (correctedFen === lastSentFen) return;
   pendingEval = true;
+  evalSentAt = Date.now();
   console.log(`[chessbot] → FEN: ${correctedFen}`);
   clearMoveIndicators();
   if (sendFen(correctedFen)) {

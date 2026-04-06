@@ -28,6 +28,22 @@ class StockfishBridge {
         reject(err);
       });
 
+      this.process.on("exit", (code, signal) => {
+        console.error(`[stockfish] process exited unexpectedly (code=${code}, signal=${signal})`);
+        this.ready = false;
+        // Force-resolve any pending evaluation so the queue doesn't deadlock
+        if (this._pendingResolve) {
+          const res = this._pendingResolve;
+          this._pendingResolve = null;
+          this._pendingPV = null;
+          res({ bestmove: null, lines: [] });
+        }
+        if (this._abortResolve) {
+          this._abortResolve();
+          this._abortResolve = null;
+        }
+      });
+
       this.process.stderr.on("data", (data) => {
         console.error("[stockfish][stderr]", data.toString().trim());
       });
@@ -104,7 +120,17 @@ class StockfishBridge {
       this._evalTimeout = setTimeout(() => {
         if (this._pendingResolve) {
           console.warn("[stockfish] evaluation timeout — forcing stop");
-          this._send("stop"); // will trigger bestmove immediately
+          this._send("stop");
+          // If stop doesn't produce bestmove within 2s, force-resolve
+          this._stopFallback = setTimeout(() => {
+            if (this._pendingResolve) {
+              console.error("[stockfish] engine unresponsive — force-resolving eval");
+              const res = this._pendingResolve;
+              this._pendingResolve = null;
+              this._pendingPV = null;
+              res({ bestmove: null, lines: [] });
+            }
+          }, 2000);
         }
       }, 20_000);
 
@@ -238,6 +264,7 @@ class StockfishBridge {
     if (line.startsWith("bestmove")) {
       console.log(`[stockfish] ${line}`);
       clearTimeout(this._evalTimeout);
+      clearTimeout(this._stopFallback);
       clearTimeout(this._abortTimeout);
       const bestmove = line.split(" ")[1];
 
