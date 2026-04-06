@@ -335,6 +335,36 @@ function observeBoard(boardEl) {
   }, 800);
 }
 
+/** Check if the board currently has premove ghost/indicator elements. */
+function hasPremoveElements() {
+  if (SITE === "chesscom") {
+    const board = document.querySelector("wc-chess-board") ||
+                  document.querySelector("chess-board") ||
+                  document.querySelector(".board");
+    if (!board) return false;
+    // Check both regular DOM and shadow root for ghost or premove elements
+    const roots = [board];
+    if (board.shadowRoot) roots.push(board.shadowRoot);
+    for (const root of roots) {
+      if (root.querySelector(".ghost, .premove, [class*='ghost'], [class*='premove']")) return true;
+      // Also check for semi-transparent pieces (opacity < 0.5) as premove indicator
+      const els = root.querySelectorAll(".piece");
+      for (const el of els) {
+        if (parseFloat(getComputedStyle(el).opacity) < 0.5) return true;
+      }
+    }
+    return false;
+  }
+  if (SITE === "lichess") {
+    const board = document.querySelector("cg-board");
+    if (!board) return false;
+    // Lichess marks premoved squares and ghost pieces
+    if (board.querySelector("piece.ghost, square.premove, .premove")) return true;
+    return false;
+  }
+  return false;
+}
+
 function countPieces(boardFen) {
   let n = 0;
   for (const ch of boardFen) {
@@ -356,7 +386,13 @@ function readAndSend() {
     // If we're waiting for the opponent, don't re-analyze the same position
     if (waitingForOpponent || lastSentFen) return;
   } else {
-    // Board actually changed — clear the opponent-wait flag
+    // Board actually changed — but check for premove ghost artifacts first.
+    // If we're waiting for the opponent and the board diff looks like our own
+    // color moved (premove visualization), ignore it.
+    if (waitingForOpponent && hasPremoveElements()) {
+      console.log("[chessbot] premove detected while waiting for opponent — ignoring board change");
+      return;
+    }
     waitingForOpponent = false;
   }
 
@@ -459,6 +495,12 @@ function chesscomBoardToFen() {
 
   for (const piece of pieces) {
     const classes = typeof piece.className === "string" ? piece.className : (piece.getAttribute("class") || "");
+
+    // Skip ghost/premove pieces — chess.com adds these for premove visualization
+    if (/\bghost\b/.test(classes)) continue;
+    // Also skip pieces with very low opacity (premove ghosts are semi-transparent)
+    const opacity = parseFloat(getComputedStyle(piece).opacity);
+    if (opacity < 0.5) continue;
 
     // Get piece type from class like "bb", "wp", "bk", etc.
     const pieceMatch = classes.match(/\b([wb][prnbqk])\b/);
@@ -567,21 +609,31 @@ function isChesscomFlipped(board) {
   return false;
 }
 
+/** Filter out ghost/premove elements from a NodeList of pieces. */
+function filterGhostPieces(pieces) {
+  return Array.from(pieces).filter(el => {
+    const cls = typeof el.className === "string" ? el.className : (el.getAttribute("class") || "");
+    // chess.com ghost pieces: class contains "ghost", "premove", or "dragging"
+    if (/\b(ghost|premove)\b/i.test(cls)) return false;
+    return true;
+  });
+}
+
 /** Try every known way to find chess.com piece elements. */
 function findChesscomPieces(board) {
   // Method 1: direct children/descendants with .piece class
   let pieces = board.querySelectorAll(".piece");
-  if (pieces.length >= 2) return pieces;
+  if (pieces.length >= 2) return filterGhostPieces(pieces);
 
   // Method 2: shadow root
   if (board.shadowRoot) {
     pieces = board.shadowRoot.querySelectorAll(".piece");
-    if (pieces.length >= 2) return pieces;
+    if (pieces.length >= 2) return filterGhostPieces(pieces);
   }
 
   // Method 3: global search (pieces may be siblings, not children)
   pieces = document.querySelectorAll(".piece");
-  if (pieces.length >= 2) return pieces;
+  if (pieces.length >= 2) return filterGhostPieces(pieces);
 
   // Method 4: look for elements with piece-type class pattern [wb][prnbqk]
   // and square-NN pattern, anywhere in the document
@@ -622,6 +674,8 @@ function lichessBoardToFen() {
   const grid = Array.from({ length: 8 }, () => Array(8).fill(null));
 
   for (const piece of pieces) {
+    // Skip ghost/premove pieces on lichess (class contains "ghost")
+    if (piece.classList.contains("ghost")) continue;
     // Lichess uses CSS transform: translate(…) for positioning
     const transform = piece.style.transform;
     const match = transform && transform.match(/translate\((\d+(?:\.\d+)?)px\s*,\s*(\d+(?:\.\d+)?)px\)/);
