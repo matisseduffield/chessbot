@@ -323,6 +323,27 @@
       <span class="range-value" id="depth-value">15</span>
     </div>
 
+    <div class="section-label">Analyze For</div>
+    <div class="setting-row" style="gap:12px">
+      <label class="toggle-row" style="margin:0"><input type="radio" name="run-for" value="me" checked style="accent-color:var(--accent)"><span>Me</span></label>
+      <label class="toggle-row" style="margin:0"><input type="radio" name="run-for" value="opponent" style="accent-color:var(--accent)"><span>Opponent</span></label>
+      <label class="toggle-row" style="margin:0"><input type="radio" name="run-for" value="both" style="accent-color:var(--accent)"><span>Both</span></label>
+    </div>
+
+    <div class="section-label">Time Limit (ms)</div>
+    <div class="setting-row">
+      <label class="toggle-row" style="margin:0;flex-shrink:0"><input type="checkbox" id="chk-time-limit"><span></span></label>
+      <input type="range" id="time-slider" min="100" max="30000" step="100" value="1000" disabled>
+      <span class="range-value" id="time-value">1000</span>
+    </div>
+
+    <div class="section-label">Nodes Limit</div>
+    <div class="setting-row">
+      <label class="toggle-row" style="margin:0;flex-shrink:0"><input type="checkbox" id="chk-nodes-limit"><span></span></label>
+      <input type="number" id="nodes-input" min="1000" max="100000000" step="1000" value="100000" disabled
+        style="width:100px;background:var(--bg-900);border:1px solid var(--bg-700);border-radius:4px;color:var(--text-400);padding:4px 6px;font-size:13px;">
+    </div>
+
     <div class="section-label">Principal Variations</div>
     <div class="setting-row">
       <input type="range" id="multipv-slider" min="1" max="8" value="1">
@@ -428,6 +449,8 @@ let selectedPV = 1;
 let currentData = null; // last bestmove response
 let voiceEnabled = false;
 let lastSpoken = "";
+let searchMovetime = null; // null = disabled
+let searchNodes = null;    // null = disabled
 
 // Board piece map (Unicode chess pieces)
 const PIECE_CHARS = {
@@ -766,6 +789,15 @@ document.getElementById("depth-slider").addEventListener("change", (e) => {
   sendOpt("depth", parseInt(e.target.value));
 });
 
+// Analyze For radio buttons — broadcast to all extension tabs
+document.querySelectorAll('input[name="run-for"]').forEach((radio) => {
+  radio.addEventListener("change", (e) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_run_engine_for", value: e.target.value } }));
+    }
+  });
+});
+
 document.getElementById("multipv-slider").addEventListener("input", (e) => {
   document.getElementById("multipv-value").textContent = e.target.value;
 });
@@ -794,6 +826,46 @@ document.getElementById("skill-slider").addEventListener("change", (e) => {
 document.getElementById("chk-voice").addEventListener("change", (e) => {
   voiceEnabled = e.target.checked;
 });
+
+// Time limit
+document.getElementById("chk-time-limit").addEventListener("change", (e) => {
+  const slider = document.getElementById("time-slider");
+  slider.disabled = !e.target.checked;
+  searchMovetime = e.target.checked ? parseInt(slider.value) : null;
+  broadcastSearchLimits();
+});
+document.getElementById("time-slider").addEventListener("input", (e) => {
+  document.getElementById("time-value").textContent = e.target.value;
+});
+document.getElementById("time-slider").addEventListener("change", (e) => {
+  if (document.getElementById("chk-time-limit").checked) {
+    searchMovetime = parseInt(e.target.value);
+    broadcastSearchLimits();
+  }
+});
+
+// Nodes limit
+document.getElementById("chk-nodes-limit").addEventListener("change", (e) => {
+  const input = document.getElementById("nodes-input");
+  input.disabled = !e.target.checked;
+  searchNodes = e.target.checked ? parseInt(input.value) : null;
+  broadcastSearchLimits();
+});
+document.getElementById("nodes-input").addEventListener("change", (e) => {
+  if (document.getElementById("chk-nodes-limit").checked) {
+    searchNodes = parseInt(e.target.value);
+    broadcastSearchLimits();
+  }
+});
+
+function broadcastSearchLimits() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: "broadcast",
+      payload: { type: "set_search_limits", movetime: searchMovetime, nodes: searchNodes }
+    }));
+  }
+}
 document.getElementById("chk-evalbar").addEventListener("change", renderAll);
 document.getElementById("chk-board").addEventListener("change", renderAll);
 document.getElementById("chk-pvs").addEventListener("change", renderAll);

@@ -26,6 +26,9 @@ let renderGeneration = 0;
 let dragHandlersAttached = false; // prevent duplicate drag listeners on reconnect // increments on each board change — prevents stale overlays
 let voiceEnabled = false; // TTS — toggled from popup
 let lastSpokenMove = ""; // prevent repeating the same announcement
+let runEngineFor = "me"; // "me" | "opponent" | "both" — which turns to analyze
+let searchMovetime = null; // null = disabled, else ms
+let searchNodes = null; // null = disabled, else node count
 
 // ── Log buffer ───────────────────────────────────────────────
 const LOG_BUFFER_MAX = 500;
@@ -124,12 +127,17 @@ function initialRead() {
 
   if (!turn) {
     // Can't determine turn — for initial load, assume it's the player's turn
-    // (the starting position is white, and if we just opened the page mid-game
-    // this gives us a 50/50 chance rather than showing nothing)
     console.log("[chessbot] turn unknown on initial load — assuming player's turn");
-  } else if (turn !== playerColor) {
-    console.log("[chessbot] not our turn on initial load — waiting");
-    return;
+  } else {
+    const isMyTurn = turn === playerColor;
+    const shouldAnalyze =
+      runEngineFor === "both" ||
+      (runEngineFor === "me" && isMyTurn) ||
+      (runEngineFor === "opponent" && !isMyTurn);
+    if (!shouldAnalyze) {
+      console.log("[chessbot] not our analysis turn on initial load — waiting");
+      return;
+    }
   }
 
   const parts = fen.split(" ");
@@ -188,6 +196,26 @@ function connectWS() {
         pendingEval = false;
         return;
       }
+      // Handle settings broadcast from panel
+      if (msg.type === "set_run_engine_for" && msg.value) {
+        const val = msg.value;
+        if (["me", "opponent", "both"].includes(val)) {
+          runEngineFor = val;
+          console.log(`[chessbot] run engine for: ${runEngineFor} (from panel)`);
+          waitingForOpponent = false;
+          lastSentFen = "";
+          pendingEval = false;
+          readAndSend();
+        }
+        return;
+      }
+      if (msg.type === "set_search_limits") {
+        searchMovetime = msg.movetime || null;
+        searchNodes = msg.nodes || null;
+        console.log(`[chessbot] search limits: movetime=${searchMovetime} nodes=${searchNodes} (from panel)`);
+        resendCurrentPosition();
+        return;
+      }
       if (msg.type === "bestmove" && msg.bestmove) {
         // Ignore stale responses for positions we didn't request
         if (msg.fen && lastSentFen) {
@@ -226,7 +254,10 @@ function connectWS() {
 
 function sendFen(fen) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-  ws.send(JSON.stringify({ type: "fen", fen, depth: currentDepth }));
+  const msg = { type: "fen", fen, depth: currentDepth };
+  if (searchMovetime) msg.movetime = searchMovetime;
+  if (searchNodes) msg.nodes = searchNodes;
+  ws.send(JSON.stringify(msg));
   return true;
 }
 
@@ -456,10 +487,16 @@ function readAndSend() {
   // Effective turn: use detected turn, or "w" for starting position
   const effectiveTurn = turn || "w";
 
-  // Only show move suggestions when it's our turn
-  if (effectiveTurn !== playerColor) {
+  // Only show move suggestions based on runEngineFor setting
+  const isMyTurn = effectiveTurn === playerColor;
+  const shouldAnalyze =
+    runEngineFor === "both" ||
+    (runEngineFor === "me" && isMyTurn) ||
+    (runEngineFor === "opponent" && !isMyTurn);
+
+  if (!shouldAnalyze) {
     clearMoveIndicators(); // clear stale move suggestions, keep eval bar
-    lastSentFen = ""; // reset so we re-analyse when it's our turn again
+    lastSentFen = ""; // reset so we re-analyse when appropriate turn arrives
     waitingForOpponent = true; // don't re-analyze until board changes
     pendingEval = false;
     return;
@@ -1108,21 +1145,59 @@ function squareCenter(file, rank, sqSize, flipped) {
   return { x: tl.x + sqSize / 2, y: tl.y + sqSize / 2 };
 }
 
-// ── Square highlight helper ──────────────────────────────
+// ── Arrow drawing helper ─────────────────────────────────
 
-function drawSquareHighlight(svg, file, rank, sqSize, flipped, fillColor, borderColor) {
-  const tl = squareTopLeft(file, rank, sqSize, flipped);
-  const border = Math.max(3, sqSize * 0.08);
-  const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-  rect.setAttribute("x", tl.x + border / 2);
-  rect.setAttribute("y", tl.y + border / 2);
-  rect.setAttribute("width", sqSize - border);
-  rect.setAttribute("height", sqSize - border);
-  rect.setAttribute("fill", "none");
-  rect.setAttribute("stroke", borderColor);
-  rect.setAttribute("stroke-width", border);
-  rect.setAttribute("rx", "2");
-  svg.appendChild(rect);
+/** Draw an SVG arrow from one square to another on the board overlay. */
+function drawArrowOnBoard(svg, fromFile, fromRank, toFile, toRank, sqSize, flipped, color, opacity) {
+  const from = squareCenter(fromFile, fromRank, sqSize, flipped);
+  const to = squareCenter(toFile, toRank, sqSize, flipped);
+
+  let x2 = to.x, y2 = to.y;
+  const dx = x2 - from.x, dy = y2 - from.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+
+  // Shorten line so arrowhead sits near target square edge
+  const shorten = sqSize * 0.35;
+  if (dist > shorten) {
+    const scale = (dist - shorten) / dist;
+    x2 = from.x + dx * scale;
+    y2 = from.y + dy * scale;
+  }
+
+  const strokeW = sqSize / 5;
+  const op = opacity || 0.85;
+
+  // Line
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", from.x);
+  line.setAttribute("y1", from.y);
+  line.setAttribute("x2", x2);
+  line.setAttribute("y2", y2);
+  line.setAttribute("stroke", color);
+  line.setAttribute("stroke-width", strokeW);
+  line.setAttribute("stroke-linecap", "round");
+  line.setAttribute("opacity", op);
+  svg.appendChild(line);
+
+  // Arrowhead polygon (avoids marker url(#) CSP issues)
+  const adx = x2 - from.x, ady = y2 - from.y;
+  const len = Math.sqrt(adx * adx + ady * ady);
+  if (len < 1) return;
+  const ux = adx / len, uy = ady / len;
+  const headLen = sqSize * 0.38;
+  const headW = sqSize * 0.28;
+  const tipX = x2 + ux * headLen * 0.3;
+  const tipY = y2 + uy * headLen * 0.3;
+  const baseX = x2 - ux * headLen * 0.5;
+  const baseY = y2 - uy * headLen * 0.5;
+  const px = -uy * headW, py = ux * headW;
+
+  const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+  polygon.setAttribute("points",
+    `${tipX},${tipY} ${baseX + px},${baseY + py} ${baseX - px},${baseY - py}`);
+  polygon.setAttribute("fill", color);
+  polygon.setAttribute("opacity", op);
+  svg.appendChild(polygon);
 }
 
 // ── Single best move: green squares (our move) + red squares (opponent response) ──
@@ -1143,28 +1218,23 @@ function drawSingleMove(uci, bestLine, source) {
   svg.setAttribute("height", rect.height);
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
-  // Green highlighted squares for our best move (gold for book)
-  const moveFill = isBook ? "rgba(212,160,23,0.45)" : "rgba(46,204,113,0.45)";
-  const moveBorder = isBook ? "rgba(212,160,23,0.9)" : "rgba(46,204,113,0.9)";
-  drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, moveFill, moveBorder);
-  drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, moveFill, moveBorder);
+  // Green arrow for our best move (gold for book)
+  const moveColor = isBook ? "rgba(212,160,23,0.9)" : "hsla(145,100%,50%,0.85)";
+  drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, moveColor);
 
-  // Red highlighted squares for opponent's predicted response
+  // Red arrow for opponent's predicted response
   if (bestLine && bestLine.pv && bestLine.pv.length >= 2) {
     const response = bestLine.pv[1];
     if (response && response.length >= 4) {
       const resp = uciToSquares(response);
-      const respFill = "rgba(231,76,60,0.35)";
-      const respBorder = "rgba(231,76,60,0.85)";
-      drawSquareHighlight(svg, resp.from.file, resp.from.rank, sqSize, flipped, respFill, respBorder);
-      drawSquareHighlight(svg, resp.to.file, resp.to.rank, sqSize, flipped, respFill, respBorder);
+      drawArrowOnBoard(svg, resp.from.file, resp.from.rank, resp.to.file, resp.to.rank, sqSize, flipped, "hsla(350,100%,50%,0.7)", 0.7);
     }
   }
 
   // Badge on destination square — "OB" for book, eval score for engine
   const dst = squareTopLeft(to.file, to.rank, sqSize, flipped);
-  const badgeH = sqSize * 0.32;
-  const fontSize = Math.max(9, sqSize * 0.18);
+  const badgeH = sqSize * 0.28;
+  const fontSize = Math.max(9, sqSize * 0.17);
   if (isBook) {
     const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     bg.setAttribute("x", dst.x);
@@ -1238,31 +1308,27 @@ function drawMultiPV(lines) {
   if (!geo) return;
   const { board, rect, sqSize, flipped } = geo;
 
-  // Create an SVG layer for square highlights
+  // Create an SVG layer for arrows
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.id = "chessbot-arrow-svg";
   svg.setAttribute("width", rect.width);
   svg.setAttribute("height", rect.height);
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
-  // Highlight destination square for each PV line (+ source for all lines)
+  // Draw arrows for each PV line (best = most opaque, others fade)
   const parsed = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line.move || line.move.length < 4) continue;
     const { from, to } = uciToSquares(line.move);
     const color = EVAL_COLORS[i] || EVAL_COLORS[EVAL_COLORS.length - 1];
-    const alpha = i === 0 ? 0.45 : 0.3;
-    const fill = hexToRgba(color, alpha);
-    const stroke = hexToRgba(color, 0.9);
-    // Source and destination squares for all PV lines
-    drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, fill, stroke);
-    drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, fill, stroke);
+    const opacity = i === 0 ? 0.9 : 0.6;
+    drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, color, opacity);
     parsed.push({ line, from, to, color, dk: `${to.file},${to.rank}` });
   }
 
-  // Draw destination eval badges as SVG elements — stack vertically when sharing a square
-  const badgeH = sqSize * 0.32;
+  // Draw eval badges on destination squares — stack vertically when sharing a square
+  const badgeH = sqSize * 0.28;
   const dstSlots = {};
   for (const { line, from, to, color, dk } of parsed) {
     const dst = squareTopLeft(to.file, to.rank, sqSize, flipped);
@@ -1271,7 +1337,7 @@ function drawMultiPV(lines) {
     const badgeText = sanMove ? `${sanMove} ${scoreText}` : scoreText;
     if (!dstSlots[dk]) dstSlots[dk] = 0;
     const slot = dstSlots[dk]++;
-    const fontSize = Math.max(10, sqSize * 0.22);
+    const fontSize = Math.max(10, sqSize * 0.20);
 
     const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     bg.setAttribute("x", dst.x);
@@ -1295,14 +1361,6 @@ function drawMultiPV(lines) {
   }
 
   injectOverlay(board, svg);
-}
-
-/** Convert hex color (#rrggbb) to rgba string. */
-function hexToRgba(hex, alpha) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
 }
 
 // ── Inject SVG overlay into board container ──────────────────
@@ -1544,6 +1602,45 @@ function resendCurrentPosition() {
   sendFen(lastSentFen);
 }
 
+// ── Hotkeys ──────────────────────────────────────────────────
+// Alt+A = resume analysis, Alt+S = stop analysis
+// Alt+W = set side to white, Alt+Q = set side to black
+document.addEventListener("keydown", (e) => {
+  if (!e.altKey) return;
+  const key = e.key.toLowerCase();
+  if (key === "a") {
+    e.preventDefault();
+    if (!enabled) {
+      enabled = true;
+      console.log("[chessbot] resumed via hotkey (Alt+A)");
+      readAndSend();
+    }
+  } else if (key === "s") {
+    e.preventDefault();
+    if (enabled) {
+      enabled = false;
+      console.log("[chessbot] stopped via hotkey (Alt+S)");
+      clearArrow();
+    }
+  } else if (key === "w") {
+    e.preventDefault();
+    runEngineFor = "me";
+    waitingForOpponent = false;
+    lastSentFen = "";
+    pendingEval = false;
+    console.log("[chessbot] hotkey: analyze for Me (Alt+W)");
+    readAndSend();
+  } else if (key === "q") {
+    e.preventDefault();
+    runEngineFor = "opponent";
+    waitingForOpponent = false;
+    lastSentFen = "";
+    pendingEval = false;
+    console.log("[chessbot] hotkey: analyze for Opponent (Alt+Q)");
+    readAndSend();
+  }
+});
+
 // ── Listen for messages from popup ───────────────────────────
 if (typeof chrome !== "undefined" && chrome.runtime) {
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -1556,6 +1653,18 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
     if (msg.type === "set_voice") {
       voiceEnabled = !!msg.enabled;
       console.log(`[chessbot] voice ${voiceEnabled ? "enabled" : "disabled"}`);
+    }
+    if (msg.type === "set_run_engine_for") {
+      const val = msg.value;
+      if (["me", "opponent", "both"].includes(val)) {
+        runEngineFor = val;
+        console.log(`[chessbot] run engine for: ${runEngineFor}`);
+        // Re-check if we should analyze the current position
+        waitingForOpponent = false;
+        lastSentFen = "";
+        pendingEval = false;
+        readAndSend();
+      }
     }
     if (msg.type === "set_option") {
       // Relay engine setting to backend

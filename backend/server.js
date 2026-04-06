@@ -158,6 +158,9 @@ async function main() {
       if (msg.type === "fen" && typeof msg.fen === "string") {
         const fen = msg.fen.trim();
         const depth = Number(msg.depth) || config.defaultDepth;
+        const searchOptions = {};
+        if (msg.movetime) searchOptions.movetime = Number(msg.movetime);
+        if (msg.nodes) searchOptions.nodes = Number(msg.nodes);
         const gen = ++evalGeneration;
         console.log(`[server] ← FEN (gen ${gen}): ${fen}`);
 
@@ -202,7 +205,7 @@ async function main() {
             }
 
             // Fall back to Stockfish
-            const result = await engine.evaluate(fen, depth);
+            const result = await engine.evaluate(fen, depth, searchOptions);
             // Check again after eval finishes — a newer FEN may have arrived
             if (gen !== evalGeneration) {
               console.log(`[server] discarding stale result gen ${gen}`);
@@ -252,6 +255,11 @@ async function main() {
         if (ws.readyState === ws.OPEN) {
           ws.send(JSON.stringify({ type: "hash_cleared" }));
         }
+      }
+
+      // ── Broadcast — relay a message from panel to all other clients ──
+      if (msg.type === "broadcast" && msg.payload) {
+        broadcast(ws, msg.payload);
       }
 
       if (msg.type === "get_settings") {

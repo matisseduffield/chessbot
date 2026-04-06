@@ -100,12 +100,20 @@ class StockfishBridge {
   }
 
   /** Send a FEN to Stockfish and return evaluation results.
+   *  options: { depth, movetime, nodes } — at least one should be set.
    *  Returns { bestmove, lines: [{ move, score, mate, pv }] } */
-  evaluate(fen, depth = 15) {
+  evaluate(fen, depth = 15, options = {}) {
     return new Promise((resolve, reject) => {
       if (!this.ready) return reject(new Error("Engine not ready"));
 
-      console.log(`[stockfish] evaluating: ${fen} (depth ${depth})`);
+      const goParams = [];
+      if (options.movetime) goParams.push(`movetime ${options.movetime}`);
+      else if (options.nodes) goParams.push(`nodes ${options.nodes}`);
+      if (depth) goParams.push(`depth ${depth}`);
+      // If no limit specified at all, use depth as fallback
+      if (!goParams.length) goParams.push(`depth 15`);
+
+      console.log(`[stockfish] evaluating: ${fen} (${goParams.join(" ")})`);
 
       const multiPV = Number(this._settings.MultiPV) || 1;
       const pvLines = {}; // multipv index → latest info at highest depth
@@ -135,7 +143,7 @@ class StockfishBridge {
       }, 20_000);
 
       this._send(`position fen ${fen}`);
-      this._send(`go depth ${depth}`);
+      this._send(`go ${goParams.join(" ")}`);
     });
   }
 
