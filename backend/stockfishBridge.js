@@ -129,14 +129,16 @@ class StockfishBridge {
         if (this._pendingResolve) {
           console.warn("[stockfish] evaluation timeout — forcing stop");
           this._send("stop");
-          // If stop doesn't produce bestmove within 2s, force-resolve
+          // If stop doesn't produce bestmove within 2s, force-resolve and restart
           this._stopFallback = setTimeout(() => {
             if (this._pendingResolve) {
-              console.error("[stockfish] engine unresponsive — force-resolving eval");
+              console.error("[stockfish] engine unresponsive — force-resolving eval and restarting");
               const res = this._pendingResolve;
               this._pendingResolve = null;
               this._pendingPV = null;
               res({ bestmove: null, lines: [] });
+              // Restart the engine so subsequent evals work
+              this._restart();
             }
           }, 2000);
         }
@@ -213,6 +215,27 @@ class StockfishBridge {
       this.process = null;
       this.ready = false;
       console.log("[stockfish] stopped");
+    }
+  }
+
+  /** Kill and restart the engine after it becomes unresponsive. */
+  async _restart() {
+    console.log("[stockfish] restarting engine...");
+    if (this.process) {
+      try { this.process.kill("SIGKILL"); } catch {}
+      this.process = null;
+    }
+    this.ready = false;
+    try {
+      await this.start();
+      // Re-apply saved settings
+      for (const [name, value] of Object.entries(this._settings)) {
+        this._send(`setoption name ${name} value ${value}`);
+      }
+      this._send("isready");
+      console.log("[stockfish] engine restarted successfully");
+    } catch (err) {
+      console.error("[stockfish] failed to restart:", err.message);
     }
   }
 

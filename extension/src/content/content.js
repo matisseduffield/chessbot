@@ -216,19 +216,23 @@ function connectWS() {
         resendCurrentPosition();
         return;
       }
-      if (msg.type === "bestmove" && msg.bestmove) {
+      if (msg.type === "bestmove") {
+        pendingEval = false;
+        // Null bestmove = engine timeout / error — just unblock
+        if (!msg.bestmove) {
+          console.warn("[chessbot] received null bestmove (engine timeout?)");
+          return;
+        }
         // Ignore stale responses for positions we didn't request
         if (msg.fen && lastSentFen) {
           const responseBoardPart = msg.fen.split(" ")[0];
           const sentBoardPart = lastSentFen.split(" ")[0];
           if (responseBoardPart !== sentBoardPart) {
             console.log("[chessbot] ignoring stale bestmove (board changed)");
-            pendingEval = false;
             return;
           }
         }
         console.log(`[chessbot] bestmove: ${msg.bestmove} (${msg.source})`);
-        pendingEval = false;
         // Voice announce
         if (voiceEnabled) speakMove(msg);
         const source = msg.source || "engine";
