@@ -25,6 +25,21 @@ let dragHandlersAttached = false; // prevent duplicate drag listeners on reconne
 let voiceEnabled = false; // TTS — toggled from popup
 let lastSpokenMove = ""; // prevent repeating the same announcement
 
+// ── Log buffer ───────────────────────────────────────────────
+const LOG_BUFFER_MAX = 500;
+const logBuffer = [];
+const _origLog = console.log;
+const _origWarn = console.warn;
+const _origErr = console.error;
+function bufferLog(level, args) {
+  const line = `[${new Date().toISOString().slice(11,23)}] ${level}: ${Array.from(args).map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ")}`;
+  logBuffer.push(line);
+  if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
+}
+console.log = function(...args) { bufferLog("LOG", args); _origLog.apply(console, args); };
+console.warn = function(...args) { bufferLog("WARN", args); _origWarn.apply(console, args); };
+console.error = function(...args) { bufferLog("ERR", args); _origErr.apply(console, args); };
+
 // ── Site detection ───────────────────────────────────────────
 const SITE = detectSite();
 
@@ -167,10 +182,11 @@ function connectWS() {
     try {
       const msg = JSON.parse(evt.data);
       if (msg.type === "bestmove" && msg.bestmove) {
-        // Ignore stale responses for positions that no longer match the board
-        if (msg.fen) {
+        // Ignore stale responses for positions we didn't request
+        if (msg.fen && lastSentFen) {
           const responseBoardPart = msg.fen.split(" ")[0];
-          if (responseBoardPart !== lastBoardFen) {
+          const sentBoardPart = lastSentFen.split(" ")[0];
+          if (responseBoardPart !== sentBoardPart) {
             console.log("[chessbot] ignoring stale bestmove (board changed)");
             pendingEval = false;
             return;
@@ -1031,13 +1047,13 @@ function squareCenter(file, rank, sqSize, flipped) {
 
 function drawSquareHighlight(svg, file, rank, sqSize, flipped, fillColor, borderColor) {
   const tl = squareTopLeft(file, rank, sqSize, flipped);
-  const border = Math.max(2, sqSize * 0.06);
+  const border = Math.max(3, sqSize * 0.08);
   const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
   rect.setAttribute("x", tl.x + border / 2);
   rect.setAttribute("y", tl.y + border / 2);
   rect.setAttribute("width", sqSize - border);
   rect.setAttribute("height", sqSize - border);
-  rect.setAttribute("fill", fillColor);
+  rect.setAttribute("fill", "none");
   rect.setAttribute("stroke", borderColor);
   rect.setAttribute("stroke-width", border);
   rect.setAttribute("rx", "2");
@@ -1526,6 +1542,10 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         lastFen: lastSentFen,
       });
       return true; // keep channel open for async response
+    }
+    if (msg.type === "get_logs") {
+      sendResponse({ logs: logBuffer.join("\n") });
+      return true;
     }
     if (msg.type === "ping") {
       return true;
