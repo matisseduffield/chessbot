@@ -235,9 +235,22 @@ async function main() {
       // ── Engine settings ────────────────────────────────
       if (msg.type === "set_option" && msg.name && msg.value !== undefined) {
         console.log(`[server] ← set_option: ${msg.name} = ${msg.value}`);
-        engine.setOption(msg.name, msg.value);
+        if (msg.name === "depth") {
+          config.defaultDepth = Number(msg.value) || 15;
+        } else {
+          engine.setOption(msg.name, msg.value);
+        }
         if (ws.readyState === ws.OPEN) {
           ws.send(JSON.stringify({ type: "option_set", name: msg.name, value: msg.value }));
+        }
+      }
+
+      // ── Clear hash ─────────────────────────────────────
+      if (msg.type === "clear_hash") {
+        console.log("[server] ← clear_hash");
+        engine.clearHash();
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: "hash_cleared" }));
         }
       }
 
@@ -246,9 +259,13 @@ async function main() {
           ws.send(JSON.stringify({
             type: "settings",
             settings: engine.getSettings(),
+            defaultDepth: config.defaultDepth,
             activeEngine: path.basename(config.stockfishPath),
             activeBook: book.enabled ? path.basename(book.bookPath) : null,
             activeSyzygy: config.syzygyPath || null,
+            engines: listEngines().map((e) => e.name),
+            books: listBooks().map((b) => b.name),
+            syzygy: listSyzygyDirs().map((s) => s.name),
           }));
         }
       }

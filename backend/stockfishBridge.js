@@ -164,6 +164,14 @@ class StockfishBridge {
     return { ...this._settings };
   }
 
+  /** Clear the transposition table. */
+  clearHash() {
+    if (!this.ready) return;
+    this._send("setoption name Clear Hash");
+    this._send("isready");
+    console.log("[stockfish] hash cleared");
+  }
+
   /** Stop the engine process. */
   stop() {
     if (this.process) {

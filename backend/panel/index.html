@@ -274,6 +274,38 @@
     text-align: center;
     width: 100%;
   }
+
+  .panel-select {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--bg-700);
+    background: var(--bg-900);
+    color: var(--text-400);
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+  }
+  .panel-select:focus { border-color: var(--accent); }
+
+  .panel-btn {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--bg-700);
+    border-radius: 4px;
+    background: var(--bg-900);
+    color: var(--text-400);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-bottom: 6px;
+  }
+  .panel-btn:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
 </style>
 </head>
 <body>
@@ -297,6 +329,31 @@
       <span class="range-value" id="multipv-value">1</span>
     </div>
 
+    <div class="section-label">Threads</div>
+    <div class="setting-row">
+      <input type="range" id="threads-slider" min="1" max="16" value="1">
+      <span class="range-value" id="threads-value">1</span>
+    </div>
+
+    <div class="section-label">Hash (MB)</div>
+    <div class="setting-row">
+      <select id="hash-select" class="panel-select">
+        <option value="16">16</option>
+        <option value="32">32</option>
+        <option value="64">64</option>
+        <option value="128">128</option>
+        <option value="256">256</option>
+        <option value="512">512</option>
+        <option value="1024">1024</option>
+      </select>
+    </div>
+
+    <div class="section-label">Skill Level</div>
+    <div class="setting-row">
+      <input type="range" id="skill-slider" min="0" max="20" value="20">
+      <span class="range-value" id="skill-value">20</span>
+    </div>
+
     <div class="section-label">Display</div>
     <label class="toggle-row">
       <input type="checkbox" id="chk-voice">
@@ -316,10 +373,28 @@
     </label>
 
     <div class="section-label">Engine</div>
-    <div id="engine-info" class="info-text">—</div>
+    <div class="setting-row">
+      <select id="engine-select" class="panel-select">
+        <option value="">—</option>
+      </select>
+    </div>
 
     <div class="section-label">Opening Book</div>
-    <div id="book-info" class="info-text">—</div>
+    <div class="setting-row">
+      <select id="book-select" class="panel-select">
+        <option value="">None (disabled)</option>
+      </select>
+    </div>
+
+    <div class="section-label">Endgame Tablebases</div>
+    <div class="setting-row">
+      <select id="syzygy-select" class="panel-select">
+        <option value="">None (disabled)</option>
+      </select>
+    </div>
+
+    <div class="section-label">Actions</div>
+    <button id="btn-clear-hash" class="panel-btn">Clear Hash Table</button>
 
     <div class="section-label">Position</div>
     <div id="fen-display" class="info-text" style="word-break:break-all;font-family:monospace;font-size:11px;">—</div>
@@ -395,8 +470,7 @@ function connect() {
       if (voiceEnabled) speak(msg);
     }
     if (msg.type === "settings") {
-      document.getElementById("engine-info").textContent = msg.activeEngine || "—";
-      document.getElementById("book-info").textContent = msg.activeBook || "None";
+      applySettings(msg);
     }
   };
 }
@@ -679,22 +753,42 @@ function speak(msg) {
 }
 
 // ── Settings handlers ────────────────────────────────────
+function sendOpt(name, value) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "set_option", name, value }));
+  }
+}
+
 document.getElementById("depth-slider").addEventListener("input", (e) => {
   document.getElementById("depth-value").textContent = e.target.value;
 });
 document.getElementById("depth-slider").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "set_option", name: "depth", value: parseInt(e.target.value) }));
-  }
+  sendOpt("depth", parseInt(e.target.value));
 });
 
 document.getElementById("multipv-slider").addEventListener("input", (e) => {
   document.getElementById("multipv-value").textContent = e.target.value;
 });
 document.getElementById("multipv-slider").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "set_option", name: "MultiPV", value: parseInt(e.target.value) }));
-  }
+  sendOpt("MultiPV", parseInt(e.target.value));
+});
+
+document.getElementById("threads-slider").addEventListener("input", (e) => {
+  document.getElementById("threads-value").textContent = e.target.value;
+});
+document.getElementById("threads-slider").addEventListener("change", (e) => {
+  sendOpt("Threads", parseInt(e.target.value));
+});
+
+document.getElementById("hash-select").addEventListener("change", (e) => {
+  sendOpt("Hash", parseInt(e.target.value));
+});
+
+document.getElementById("skill-slider").addEventListener("input", (e) => {
+  document.getElementById("skill-value").textContent = e.target.value;
+});
+document.getElementById("skill-slider").addEventListener("change", (e) => {
+  sendOpt("Skill Level", parseInt(e.target.value));
 });
 
 document.getElementById("chk-voice").addEventListener("change", (e) => {
@@ -703,6 +797,78 @@ document.getElementById("chk-voice").addEventListener("change", (e) => {
 document.getElementById("chk-evalbar").addEventListener("change", renderAll);
 document.getElementById("chk-board").addEventListener("change", renderAll);
 document.getElementById("chk-pvs").addEventListener("change", renderAll);
+
+document.getElementById("engine-select").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "switch_engine", name: e.target.value }));
+  }
+});
+document.getElementById("book-select").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "switch_book", name: e.target.value }));
+  }
+});
+document.getElementById("syzygy-select").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "switch_syzygy", name: e.target.value }));
+  }
+});
+document.getElementById("btn-clear-hash").addEventListener("click", () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "clear_hash" }));
+  }
+});
+
+// ── Sync settings from server ────────────────────────────
+function applySettings(msg) {
+  if (msg.defaultDepth) {
+    document.getElementById("depth-slider").value = msg.defaultDepth;
+    document.getElementById("depth-value").textContent = msg.defaultDepth;
+  }
+  const s = msg.settings || {};
+  if (s.MultiPV) {
+    document.getElementById("multipv-slider").value = s.MultiPV;
+    document.getElementById("multipv-value").textContent = s.MultiPV;
+  }
+  if (s.Threads) {
+    document.getElementById("threads-slider").value = s.Threads;
+    document.getElementById("threads-value").textContent = s.Threads;
+  }
+  if (s.Hash) {
+    document.getElementById("hash-select").value = s.Hash;
+  }
+  if (s["Skill Level"] !== undefined) {
+    document.getElementById("skill-slider").value = s["Skill Level"];
+    document.getElementById("skill-value").textContent = s["Skill Level"];
+  }
+
+  const engineSel = document.getElementById("engine-select");
+  engineSel.innerHTML = "";
+  (msg.engines || []).forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name; opt.textContent = name;
+    if (name === msg.activeEngine) opt.selected = true;
+    engineSel.appendChild(opt);
+  });
+
+  const bookSel = document.getElementById("book-select");
+  bookSel.innerHTML = '<option value="">None (disabled)</option>';
+  (msg.books || []).forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name; opt.textContent = name;
+    if (name === msg.activeBook) opt.selected = true;
+    bookSel.appendChild(opt);
+  });
+
+  const szSel = document.getElementById("syzygy-select");
+  szSel.innerHTML = '<option value="">None (disabled)</option>';
+  (msg.syzygy || []).forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name; opt.textContent = name;
+    if (msg.activeSyzygy && msg.activeSyzygy.includes(name)) opt.selected = true;
+    szSel.appendChild(opt);
+  });
+}
 
 // ── Init ─────────────────────────────────────────────────
 connect();
