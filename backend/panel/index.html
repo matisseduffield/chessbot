@@ -150,8 +150,8 @@
     gap: 12px;
   }
   #eval-bar {
-    width: 24px;
-    height: min(60vh, 480px);
+    width: 28px;
+    min-height: 200px;
     border-radius: 4px;
     overflow: hidden;
     display: flex;
@@ -159,6 +159,7 @@
     box-shadow: 0 0 6px rgba(0,0,0,0.4);
     position: relative;
     flex-shrink: 0;
+    align-self: stretch;
   }
   #eval-bar-top { background: #333; transition: height 0.4s ease; }
   #eval-bar-bot { background: #f0f0f0; flex: 1; }
@@ -183,8 +184,9 @@
     min-height: 20px;
   }
   #board-svg-container {
-    width: min(60vh, 480px);
-    height: min(60vh, 480px);
+    width: 100%;
+    aspect-ratio: 1;
+    max-width: min(67vh, 600px);
     position: relative;
     background: var(--bg-700);
     border-radius: 4px;
@@ -193,6 +195,7 @@
   #board-svg {
     width: 100%;
     height: 100%;
+    display: block;
   }
 
   /* ── PV Cards ── */
@@ -332,7 +335,7 @@
     <div id="board-col">
       <div id="eco-label"></div>
       <div id="board-svg-container">
-        <svg id="board-svg" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg"></svg>
+        <svg id="board-svg" viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
     </div>
   </div>
@@ -494,7 +497,7 @@ function renderBoard() {
   const fen = currentData.fen;
   if (!fen) return;
   const boardPart = fen.split(" ")[0];
-  const size = 400;
+  const size = 800;
   const sq = size / 8;
 
   // Draw squares
@@ -520,7 +523,7 @@ function renderBoard() {
       text.setAttribute("x", f * sq + sq / 2);
       text.setAttribute("y", r * sq + sq * 0.78);
       text.setAttribute("text-anchor", "middle");
-      text.setAttribute("font-size", sq * 0.75);
+      text.setAttribute("font-size", sq * 0.85);
       text.setAttribute("fill", ch === ch.toUpperCase() ? "#fff" : "#000");
       text.setAttribute("style", "filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.4));pointer-events:none;");
       text.textContent = PIECE_CHARS[ch] || ch;
@@ -529,20 +532,20 @@ function renderBoard() {
     }
   }
 
-  // Draw arrows for selected PV
+  // Draw arrows for selected PV or book move
   const lines = currentData.lines || [];
-  if (!lines.length) return;
-  const line = lines[Math.min(selectedPV - 1, lines.length - 1)];
-  const pv = line.pv || [];
-  const turn = fen.split(" ")[1] || "w";
-
-  // Arrow for our best move (green)
-  if (pv.length >= 1) drawArrow(svg, pv[0], turn === "w" ? 1 : 0, size);
-  // Arrow for opponent response (red)
-  if (pv.length >= 2) drawArrow(svg, pv[1], turn === "w" ? 0 : 1, size);
+  if (lines.length > 0) {
+    const line = lines[Math.min(selectedPV - 1, lines.length - 1)];
+    const pv = line.pv || [];
+    if (pv.length >= 1) drawArrow(svg, pv[0], true, size);
+    if (pv.length >= 2) drawArrow(svg, pv[1], false, size);
+  } else if (currentData.bestmove && currentData.bestmove.length >= 4) {
+    // Book move — draw single green arrow from bestmove UCI
+    drawArrow(svg, currentData.bestmove, true, size);
+  }
 }
 
-function drawArrow(svg, uci, isWhite, size) {
+function drawArrow(svg, uci, isOurMove, size) {
   if (!uci || uci.length < 4) return;
   const sq = size / 8;
   const files = "abcdefgh";
@@ -556,39 +559,37 @@ function drawArrow(svg, uci, isWhite, size) {
   let x2 = toF * sq + sq / 2;
   let y2 = toR * sq + sq / 2;
 
-  // Shorten arrow so arrowhead doesn't overlap center
+  // Shorten so arrowhead sits near target square edge
   const dx = x2 - x1;
   const dy = y2 - y1;
   const dist = Math.sqrt(dx * dx + dy * dy);
-  const shorten = sq * 0.4;
+  const shorten = sq * 0.35;
   if (dist > shorten) {
     const scale = (dist - shorten) / dist;
     x2 = x1 + dx * scale;
     y2 = y1 + dy * scale;
   }
 
-  const color = isWhite ? "hsla(145,100%,50%,0.75)" : "hsla(350,100%,50%,0.75)";
-  const markerId = "arrow-" + isWhite + "-" + uci;
+  const color = isOurMove ? "hsla(145,100%,50%,0.8)" : "hsla(350,100%,50%,0.7)";
 
-  // Marker
-  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-  const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
-  marker.setAttribute("id", markerId);
-  marker.setAttribute("viewBox", "0 0 20 20");
-  marker.setAttribute("refX", "0");
-  marker.setAttribute("refY", "5");
-  marker.setAttribute("markerUnits", "strokeWidth");
-  marker.setAttribute("markerWidth", sq / 10);
-  marker.setAttribute("markerHeight", sq / 10);
-  marker.setAttribute("orient", "auto");
-  marker.setAttribute("fill", color);
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "M 0 0 L 7.5 5 L 0 10 z");
-  marker.appendChild(path);
-  defs.appendChild(marker);
-  svg.appendChild(defs);
+  // Arrowhead as polygon (avoids marker url(#) CSP issues)
+  const adx = x2 - x1, ady = y2 - y1;
+  const len = Math.sqrt(adx * adx + ady * ady);
+  if (len < 1) return;
+  const ux = adx / len, uy = ady / len;
+  const headLen = sq * 0.38;
+  const headW = sq * 0.28;
+  const tipX = x2 + ux * headLen * 0.3;
+  const tipY = y2 + uy * headLen * 0.3;
+  const baseX = x2 - ux * headLen * 0.5;
+  const baseY = y2 - uy * headLen * 0.5;
+  const px = -uy * headW, py = ux * headW;
 
-  // Line
+  const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+  polygon.setAttribute("points",
+    `${tipX},${tipY} ${baseX + px},${baseY + py} ${baseX - px},${baseY - py}`);
+  polygon.setAttribute("fill", color);
+
   const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
   line.setAttribute("x1", x1);
   line.setAttribute("y1", y1);
@@ -596,8 +597,10 @@ function drawArrow(svg, uci, isWhite, size) {
   line.setAttribute("y2", y2);
   line.setAttribute("stroke", color);
   line.setAttribute("stroke-width", sq / 5);
-  line.setAttribute("marker-end", `url(#${markerId})`);
+  line.setAttribute("stroke-linecap", "round");
+
   svg.appendChild(line);
+  svg.appendChild(polygon);
 }
 
 // ── PV Cards ─────────────────────────────────────────────

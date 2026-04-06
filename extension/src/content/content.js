@@ -1001,53 +1001,24 @@ function squareCenter(file, rank, sqSize, flipped) {
   return { x: tl.x + sqSize / 2, y: tl.y + sqSize / 2 };
 }
 
-// ── Arrow drawing helper ─────────────────────────────────
+// ── Square highlight helper ──────────────────────────────
 
-function drawArrowOnSvg(svg, fromFile, fromRank, toFile, toRank, sqSize, flipped, color, arrowId) {
-  const from = squareCenter(fromFile, fromRank, sqSize, flipped);
-  const to = squareCenter(toFile, toRank, sqSize, flipped);
-
-  // Shorten so arrowhead doesn't overshoot square center
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-  const shorten = sqSize * 0.4;
-  let x2 = to.x, y2 = to.y;
-  if (dist > shorten) {
-    const scale = (dist - shorten) / dist;
-    x2 = from.x + dx * scale;
-    y2 = from.y + dy * scale;
-  }
-
-  // Arrowhead marker
-  const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
-  marker.id = arrowId;
-  marker.setAttribute("viewBox", "0 0 20 20");
-  marker.setAttribute("refX", "0");
-  marker.setAttribute("refY", "5");
-  marker.setAttribute("markerUnits", "strokeWidth");
-  marker.setAttribute("markerWidth", sqSize / 12);
-  marker.setAttribute("markerHeight", sqSize / 12);
-  marker.setAttribute("orient", "auto");
-  marker.setAttribute("fill", color);
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "M 0 0 L 7.5 5 L 0 10 z");
-  marker.appendChild(path);
-  svg.appendChild(marker);
-
-  // Arrow line
-  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-  line.setAttribute("x1", from.x);
-  line.setAttribute("y1", from.y);
-  line.setAttribute("x2", x2);
-  line.setAttribute("y2", y2);
-  line.setAttribute("stroke", color);
-  line.setAttribute("stroke-width", sqSize / 6);
-  line.setAttribute("marker-end", `url(#${arrowId})`);
-  svg.appendChild(line);
+function drawSquareHighlight(svg, file, rank, sqSize, flipped, fillColor, borderColor) {
+  const tl = squareTopLeft(file, rank, sqSize, flipped);
+  const border = Math.max(2, sqSize * 0.06);
+  const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  rect.setAttribute("x", tl.x + border / 2);
+  rect.setAttribute("y", tl.y + border / 2);
+  rect.setAttribute("width", sqSize - border);
+  rect.setAttribute("height", sqSize - border);
+  rect.setAttribute("fill", fillColor);
+  rect.setAttribute("stroke", borderColor);
+  rect.setAttribute("stroke-width", border);
+  rect.setAttribute("rx", "2");
+  svg.appendChild(rect);
 }
 
-// ── Single best move: green arrow (our move) + red arrow (opponent response) ──
+// ── Single best move: green squares (our move) + red squares (opponent response) ──
 
 function drawSingleMove(uci, bestLine, source) {
   clearArrow();
@@ -1065,16 +1036,21 @@ function drawSingleMove(uci, bestLine, source) {
   svg.setAttribute("height", rect.height);
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
-  // Green arrow for our best move (gold for book moves)
-  const moveColor = isBook ? "hsla(45,85%,50%,0.75)" : "hsla(145,100%,50%,0.75)";
-  drawArrowOnSvg(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, moveColor, "arrow-best");
+  // Green highlighted squares for our best move (gold for book)
+  const moveFill = isBook ? "rgba(212,160,23,0.45)" : "rgba(46,204,113,0.45)";
+  const moveBorder = isBook ? "rgba(212,160,23,0.9)" : "rgba(46,204,113,0.9)";
+  drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, moveFill, moveBorder);
+  drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, moveFill, moveBorder);
 
-  // Red arrow for opponent's response (if available from PV)
+  // Red highlighted squares for opponent's predicted response
   if (bestLine && bestLine.pv && bestLine.pv.length >= 2) {
     const response = bestLine.pv[1];
     if (response && response.length >= 4) {
       const resp = uciToSquares(response);
-      drawArrowOnSvg(svg, resp.from.file, resp.from.rank, resp.to.file, resp.to.rank, sqSize, flipped, "hsla(350,100%,50%,0.66)", "arrow-resp");
+      const respFill = "rgba(231,76,60,0.35)";
+      const respBorder = "rgba(231,76,60,0.85)";
+      drawSquareHighlight(svg, resp.from.file, resp.from.rank, sqSize, flipped, respFill, respBorder);
+      drawSquareHighlight(svg, resp.to.file, resp.to.rank, sqSize, flipped, respFill, respBorder);
     }
   }
 
@@ -1104,6 +1080,15 @@ function drawSingleMove(uci, bestLine, source) {
     svg.appendChild(text);
   } else if (bestLine) {
     const scoreText = formatScore(bestLine);
+    const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bg.setAttribute("x", dst.x);
+    bg.setAttribute("y", dst.y + sqSize - badgeH);
+    bg.setAttribute("width", sqSize);
+    bg.setAttribute("height", badgeH);
+    bg.setAttribute("fill", "rgba(0,0,0,0.6)");
+    bg.setAttribute("rx", "2");
+    svg.appendChild(bg);
+
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("x", dst.x + sqSize / 2);
     text.setAttribute("y", dst.y + sqSize - 4);
@@ -1113,15 +1098,6 @@ function drawSingleMove(uci, bestLine, source) {
     text.setAttribute("font-family", "monospace");
     text.setAttribute("fill", "#fff");
     text.textContent = scoreText;
-
-    const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    bg.setAttribute("x", dst.x);
-    bg.setAttribute("y", dst.y + sqSize - badgeH);
-    bg.setAttribute("width", sqSize);
-    bg.setAttribute("height", badgeH);
-    bg.setAttribute("fill", "rgba(0,0,0,0.6)");
-    bg.setAttribute("rx", "2");
-    svg.appendChild(bg);
     svg.appendChild(text);
   }
 
@@ -1158,24 +1134,26 @@ function drawMultiPV(lines) {
   const { target: parent, dx, dy } = getOverlayTarget(board);
   if (!parent) return;
 
-  // Create an SVG layer for arrows
+  // Create an SVG layer for square highlights
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.id = "chessbot-arrow-svg";
   svg.setAttribute("width", rect.width);
   svg.setAttribute("height", rect.height);
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
-  // Draw an arrow for each PV line (best move only)
+  // Highlight destination square for each PV line (+ source for best line)
   const parsed = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line.move || line.move.length < 4) continue;
     const { from, to } = uciToSquares(line.move);
     const color = EVAL_COLORS[i] || EVAL_COLORS[EVAL_COLORS.length - 1];
-    // Full opacity for first line, slightly transparent for rest
-    const alpha = i === 0 ? 0.85 : 0.55;
-    const rgba = hexToRgba(color, alpha);
-    drawArrowOnSvg(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, rgba, `arrow-pv${i}`);
+    const alpha = i === 0 ? 0.45 : 0.3;
+    const fill = hexToRgba(color, alpha);
+    const stroke = hexToRgba(color, 0.9);
+    // Source square only for best line
+    if (i === 0) drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, fill, stroke);
+    drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, fill, stroke);
     parsed.push({ line, to, color, dk: `${to.file},${to.rank}` });
   }
 
