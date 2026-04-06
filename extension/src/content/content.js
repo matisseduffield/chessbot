@@ -964,16 +964,27 @@ function uciToSquares(uci) {
 
 /** Clear move arrows and eval badges, but keep the eval bar. */
 function clearMoveIndicators() {
-  const existing = document.getElementById("chessbot-arrow-svg");
-  if (existing) existing.remove();
-  document.querySelectorAll(".chessbot-eval-badge").forEach((el) => el.remove());
+  // Check both document and shadow root for our overlay elements
+  const roots = [document];
+  const board = getBoardElement();
+  if (board && board.shadowRoot) roots.push(board.shadowRoot);
+  for (const root of roots) {
+    const existing = root.getElementById("chessbot-arrow-svg");
+    if (existing) existing.remove();
+    root.querySelectorAll(".chessbot-eval-badge").forEach((el) => el.remove());
+  }
 }
 
 /** Clear everything — move indicators AND eval bar. */
 function clearArrow() {
   clearMoveIndicators();
-  const bar = document.getElementById("chessbot-eval-bar");
-  if (bar) bar.remove();
+  const roots = [document];
+  const board = getBoardElement();
+  if (board && board.shadowRoot) roots.push(board.shadowRoot);
+  for (const root of roots) {
+    const bar = root.getElementById("chessbot-eval-bar");
+    if (bar) bar.remove();
+  }
 }
 
 // ── Board geometry helpers ───────────────────────────────────
@@ -1216,11 +1227,15 @@ function getOverlayTarget(board) {
     if (pos === "static") board.style.position = "relative";
     return { target: board, dx: 0, dy: 0 };
   }
-  const parent = board.closest(".board-layout-component, .board") || board.parentElement;
-  if (!parent) return { target: board, dx: 0, dy: 0 };
-  const pos = getComputedStyle(parent).position;
-  if (pos === "static") parent.style.position = "relative";
-  return { target: parent, dx: 0, dy: 0 };
+  // Chess.com: wc-chess-board is a web component — inject into its shadow root
+  // so the overlay renders on top of the board pieces.
+  if (board.shadowRoot) {
+    return { target: board.shadowRoot, dx: 0, dy: 0 };
+  }
+  // Fallback: use the board element itself with position:relative
+  const pos = getComputedStyle(board).position;
+  if (pos === "static") board.style.position = "relative";
+  return { target: board, dx: 0, dy: 0 };
 }
 
 function injectOverlay(board, svg) {
