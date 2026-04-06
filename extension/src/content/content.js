@@ -1234,7 +1234,7 @@ function drawMultiPV(lines) {
   svg.setAttribute("height", rect.height);
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
-  // Highlight destination square for each PV line (+ source for best line)
+  // Highlight destination square for each PV line (+ source for all lines)
   const parsed = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -1244,18 +1244,20 @@ function drawMultiPV(lines) {
     const alpha = i === 0 ? 0.45 : 0.3;
     const fill = hexToRgba(color, alpha);
     const stroke = hexToRgba(color, 0.9);
-    // Source square only for best line
-    if (i === 0) drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, fill, stroke);
+    // Source and destination squares for all PV lines
+    drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, fill, stroke);
     drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, fill, stroke);
-    parsed.push({ line, to, color, dk: `${to.file},${to.rank}` });
+    parsed.push({ line, from, to, color, dk: `${to.file},${to.rank}` });
   }
 
   // Draw destination eval badges as SVG elements — stack vertically when sharing a square
   const badgeH = sqSize * 0.32;
   const dstSlots = {};
-  for (const { line, to, color, dk } of parsed) {
+  for (const { line, from, to, color, dk } of parsed) {
     const dst = squareTopLeft(to.file, to.rank, sqSize, flipped);
     const scoreText = formatScore(line);
+    const sanMove = (line.san && line.san[0]) ? line.san[0] : "";
+    const badgeText = sanMove ? `${sanMove} ${scoreText}` : scoreText;
     if (!dstSlots[dk]) dstSlots[dk] = 0;
     const slot = dstSlots[dk]++;
     const fontSize = Math.max(10, sqSize * 0.22);
@@ -1277,7 +1279,7 @@ function drawMultiPV(lines) {
     text.setAttribute("font-weight", "800");
     text.setAttribute("font-family", "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, monospace");
     text.setAttribute("fill", "#fff");
-    text.textContent = scoreText;
+    text.textContent = badgeText;
     svg.appendChild(text);
   }
 
