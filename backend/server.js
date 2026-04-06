@@ -1,8 +1,12 @@
 const { WebSocketServer } = require("ws");
+const http = require("http");
+const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const { Chess } = require("chess.js");
 const StockfishBridge = require("./stockfishBridge");
 const OpeningBook = require("./openingBook");
+const eco = require("./eco");
 const config = require("./config");
 
 // ── File scanner helpers ─────────────────────────────────
@@ -53,6 +57,9 @@ function listSyzygyDirs() {
   return results;
 }
 async function main() {
+  // ── 0. Load ECO opening database ──────────────────────
+  eco.loadEco(path.join(__dirname, "eco"));
+
   // ── 1. Start the Stockfish engine ──────────────────────
   let engine = new StockfishBridge();
   try {
@@ -66,21 +73,70 @@ async function main() {
   let book = new OpeningBook(config.openingBookPath);
   await book.init();
 
-  // ── 3. Start WebSocket server ──────────────────────────
-  const wss = new WebSocketServer({ port: config.port });
+  // ── 3. Start HTTP + WebSocket server ────────────────────
 
-  wss.on("error", (err) => {
+  /** Convert UCI PV lines to SAN and add ECO classification. */
+  function enrichLines(lines, fen) {
+    try {
+      const game = new Chess(fen);
+      return lines.map((line) => {
+        const g = new Chess(fen);
+        const san = [];
+        let firstEpd = null;
+        for (const uci of line.pv) {
+          try {
+            const m = g.move(uci);
+            if (m) {
+              san.push(m.san);
+              if (san.length === 1) firstEpd = g.fen().split(" ").slice(0, 4).join(" ");
+            } else break;
+          } catch { break; }
+        }
+        const opening = firstEpd ? eco.lookup(firstEpd) : null;
+        return { ...line, san, eco: opening ? opening.name : null };
+      });
+    } catch {
+      return lines;
+    }
+  }
+
+  /** Look up ECO for the current FEN position. */
+  function getEco(fen) {
+    try {
+      const epd = fen.split(" ").slice(0, 4).join(" ");
+      return eco.lookup(epd);
+    } catch { return null; }
+  }
+
+  const app = express();
+  app.use(express.static(path.join(__dirname, "panel")));
+  const server = http.createServer(app);
+  const wss = new WebSocketServer({ server });
+
+  server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
       console.error(`[server] port ${config.port} is already in use. Kill the other process or set PORT env var.`);
     } else {
-      console.error("[server] WebSocket server error:", err.message);
+      console.error("[server] HTTP server error:", err.message);
     }
     engine.stop();
     book.close();
     process.exit(1);
   });
 
-  console.log(`[server] WebSocket server listening on ws://localhost:${config.port}`);
+  server.listen(config.port, () => {
+    console.log(`[server] listening on http://localhost:${config.port} (HTTP + WS)`);
+  });
+
+  /** Broadcast a message to all OTHER connected clients (for panel sync). */
+  function broadcast(senderWs, message) {
+    const data = typeof message === "string" ? message : JSON.stringify(message);
+    for (const client of wss.clients) {
+      if (client !== senderWs && client.readyState === 1 /* OPEN */) {
+        client.send(data);
+      }
+    }
+  }
 
   wss.on("connection", (ws, req) => {
     const remote = req.socket.remoteAddress;
@@ -122,21 +178,26 @@ async function main() {
               return;
             }
 
+            // Look up ECO for current position
+            const posEco = getEco(fen);
+
             // Try opening book first
             const bookMove = await book.lookup(fen);
             if (bookMove) {
               if (gen !== evalGeneration) return;
               console.log(`[server] → bestmove (book): ${bookMove}`);
+              const bookMsg = {
+                type: "bestmove",
+                bestmove: bookMove,
+                source: "book",
+                fen,
+                eco: posEco ? posEco.name : null,
+                ecoCode: posEco ? posEco.code : null,
+              };
               if (ws.readyState === ws.OPEN) {
-                ws.send(
-                  JSON.stringify({
-                    type: "bestmove",
-                    bestmove: bookMove,
-                    source: "book",
-                    fen,
-                  })
-                );
+                ws.send(JSON.stringify(bookMsg));
               }
+              broadcast(ws, bookMsg);
               return;
             }
 
@@ -147,18 +208,21 @@ async function main() {
               console.log(`[server] discarding stale result gen ${gen}`);
               return;
             }
+            const enrichedLines = enrichLines(result.lines || [], fen);
             console.log(`[server] → bestmove (engine): ${result.bestmove}`);
+            const engineMsg = {
+              type: "bestmove",
+              bestmove: result.bestmove,
+              lines: enrichedLines,
+              source: "engine",
+              fen,
+              eco: posEco ? posEco.name : null,
+              ecoCode: posEco ? posEco.code : null,
+            };
             if (ws.readyState === ws.OPEN) {
-              ws.send(
-                JSON.stringify({
-                  type: "bestmove",
-                  bestmove: result.bestmove,
-                  lines: result.lines,
-                  source: "engine",
-                  fen,
-                })
-              );
+              ws.send(JSON.stringify(engineMsg));
             }
+            broadcast(ws, engineMsg);
           })
           .catch((err) => {
             console.error("[server] evaluation error:", err.message);

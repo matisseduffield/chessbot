@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChessBot Panel</title>
+<style>
+  :root {
+    --bg-900: #1a202c;
+    --bg-800: #2d3748;
+    --bg-700: #4a5568;
+    --text-100: #f7fafc;
+    --text-400: #cbd5e0;
+    --text-500: #a0aec0;
+    --text-600: #718096;
+    --accent: #667eea;
+    --accent-hover: #5a67d8;
+    --green: #2ecc71;
+    --red: #e74c3c;
+    --orange: #f39c12;
+    --cyan: #00bcd4;
+    --purple: #9b59b6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg-900);
+    color: var(--text-100);
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+  #layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    grid-template-rows: 1fr auto;
+    grid-template-areas:
+      "settings board"
+      "settings pvs";
+    height: 100vh;
+    gap: 2px;
+    padding: 2px;
+  }
+  @media (max-width: 900px) {
+    #layout {
+      grid-template-columns: 1fr;
+      grid-template-areas: "board" "pvs" "settings";
+      grid-template-rows: auto auto 1fr;
+    }
+  }
+
+  /* ── Settings Panel ── */
+  #settings {
+    grid-area: settings;
+    background: var(--bg-800);
+    padding: 16px;
+    overflow-y: auto;
+  }
+  .section-label {
+    color: var(--text-500);
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+    margin-top: 16px;
+  }
+  .section-label:first-child { margin-top: 0; }
+
+  .status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .status-dot.connected { background: var(--green); }
+  .status-dot.disconnected { background: var(--red); }
+
+  .setting-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+    gap: 8px;
+  }
+  .setting-row label {
+    font-size: 13px;
+    color: var(--text-400);
+    min-width: 60px;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--bg-900);
+    height: 6px;
+    border-radius: 3px;
+    outline: none;
+    flex: 1;
+    max-width: 140px;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px; height: 16px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+  }
+  .range-value {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-100);
+    min-width: 28px;
+    text-align: right;
+  }
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 6px;
+    cursor: pointer;
+    gap: 8px;
+  }
+  .toggle-row input[type="checkbox"] {
+    width: 18px; height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .toggle-row span {
+    font-size: 13px;
+    color: var(--text-400);
+  }
+  .info-text {
+    font-size: 12px;
+    color: var(--text-600);
+    margin-top: 4px;
+  }
+
+  /* ── Board Area ── */
+  #board-area {
+    grid-area: board;
+    background: var(--bg-800);
+    padding: 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  #eval-bar {
+    width: 24px;
+    height: min(60vh, 480px);
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 0 6px rgba(0,0,0,0.4);
+    position: relative;
+    flex-shrink: 0;
+  }
+  #eval-bar-top { background: #333; transition: height 0.4s ease; }
+  #eval-bar-bot { background: #f0f0f0; flex: 1; }
+  #eval-bar-score {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 9px;
+    font-weight: 800;
+    font-family: monospace;
+    z-index: 1;
+  }
+  #board-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  #eco-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-400);
+    min-height: 20px;
+  }
+  #board-svg-container {
+    width: min(60vh, 480px);
+    height: min(60vh, 480px);
+    position: relative;
+    background: var(--bg-700);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  #board-svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ── PV Cards ── */
+  #pvs {
+    grid-area: pvs;
+    background: var(--bg-800);
+    padding: 12px 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-content: flex-start;
+  }
+  .pv-card {
+    width: 220px;
+    padding: 10px;
+    border: 2px solid var(--bg-700);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    background: var(--bg-900);
+  }
+  .pv-card:hover { border-color: var(--accent); }
+  .pv-card.selected { border-color: var(--accent); }
+  .pv-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+  .pv-rank {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-500);
+  }
+  .pv-score {
+    font-size: 15px;
+    font-weight: 800;
+    font-family: monospace;
+  }
+  .pv-eco {
+    font-size: 11px;
+    color: var(--text-600);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 6px;
+  }
+  .pv-moves {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px 8px;
+    font-size: 12px;
+  }
+  .pv-moves span { white-space: nowrap; }
+  .pv-moves span:nth-child(odd) { color: var(--text-100); }
+  .pv-moves span:nth-child(even) { color: var(--text-500); }
+  .pv-source {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 6px;
+  }
+  .pv-source.engine { background: var(--accent); color: #fff; }
+  .pv-source.book { background: var(--orange); color: #fff; }
+
+  /* ── Empty state ── */
+  .empty-state {
+    color: var(--text-600);
+    font-size: 14px;
+    padding: 20px;
+    text-align: center;
+    width: 100%;
+  }
+</style>
+</head>
+<body>
+<div id="layout">
+  <!-- Settings -->
+  <div id="settings">
+    <div class="section-label" style="margin-top:0">
+      <span id="status-dot" class="status-dot disconnected"></span>
+      <span id="status-text">Disconnected</span>
+    </div>
+
+    <div class="section-label">Analysis Depth</div>
+    <div class="setting-row">
+      <input type="range" id="depth-slider" min="1" max="30" value="15">
+      <span class="range-value" id="depth-value">15</span>
+    </div>
+
+    <div class="section-label">Principal Variations</div>
+    <div class="setting-row">
+      <input type="range" id="multipv-slider" min="1" max="8" value="1">
+      <span class="range-value" id="multipv-value">1</span>
+    </div>
+
+    <div class="section-label">Display</div>
+    <label class="toggle-row">
+      <input type="checkbox" id="chk-voice">
+      <span>Voice announce</span>
+    </label>
+    <label class="toggle-row">
+      <input type="checkbox" id="chk-evalbar" checked>
+      <span>Eval bar</span>
+    </label>
+    <label class="toggle-row">
+      <input type="checkbox" id="chk-board" checked>
+      <span>Board arrows</span>
+    </label>
+    <label class="toggle-row">
+      <input type="checkbox" id="chk-pvs" checked>
+      <span>PV cards</span>
+    </label>
+
+    <div class="section-label">Engine</div>
+    <div id="engine-info" class="info-text">—</div>
+
+    <div class="section-label">Opening Book</div>
+    <div id="book-info" class="info-text">—</div>
+
+    <div class="section-label">Position</div>
+    <div id="fen-display" class="info-text" style="word-break:break-all;font-family:monospace;font-size:11px;">—</div>
+  </div>
+
+  <!-- Board -->
+  <div id="board-area">
+    <div id="eval-bar" style="display:flex">
+      <div id="eval-bar-top" style="height:50%"></div>
+      <div id="eval-bar-bot"></div>
+      <div id="eval-bar-score" style="bottom:2px;color:#333;">0.0</div>
+    </div>
+    <div id="board-col">
+      <div id="eco-label"></div>
+      <div id="board-svg-container">
+        <svg id="board-svg" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- PV Cards -->
+  <div id="pvs">
+    <div class="empty-state">Waiting for analysis…</div>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────
+let ws = null;
+let selectedPV = 1;
+let currentData = null; // last bestmove response
+let voiceEnabled = false;
+let lastSpoken = "";
+
+// Board piece map (Unicode chess pieces)
+const PIECE_CHARS = {
+  K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘", P: "♙",
+  k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟"
+};
+
+const LIGHT_SQ = "#f0d9b5";
+const DARK_SQ = "#b58863";
+const PV_COLORS = ["#2ecc71", "#00bcd4", "#f39c12", "#e74c3c", "#9b59b6", "#e67e22", "#1abc9c", "#e84393"];
+
+// ── WebSocket ────────────────────────────────────────────
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${proto}//${location.host}`);
+
+  ws.onopen = () => {
+    document.getElementById("status-dot").className = "status-dot connected";
+    document.getElementById("status-text").textContent = "Connected";
+    // Request current settings
+    ws.send(JSON.stringify({ type: "get_settings" }));
+  };
+
+  ws.onclose = () => {
+    document.getElementById("status-dot").className = "status-dot disconnected";
+    document.getElementById("status-text").textContent = "Disconnected";
+    setTimeout(connect, 3000);
+  };
+
+  ws.onerror = () => {};
+
+  ws.onmessage = (evt) => {
+    let msg;
+    try { msg = JSON.parse(evt.data); } catch { return; }
+
+    if (msg.type === "bestmove") {
+      currentData = msg;
+      selectedPV = 1;
+      renderAll();
+      if (voiceEnabled) speak(msg);
+    }
+    if (msg.type === "settings") {
+      document.getElementById("engine-info").textContent = msg.activeEngine || "—";
+      document.getElementById("book-info").textContent = msg.activeBook || "None";
+    }
+  };
+}
+
+// ── Render ───────────────────────────────────────────────
+function renderAll() {
+  if (!currentData) return;
+  renderFen();
+  renderEco();
+  renderEvalBar();
+  renderBoard();
+  renderPVs();
+}
+
+function renderFen() {
+  document.getElementById("fen-display").textContent = currentData.fen || "—";
+}
+
+function renderEco() {
+  const label = document.getElementById("eco-label");
+  const code = currentData.ecoCode || "";
+  const name = currentData.eco || "";
+  label.textContent = code ? `${code}: ${name}` : name || "";
+}
+
+function renderEvalBar() {
+  const bar = document.getElementById("eval-bar");
+  bar.style.display = document.getElementById("chk-evalbar").checked ? "flex" : "none";
+
+  const topEl = document.getElementById("eval-bar-top");
+  const scoreEl = document.getElementById("eval-bar-score");
+
+  if (currentData.source === "book") {
+    topEl.style.height = "50%";
+    topEl.style.background = "linear-gradient(180deg,#d4a017,#b8860b)";
+    scoreEl.textContent = "Book";
+    scoreEl.style.color = "#fff";
+    scoreEl.style.bottom = "auto";
+    scoreEl.style.top = "50%";
+    scoreEl.style.transform = "translateY(-50%)";
+    return;
+  }
+
+  topEl.style.background = "#333";
+  scoreEl.style.transform = "";
+
+  const lines = currentData.lines || [];
+  if (!lines.length) {
+    topEl.style.height = "50%";
+    scoreEl.textContent = "—";
+    scoreEl.style.color = "#333";
+    scoreEl.style.bottom = "2px";
+    scoreEl.style.top = "auto";
+    return;
+  }
+
+  const best = lines[0];
+  let whitePct = 50;
+  if (best.mate !== undefined && best.mate !== null) {
+    whitePct = best.mate > 0 ? 95 : 5;
+  } else if (best.score !== undefined && best.score !== null) {
+    // score is from side-to-move. FEN tells us who's moving.
+    const turn = currentData.fen ? currentData.fen.split(" ")[1] : "w";
+    const cpWhite = turn === "w" ? best.score : -best.score;
+    whitePct = Math.min(95, Math.max(5, 50 + cpWhite / 10));
+  }
+
+  topEl.style.height = `${100 - whitePct}%`;
+  const scoreText = formatScore(best);
+  scoreEl.textContent = scoreText;
+
+  if (whitePct > 50) {
+    scoreEl.style.bottom = "2px"; scoreEl.style.top = "auto";
+    scoreEl.style.color = "#333";
+  } else {
+    scoreEl.style.top = "2px"; scoreEl.style.bottom = "auto";
+    scoreEl.style.color = "#ccc";
+  }
+}
+
+function formatScore(line) {
+  if (line.mate !== undefined && line.mate !== null) return `M${Math.abs(line.mate)}`;
+  if (line.score !== undefined && line.score !== null) {
+    const v = line.score / 100;
+    return (v >= 0 ? "+" : "") + v.toFixed(1);
+  }
+  return "?";
+}
+
+// ── Board SVG ────────────────────────────────────────────
+function renderBoard() {
+  const container = document.getElementById("board-svg-container");
+  container.style.display = document.getElementById("chk-board").checked ? "block" : "none";
+
+  const svg = document.getElementById("board-svg");
+  svg.innerHTML = "";
+
+  const fen = currentData.fen;
+  if (!fen) return;
+  const boardPart = fen.split(" ")[0];
+  const size = 400;
+  const sq = size / 8;
+
+  // Draw squares
+  for (let r = 0; r < 8; r++) {
+    for (let f = 0; f < 8; f++) {
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", f * sq);
+      rect.setAttribute("y", r * sq);
+      rect.setAttribute("width", sq);
+      rect.setAttribute("height", sq);
+      rect.setAttribute("fill", (r + f) % 2 === 0 ? LIGHT_SQ : DARK_SQ);
+      svg.appendChild(rect);
+    }
+  }
+
+  // Draw pieces
+  const rows = boardPart.split("/");
+  for (let r = 0; r < rows.length; r++) {
+    let f = 0;
+    for (const ch of rows[r]) {
+      if (ch >= "1" && ch <= "8") { f += parseInt(ch); continue; }
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", f * sq + sq / 2);
+      text.setAttribute("y", r * sq + sq * 0.78);
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("font-size", sq * 0.75);
+      text.setAttribute("fill", ch === ch.toUpperCase() ? "#fff" : "#000");
+      text.setAttribute("style", "filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.4));pointer-events:none;");
+      text.textContent = PIECE_CHARS[ch] || ch;
+      svg.appendChild(text);
+      f++;
+    }
+  }
+
+  // Draw arrows for selected PV
+  const lines = currentData.lines || [];
+  if (!lines.length) return;
+  const line = lines[Math.min(selectedPV - 1, lines.length - 1)];
+  const pv = line.pv || [];
+  const turn = fen.split(" ")[1] || "w";
+
+  // Arrow for our best move (green)
+  if (pv.length >= 1) drawArrow(svg, pv[0], turn === "w" ? 1 : 0, size);
+  // Arrow for opponent response (red)
+  if (pv.length >= 2) drawArrow(svg, pv[1], turn === "w" ? 0 : 1, size);
+}
+
+function drawArrow(svg, uci, isWhite, size) {
+  if (!uci || uci.length < 4) return;
+  const sq = size / 8;
+  const files = "abcdefgh";
+  const fromF = files.indexOf(uci[0]);
+  const fromR = 8 - parseInt(uci[1]);
+  const toF = files.indexOf(uci[2]);
+  const toR = 8 - parseInt(uci[3]);
+
+  const x1 = fromF * sq + sq / 2;
+  const y1 = fromR * sq + sq / 2;
+  let x2 = toF * sq + sq / 2;
+  let y2 = toR * sq + sq / 2;
+
+  // Shorten arrow so arrowhead doesn't overlap center
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const shorten = sq * 0.4;
+  if (dist > shorten) {
+    const scale = (dist - shorten) / dist;
+    x2 = x1 + dx * scale;
+    y2 = y1 + dy * scale;
+  }
+
+  const color = isWhite ? "hsla(145,100%,50%,0.75)" : "hsla(350,100%,50%,0.75)";
+  const markerId = "arrow-" + isWhite + "-" + uci;
+
+  // Marker
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+  marker.setAttribute("id", markerId);
+  marker.setAttribute("viewBox", "0 0 20 20");
+  marker.setAttribute("refX", "0");
+  marker.setAttribute("refY", "5");
+  marker.setAttribute("markerUnits", "strokeWidth");
+  marker.setAttribute("markerWidth", sq / 10);
+  marker.setAttribute("markerHeight", sq / 10);
+  marker.setAttribute("orient", "auto");
+  marker.setAttribute("fill", color);
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M 0 0 L 7.5 5 L 0 10 z");
+  marker.appendChild(path);
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  // Line
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", x1);
+  line.setAttribute("y1", y1);
+  line.setAttribute("x2", x2);
+  line.setAttribute("y2", y2);
+  line.setAttribute("stroke", color);
+  line.setAttribute("stroke-width", sq / 5);
+  line.setAttribute("marker-end", `url(#${markerId})`);
+  svg.appendChild(line);
+}
+
+// ── PV Cards ─────────────────────────────────────────────
+function renderPVs() {
+  const container = document.getElementById("pvs");
+  if (!document.getElementById("chk-pvs").checked) {
+    container.innerHTML = "";
+    return;
+  }
+
+  const lines = currentData.lines || [];
+  if (!lines.length && currentData.source === "book") {
+    container.innerHTML = `<div class="pv-card selected">
+      <div class="pv-header">
+        <span class="pv-rank">Book Move</span>
+        <span class="pv-source book">BOOK</span>
+      </div>
+      <div class="pv-eco">${currentData.eco || ""}</div>
+      <div style="font-size:18px;font-weight:800;font-family:monospace;color:var(--orange)">${currentData.bestmove || ""}</div>
+    </div>`;
+    return;
+  }
+
+  if (!lines.length) {
+    container.innerHTML = '<div class="empty-state">Waiting for analysis…</div>';
+    return;
+  }
+
+  container.innerHTML = "";
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const card = document.createElement("div");
+    card.className = "pv-card" + (selectedPV === i + 1 ? " selected" : "");
+    card.style.borderColor = selectedPV === i + 1 ? PV_COLORS[i] || PV_COLORS[0] : "";
+    card.onclick = () => { selectedPV = i + 1; renderAll(); };
+
+    const scoreText = formatScore(line);
+    const scoreColor = (line.score !== undefined && line.score >= 0) || (line.mate !== undefined && line.mate > 0) ? "var(--green)" : "var(--red)";
+    const sanMoves = line.san || line.pv || [];
+    const eco = line.eco || "";
+
+    card.innerHTML = `
+      <div class="pv-header">
+        <span class="pv-rank">PV ${i + 1} <span class="pv-source engine">${currentData.source === "book" ? "BOOK" : "ENGINE"}</span></span>
+        <span class="pv-score" style="color:${scoreColor}">${scoreText}</span>
+      </div>
+      <div class="pv-eco" title="${eco}">${eco}</div>
+      <div class="pv-moves">${sanMoves.slice(0, 16).map((m, j) => `<span>${m}</span>`).join("")}</div>
+    `;
+    container.appendChild(card);
+  }
+}
+
+// ── Voice ────────────────────────────────────────────────
+function speak(msg) {
+  if (!window.speechSynthesis) return;
+  const move = msg.bestmove;
+  if (!move || move === lastSpoken) return;
+  lastSpoken = move;
+
+  // Try to use SAN from first line
+  const lines = msg.lines || [];
+  let text = move;
+  if (lines.length && lines[0].san && lines[0].san.length) {
+    text = lines[0].san[0];
+  }
+  // Make it speakable
+  text = text.replace(/\+/g, " check").replace(/#/g, " checkmate")
+    .replace(/^O-O-O$/i, "queen side castle").replace(/^O-O$/i, "king side castle");
+
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.rate = 1.1;
+  utt.pitch = 1.0;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utt);
+}
+
+// ── Settings handlers ────────────────────────────────────
+document.getElementById("depth-slider").addEventListener("input", (e) => {
+  document.getElementById("depth-value").textContent = e.target.value;
+});
+document.getElementById("depth-slider").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "set_option", name: "depth", value: parseInt(e.target.value) }));
+  }
+});
+
+document.getElementById("multipv-slider").addEventListener("input", (e) => {
+  document.getElementById("multipv-value").textContent = e.target.value;
+});
+document.getElementById("multipv-slider").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "set_option", name: "MultiPV", value: parseInt(e.target.value) }));
+  }
+});
+
+document.getElementById("chk-voice").addEventListener("change", (e) => {
+  voiceEnabled = e.target.checked;
+});
+document.getElementById("chk-evalbar").addEventListener("change", renderAll);
+document.getElementById("chk-board").addEventListener("change", renderAll);
+document.getElementById("chk-pvs").addEventListener("change", renderAll);
+
+// ── Init ─────────────────────────────────────────────────
+connect();
+</script>
+</body>
+</html>

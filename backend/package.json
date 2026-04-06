@@ -13,6 +13,8 @@
   "type": "commonjs",
   "dependencies": {
     "chess-openings": "^0.1.1",
+    "chess.js": "^1.4.0",
+    "express": "^5.2.1",
     "ws": "^8.20.0"
   }
 }

@@ -22,6 +22,8 @@ let isDragging = false; // true while user is dragging a piece
 let waitingForOpponent = false; // true after our move, until board changes again
 let renderGeneration = 0;
 let dragHandlersAttached = false; // prevent duplicate drag listeners on reconnect // increments on each board change — prevents stale overlays
+let voiceEnabled = false; // TTS — toggled from popup
+let lastSpokenMove = ""; // prevent repeating the same announcement
 
 // ── Site detection ───────────────────────────────────────────
 const SITE = detectSite();
@@ -176,6 +178,8 @@ function connectWS() {
         }
         console.log(`[chessbot] bestmove: ${msg.bestmove} (${msg.source})`);
         pendingEval = false;
+        // Voice announce
+        if (voiceEnabled) speakMove(msg);
         const source = msg.source || "engine";
         const lines = msg.lines || [];
         const bestLine = lines[0] || null;
@@ -997,7 +1001,53 @@ function squareCenter(file, rank, sqSize, flipped) {
   return { x: tl.x + sqSize / 2, y: tl.y + sqSize / 2 };
 }
 
-// ── Single best move: source highlight + red destination outline ──
+// ── Arrow drawing helper ─────────────────────────────────
+
+function drawArrowOnSvg(svg, fromFile, fromRank, toFile, toRank, sqSize, flipped, color, arrowId) {
+  const from = squareCenter(fromFile, fromRank, sqSize, flipped);
+  const to = squareCenter(toFile, toRank, sqSize, flipped);
+
+  // Shorten so arrowhead doesn't overshoot square center
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const shorten = sqSize * 0.4;
+  let x2 = to.x, y2 = to.y;
+  if (dist > shorten) {
+    const scale = (dist - shorten) / dist;
+    x2 = from.x + dx * scale;
+    y2 = from.y + dy * scale;
+  }
+
+  // Arrowhead marker
+  const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+  marker.id = arrowId;
+  marker.setAttribute("viewBox", "0 0 20 20");
+  marker.setAttribute("refX", "0");
+  marker.setAttribute("refY", "5");
+  marker.setAttribute("markerUnits", "strokeWidth");
+  marker.setAttribute("markerWidth", sqSize / 12);
+  marker.setAttribute("markerHeight", sqSize / 12);
+  marker.setAttribute("orient", "auto");
+  marker.setAttribute("fill", color);
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M 0 0 L 7.5 5 L 0 10 z");
+  marker.appendChild(path);
+  svg.appendChild(marker);
+
+  // Arrow line
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", from.x);
+  line.setAttribute("y1", from.y);
+  line.setAttribute("x2", x2);
+  line.setAttribute("y2", y2);
+  line.setAttribute("stroke", color);
+  line.setAttribute("stroke-width", sqSize / 6);
+  line.setAttribute("marker-end", `url(#${arrowId})`);
+  svg.appendChild(line);
+}
+
+// ── Single best move: green arrow (our move) + red arrow (opponent response) ──
 
 function drawSingleMove(uci, bestLine, source) {
   clearArrow();
@@ -1009,47 +1059,27 @@ function drawSingleMove(uci, bestLine, source) {
   const { from, to } = uciToSquares(uci);
   const isBook = source === "book";
 
-  const src = squareTopLeft(from.file, from.rank, sqSize, flipped);
-  const dst = squareTopLeft(to.file, to.rank, sqSize, flipped);
-
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.id = "chessbot-arrow-svg";
   svg.setAttribute("width", rect.width);
   svg.setAttribute("height", rect.height);
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
-  // Source square outline
-  const pad = 2;
-  const srcColor = isBook ? "#d4a017" : "#3498db";
-  const srcFill = isBook ? "rgba(212,160,23,0.15)" : "rgba(52,152,219,0.15)";
-  const srcRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-  srcRect.setAttribute("x", src.x + pad);
-  srcRect.setAttribute("y", src.y + pad);
-  srcRect.setAttribute("width", sqSize - pad * 2);
-  srcRect.setAttribute("height", sqSize - pad * 2);
-  srcRect.setAttribute("fill", srcFill);
-  srcRect.setAttribute("stroke", srcColor);
-  srcRect.setAttribute("stroke-width", "2.5");
-  srcRect.setAttribute("rx", "2");
-  srcRect.setAttribute("opacity", "0.9");
-  svg.appendChild(srcRect);
+  // Green arrow for our best move (gold for book moves)
+  const moveColor = isBook ? "hsla(45,85%,50%,0.75)" : "hsla(145,100%,50%,0.75)";
+  drawArrowOnSvg(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, moveColor, "arrow-best");
 
-  // Destination square outline
-  const dstColor = isBook ? "#d4a017" : "#e74c3c";
-  const dstFill = isBook ? "rgba(212,160,23,0.12)" : "rgba(231,76,60,0.12)";
-  const dstRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-  dstRect.setAttribute("x", dst.x + pad);
-  dstRect.setAttribute("y", dst.y + pad);
-  dstRect.setAttribute("width", sqSize - pad * 2);
-  dstRect.setAttribute("height", sqSize - pad * 2);
-  dstRect.setAttribute("fill", dstFill);
-  dstRect.setAttribute("stroke", dstColor);
-  dstRect.setAttribute("stroke-width", "3");
-  dstRect.setAttribute("rx", "2");
-  dstRect.setAttribute("opacity", "0.9");
-  svg.appendChild(dstRect);
+  // Red arrow for opponent's response (if available from PV)
+  if (bestLine && bestLine.pv && bestLine.pv.length >= 2) {
+    const response = bestLine.pv[1];
+    if (response && response.length >= 4) {
+      const resp = uciToSquares(response);
+      drawArrowOnSvg(svg, resp.from.file, resp.from.rank, resp.to.file, resp.to.rank, sqSize, flipped, "hsla(350,100%,50%,0.66)", "arrow-resp");
+    }
+  }
 
   // Badge on destination square — "OB" for book, eval score for engine
+  const dst = squareTopLeft(to.file, to.rank, sqSize, flipped);
   const badgeH = sqSize * 0.32;
   const fontSize = Math.max(9, sqSize * 0.18);
   if (isBook) {
@@ -1128,77 +1158,34 @@ function drawMultiPV(lines) {
   const { target: parent, dx, dy } = getOverlayTarget(board);
   if (!parent) return;
 
-  // Create an SVG layer for source square outlines
+  // Create an SVG layer for arrows
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.id = "chessbot-arrow-svg";
   svg.setAttribute("width", rect.width);
   svg.setAttribute("height", rect.height);
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
-  const pad = 2;
-
-  // Group lines by source and destination squares to handle overlaps
-  const srcKey = (from) => `${from.file},${from.rank}`;
-  const dstKey = (to) => `${to.file},${to.rank}`;
-
-  // Collect colors per source square and count badges per destination square
-  const srcColors = {}; // "file,rank" → [color, ...]
-  const dstSlots = {};  // "file,rank" → count of badges placed so far
-
+  // Draw an arrow for each PV line (best move only)
   const parsed = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line.move || line.move.length < 4) continue;
     const { from, to } = uciToSquares(line.move);
     const color = EVAL_COLORS[i] || EVAL_COLORS[EVAL_COLORS.length - 1];
-    const sk = srcKey(from);
-    const dk = dstKey(to);
-    if (!srcColors[sk]) srcColors[sk] = [];
-    srcColors[sk].push(color);
-    if (!dstSlots[dk]) dstSlots[dk] = 0;
-    parsed.push({ line, from, to, color, sk, dk });
-  }
-
-  // Draw source square outlines — split into segments when multiple lines share a source
-  for (const [key, colors] of Object.entries(srcColors)) {
-    const [file, rank] = key.split(",").map(Number);
-    const src = squareTopLeft(file, rank, sqSize, flipped);
-    const x = src.x + pad;
-    const y = src.y + pad;
-    const w = sqSize - pad * 2;
-    const h = sqSize - pad * 2;
-
-    if (colors.length === 1) {
-      const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      r.setAttribute("x", x); r.setAttribute("y", y);
-      r.setAttribute("width", w); r.setAttribute("height", h);
-      r.setAttribute("fill", "none"); r.setAttribute("stroke", colors[0]);
-      r.setAttribute("stroke-width", "3"); r.setAttribute("rx", "2");
-      r.setAttribute("opacity", "0.9");
-      svg.appendChild(r);
-    } else {
-      // Draw each side of the rectangle in alternating colors
-      const perimeter = 2 * w + 2 * h;
-      const segLen = perimeter / colors.length;
-      for (let ci = 0; ci < colors.length; ci++) {
-        const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        r.setAttribute("x", x); r.setAttribute("y", y);
-        r.setAttribute("width", w); r.setAttribute("height", h);
-        r.setAttribute("fill", "none"); r.setAttribute("stroke", colors[ci]);
-        r.setAttribute("stroke-width", "3"); r.setAttribute("rx", "2");
-        r.setAttribute("opacity", "0.9");
-        r.setAttribute("stroke-dasharray", `${segLen} ${perimeter - segLen}`);
-        r.setAttribute("stroke-dashoffset", `${-ci * segLen}`);
-        svg.appendChild(r);
-      }
-    }
+    // Full opacity for first line, slightly transparent for rest
+    const alpha = i === 0 ? 0.85 : 0.55;
+    const rgba = hexToRgba(color, alpha);
+    drawArrowOnSvg(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, rgba, `arrow-pv${i}`);
+    parsed.push({ line, to, color, dk: `${to.file},${to.rank}` });
   }
 
   // Draw destination eval badges — stack vertically when sharing a square
   const badgeH = sqSize * 0.32;
+  const dstSlots = {};
   for (const { line, to, color, dk } of parsed) {
     const dst = squareTopLeft(to.file, to.rank, sqSize, flipped);
     const scoreText = formatScore(line);
+    if (!dstSlots[dk]) dstSlots[dk] = 0;
     const slot = dstSlots[dk]++;
 
     const badge = document.createElement("div");
@@ -1229,6 +1216,14 @@ function drawMultiPV(lines) {
   }
 
   injectOverlay(board, svg);
+}
+
+/** Convert hex color (#rrggbb) to rgba string. */
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
 }
 
 // ── Inject SVG overlay into board container ──────────────────
@@ -1435,6 +1430,28 @@ function drawEvalBar(bestLine, source) {
   parent.appendChild(container);
 }
 
+// ── Voice TTS ────────────────────────────────────────────────
+function speakMove(msg) {
+  if (!window.speechSynthesis) return;
+  const move = msg.bestmove;
+  if (!move || move === lastSpokenMove) return;
+  lastSpokenMove = move;
+
+  // Prefer SAN from first line for natural speech
+  const lines = msg.lines || [];
+  let text = move;
+  if (lines.length && lines[0].san && lines[0].san.length) {
+    text = lines[0].san[0];
+  }
+  text = text.replace(/\+/g, " check").replace(/#/g, " checkmate")
+    .replace(/^O-O-O$/i, "queen side castle").replace(/^O-O$/i, "king side castle");
+
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.rate = 1.1;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utt);
+}
+
 // ── Re-evaluate current position (after settings change) ─────
 function resendCurrentPosition() {
   if (!enabled || !lastSentFen || waitingForOpponent) return;
@@ -1452,6 +1469,10 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       console.log(`[chessbot] ${enabled ? "enabled" : "disabled"}`);
       if (!enabled) clearArrow();
       if (enabled) readAndSend();
+    }
+    if (msg.type === "set_voice") {
+      voiceEnabled = !!msg.enabled;
+      console.log(`[chessbot] voice ${voiceEnabled ? "enabled" : "disabled"}`);
     }
     if (msg.type === "set_option") {
       // Relay engine setting to backend
