@@ -386,13 +386,7 @@ function readAndSend() {
     // If we're waiting for the opponent, don't re-analyze the same position
     if (waitingForOpponent || lastSentFen) return;
   } else {
-    // Board actually changed — but check for premove ghost artifacts first.
-    // If we're waiting for the opponent and the board diff looks like our own
-    // color moved (premove visualization), ignore it.
-    if (waitingForOpponent && hasPremoveElements()) {
-      console.log("[chessbot] premove detected while waiting for opponent — ignoring board change");
-      return;
-    }
+    // Board actually changed — clear the opponent-wait flag
     waitingForOpponent = false;
   }
 
