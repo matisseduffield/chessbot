@@ -21,22 +21,22 @@ Real-time chess analysis overlay for **chess.com** and **lichess.org**. A Chrome
 ## Architecture
 
 ```
-┌──────────────────┐     WebSocket      ┌──────────────────┐
-│  Chrome Extension │ ◄──────────────► │   Node.js Server  │
-│  (content script) │   ws://localhost   │   (port 8080)     │
-│                    │      :8080        │                    │
-│ • reads board DOM  │                   │ • Stockfish UCI    │
-│ • draws arrows     │                   │ • opening book     │
-│ • turn detection   │                   │ • ECO database     │
-│ • FEN conversion   │                   │ • Syzygy tables    │
-└──────────────────┘                   └──────────────────┘
+┌───────────────────┐     WebSocket     ┌──────────────────┐
+│  Chrome Extension │ ◄──────────────►  │   Node.js Server │
+│  (content script) │   ws://localhost  │   (port 8080)    │
+│                   │      :8080        │                  │
+│ • reads board DOM │                   │ • Stockfish UCI  │
+│ • draws arrows    │                   │ • opening book   │
+│ • turn detection  │                   │ • ECO database   │
+│ • FEN conversion  │                   │ • Syzygy tables  │
+└────────────────── ┘                   └──────────────────┘
         ▲                                       ▲
         │                                       │
         ▼                                       ▼
-┌──────────────────┐                   ┌──────────────────┐
-│  Extension Popup  │                   │  Dashboard Panel  │
-│  (toggle + logs)  │                   │  (localhost:8080)  │
-└──────────────────┘                   └──────────────────┘
+┌───────────────────┐                   ┌──────────────────┐
+│  Extension Popup  │                   │  Dashboard Panel │
+│  (toggle + logs)  │                   │  (localhost:8080)│
+└───────────────────┘                   └──────────────────┘
 ```
 
 ## Prerequisites
