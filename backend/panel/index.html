@@ -1020,6 +1020,7 @@ function connect() {
     if (msg.type === "variant_switched") {
       document.getElementById("variant-select").value = msg.variant;
       updateVariantHint(msg.variant);
+      filterEnginesByVariant(msg.activeEngine || null);
     }
     if (msg.type === "server_logs" && pendingLogResolve) {
       pendingLogResolve(msg.logs);
@@ -1461,6 +1462,8 @@ document.getElementById("variant-select").addEventListener("change", (e) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "switch_variant", variant: e.target.value }));
   }
+  // Immediately filter engine list for the new variant
+  filterEnginesByVariant(null);
   saveSettings();
 });
 document.getElementById("book-select").addEventListener("change", (e) => {
@@ -1482,18 +1485,43 @@ document.getElementById("btn-clear-hash").addEventListener("click", () => {
 });
 
 // ── Sync settings from server ────────────────────────────
+// All engines from the server (unfiltered)
+let allEngines = [];
+
+// Fairy-engine variants
+const FAIRY_VARIANTS = ["atomic","crazyhouse","kingofthehill","3check","antichess","horde","racingkings"];
+
+/** Rebuild the engine dropdown showing only engines compatible with the current variant. */
+function filterEnginesByVariant(activeEngine) {
+  const variant = document.getElementById("variant-select").value || "chess";
+  const needsFairy = FAIRY_VARIANTS.includes(variant);
+  const engineSel = document.getElementById("engine-select");
+  engineSel.innerHTML = "";
+  const compatible = allEngines.filter((name) => {
+    const isFairy = name.toLowerCase().includes("fairy");
+    return needsFairy ? isFairy : !isFairy;
+  });
+  compatible.forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name; opt.textContent = name;
+    if (name === activeEngine) opt.selected = true;
+    engineSel.appendChild(opt);
+  });
+  // If active engine isn't in the filtered list, select the first compatible one
+  if (compatible.length > 0 && !compatible.includes(engineSel.value)) {
+    engineSel.value = compatible[0];
+  }
+}
+
 function applySettings(msg) {
   const saved = getSavedSettings();
 
-  // Populate dynamic selects first (engines, books, syzygy)
+  // Store all engines for later filtering
+  allEngines = msg.engines || [];
+
+  // Populate engine dropdown filtered by variant
   const engineSel = document.getElementById("engine-select");
-  engineSel.innerHTML = "";
-  (msg.engines || []).forEach((name) => {
-    const opt = document.createElement("option");
-    opt.value = name; opt.textContent = name;
-    if (name === msg.activeEngine) opt.selected = true;
-    engineSel.appendChild(opt);
-  });
+  filterEnginesByVariant(msg.activeEngine);
 
   const bookSel = document.getElementById("book-select");
   bookSel.innerHTML = '<option value="">None (disabled)</option>';
@@ -1518,6 +1546,8 @@ function applySettings(msg) {
     if (saved.variant) {
       document.getElementById("variant-select").value = saved.variant;
       updateVariantHint(saved.variant);
+      // Re-filter engine dropdown for the restored variant
+      filterEnginesByVariant(msg.activeEngine);
       ws.send(JSON.stringify({ type: "switch_variant", variant: saved.variant }));
     }
 
@@ -1541,8 +1571,7 @@ function applySettings(msg) {
     document.getElementById("nodes-input").value = saved.nodesValue;
     searchNodes = saved.nodesLimitEnabled ? saved.nodesValue : null;
 
-    // Engine settings — only restore if compatible with current variant
-    const variantRequiresFairy = ["atomic","crazyhouse","kingofthehill","3check","antichess","horde","racingkings"].includes(saved.variant);
+    // Engine settings — dropdown is already filtered by variant
     if (saved.engine && [...engineSel.options].some(o => o.value === saved.engine)) {
       engineSel.value = saved.engine;
     }
@@ -1573,9 +1602,8 @@ function applySettings(msg) {
     sendOpt("Threads", saved.threads);
     sendOpt("Hash", parseInt(saved.hash));
     sendOpt("Skill Level", saved.skill);
-    // Only send switch_engine if engine type matches variant requirement
-    const savedIsFairy = saved.engine && saved.engine.toLowerCase().includes("fairy");
-    if (saved.engine && engineSel.value === saved.engine && (variantRequiresFairy === !!savedIsFairy)) {
+    // Send switch_engine only if the selected engine is in the dropdown (i.e. compatible)
+    if (saved.engine && [...engineSel.options].some(o => o.value === saved.engine)) {
       ws.send(JSON.stringify({ type: "switch_engine", name: saved.engine }));
     }
     ws.send(JSON.stringify({ type: "switch_book", name: bookSel.value }));

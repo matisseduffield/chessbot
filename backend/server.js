@@ -429,7 +429,7 @@ async function main() {
         const result = await switchVariant(msg.variant);
         if (result.switched) {
           evalGeneration++;
-          const variantMsg = { type: "variant_switched", variant: currentVariant, label: VARIANTS[currentVariant].label };
+          const variantMsg = { type: "variant_switched", variant: currentVariant, label: VARIANTS[currentVariant].label, activeEngine: path.basename(config.stockfishPath) };
           safeSend(ws, variantMsg);
           broadcast(ws, variantMsg);
         } else {
