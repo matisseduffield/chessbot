@@ -328,7 +328,7 @@ function connectWS() {
     try {
       const msg = JSON.parse(evt.data);
       if (msg.type === "error") {
-        console.error(`[chessbot] server error: ${msg.message}`);
+        console.log(`[chessbot] server error: ${msg.message}`);
         pendingEval = false;
         // If engine not ready (restarting), retry after a short delay
         if (msg.message && msg.message.includes("not ready")) {
@@ -390,7 +390,7 @@ function connectWS() {
         if (!msg.streaming) pendingEval = false;
         // Null bestmove = engine timeout / error — just unblock
         if (!msg.bestmove) {
-          console.warn("[chessbot] received null bestmove (engine timeout?)");
+          console.log("[chessbot] received null bestmove (engine timeout?)");
           return;
         }
         // Ignore stale responses for positions we didn't request
@@ -444,13 +444,13 @@ function connectWS() {
   };
 
   ws.onerror = (e) => {
-    console.error(`[chessbot] WebSocket error (readyState=${ws.readyState})`);
+    console.log(`[chessbot] WebSocket error (readyState=${ws.readyState})`);
   }; // onclose will fire next
 }
 
 function sendFen(fen) {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
-    console.warn(`[chessbot] sendFen skipped — WS not open (state=${ws ? ws.readyState : "null"})`);
+    console.log(`[chessbot] sendFen skipped — WS not open (state=${ws ? ws.readyState : "null"})`);
     return false;
   }
   const msg = { type: "fen", fen, depth: currentDepth };
@@ -639,7 +639,7 @@ function observeBoard(boardEl) {
       }
       readAndSend();
     } catch (err) {
-      console.error("[chessbot] poll error:", err);
+      console.log("[chessbot] poll error:", err);
     }
   }, 800);
 }
