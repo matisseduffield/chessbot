@@ -138,6 +138,14 @@ async function main() {
     }
   }
 
+  /** Safe send — catches errors from connections that close mid-send. */
+  function safeSend(ws, data) {
+    if (ws.readyState !== ws.OPEN) return;
+    try {
+      ws.send(typeof data === "string" ? data : JSON.stringify(data));
+    } catch { /* connection already closing */ }
+  }
+
   wss.on("connection", (ws, req) => {
     const remote = req.socket.remoteAddress;
     console.log(`[server] client connected (${remote})`);
@@ -157,6 +165,13 @@ async function main() {
 
       if (msg.type === "fen" && typeof msg.fen === "string") {
         const fen = msg.fen.trim();
+        // Basic FEN validation
+        const fenParts = fen.split(" ");
+        if (fenParts.length < 2 || fenParts[0].split("/").length !== 8) {
+          console.warn(`[server] invalid FEN rejected: ${fen}`);
+          safeSend(ws, { type: "error", message: "Invalid FEN" });
+          return;
+        }
         const depth = Number(msg.depth) || config.defaultDepth;
         const searchOptions = {};
         if (msg.movetime) searchOptions.movetime = Number(msg.movetime);
@@ -197,9 +212,7 @@ async function main() {
                 eco: posEco ? posEco.name : null,
                 ecoCode: posEco ? posEco.code : null,
               };
-              if (ws.readyState === ws.OPEN) {
-                ws.send(JSON.stringify(bookMsg));
-              }
+              safeSend(ws, bookMsg);
               broadcast(ws, bookMsg);
               return;
             }
@@ -222,16 +235,12 @@ async function main() {
               eco: posEco ? posEco.name : null,
               ecoCode: posEco ? posEco.code : null,
             };
-            if (ws.readyState === ws.OPEN) {
-              ws.send(JSON.stringify(engineMsg));
-            }
+            safeSend(ws, engineMsg);
             broadcast(ws, engineMsg);
           })
           .catch((err) => {
             console.error("[server] evaluation error:", err.message);
-            if (ws.readyState === ws.OPEN) {
-              ws.send(JSON.stringify({ type: "error", message: err.message }));
-            }
+            safeSend(ws, { type: "error", message: err.message });
           });
       }
 
@@ -243,18 +252,14 @@ async function main() {
         } else {
           engine.setOption(msg.name, msg.value);
         }
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: "option_set", name: msg.name, value: msg.value }));
-        }
+        safeSend(ws, { type: "option_set", name: msg.name, value: msg.value });
       }
 
       // ── Clear hash ─────────────────────────────────────
       if (msg.type === "clear_hash") {
         console.log("[server] ← clear_hash");
         engine.clearHash();
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: "hash_cleared" }));
-        }
+        safeSend(ws, { type: "hash_cleared" });
       }
 
       // ── Broadcast — relay a message from panel to all other clients ──
@@ -263,19 +268,17 @@ async function main() {
       }
 
       if (msg.type === "get_settings") {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({
-            type: "settings",
-            settings: engine.getSettings(),
-            defaultDepth: config.defaultDepth,
-            activeEngine: path.basename(config.stockfishPath),
-            activeBook: book.enabled ? path.basename(book.bookPath) : null,
-            activeSyzygy: config.syzygyPath || null,
-            engines: listEngines().map((e) => e.name),
-            books: listBooks().map((b) => b.name),
-            syzygy: listSyzygyDirs().map((s) => s.name),
-          }));
-        }
+        safeSend(ws, {
+          type: "settings",
+          settings: engine.getSettings(),
+          defaultDepth: config.defaultDepth,
+          activeEngine: path.basename(config.stockfishPath),
+          activeBook: book.enabled ? path.basename(book.bookPath) : null,
+          activeSyzygy: config.syzygyPath || null,
+          engines: listEngines().map((e) => e.name),
+          books: listBooks().map((b) => b.name),
+          syzygy: listSyzygyDirs().map((s) => s.name),
+        });
       }
 
       // ── File listing ───────────────────────────────────
@@ -283,24 +286,22 @@ async function main() {
         const engines = listEngines().map((e) => e.name);
         const books = listBooks().map((b) => b.name);
         const syzygy = listSyzygyDirs().map((s) => s.name);
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({
-            type: "files",
-            engines,
-            books,
-            syzygy,
-            activeEngine: path.basename(config.stockfishPath),
-            activeBook: book.enabled ? path.basename(book.bookPath) : null,
-            activeSyzygy: config.syzygyPath ? path.basename(config.syzygyPath) : null,
-          }));
-        }
+        safeSend(ws, {
+          type: "files",
+          engines,
+          books,
+          syzygy,
+          activeEngine: path.basename(config.stockfishPath),
+          activeBook: book.enabled ? path.basename(book.bookPath) : null,
+          activeSyzygy: config.syzygyPath ? path.basename(config.syzygyPath) : null,
+        });
       }
 
       // ── Switch engine ──────────────────────────────────
       if (msg.type === "switch_engine" && msg.name) {
         const found = listEngines().find((e) => e.name === msg.name);
         if (!found) {
-          ws.send(JSON.stringify({ type: "error", message: `Engine not found: ${msg.name}` }));
+          safeSend(ws, { type: "error", message: `Engine not found: ${msg.name}` });
           return;
         }
         console.log(`[server] switching engine to: ${found.name}`);
@@ -311,10 +312,10 @@ async function main() {
           await engine.start();
           // Re-apply existing settings
           evalGeneration++;
-          ws.send(JSON.stringify({ type: "engine_switched", name: found.name }));
+          safeSend(ws, { type: "engine_switched", name: found.name });
         } catch (err) {
           console.error(`[server] failed to switch engine: ${err.message}`);
-          ws.send(JSON.stringify({ type: "error", message: `Failed to start ${msg.name}: ${err.message}` }));
+          safeSend(ws, { type: "error", message: `Failed to start ${msg.name}: ${err.message}` });
         }
       }
 
@@ -327,22 +328,22 @@ async function main() {
             book = new OpeningBook("");
             config.openingBookPath = "";
             console.log("[server] opening book disabled");
-            ws.send(JSON.stringify({ type: "book_switched", name: null }));
+            safeSend(ws, { type: "book_switched", name: null });
           } else {
             const found = listBooks().find((b) => b.name === msg.name);
             if (!found) {
-              ws.send(JSON.stringify({ type: "error", message: `Book not found: ${msg.name}` }));
+              safeSend(ws, { type: "error", message: `Book not found: ${msg.name}` });
               return;
             }
             config.openingBookPath = found.path;
             book = new OpeningBook(found.path);
             await book.init();
             console.log(`[server] switched book to: ${found.name}`);
-            ws.send(JSON.stringify({ type: "book_switched", name: found.name }));
+            safeSend(ws, { type: "book_switched", name: found.name });
           }
         } catch (err) {
           console.error(`[server] failed to switch book: ${err.message}`);
-          ws.send(JSON.stringify({ type: "error", message: err.message }));
+          safeSend(ws, { type: "error", message: err.message });
         }
       }
 
@@ -352,23 +353,24 @@ async function main() {
           config.syzygyPath = "";
           engine.setOption("SyzygyPath", "");
           console.log("[server] Syzygy tablebases disabled");
-          ws.send(JSON.stringify({ type: "syzygy_switched", name: null }));
+          safeSend(ws, { type: "syzygy_switched", name: null });
         } else {
           const found = listSyzygyDirs().find((s) => s.name === msg.name);
           if (!found) {
-            ws.send(JSON.stringify({ type: "error", message: `Syzygy dir not found: ${msg.name}` }));
+            safeSend(ws, { type: "error", message: `Syzygy dir not found: ${msg.name}` });
             return;
           }
           config.syzygyPath = found.path;
           engine.setOption("SyzygyPath", found.path);
           console.log(`[server] switched Syzygy to: ${found.path}`);
-          ws.send(JSON.stringify({ type: "syzygy_switched", name: found.name }));
+          safeSend(ws, { type: "syzygy_switched", name: found.name });
         }
       }
     });
 
     ws.on("close", () => {
       console.log(`[server] client disconnected (${remote})`);
+      evalGeneration++; // discard any in-flight evals for this client
     });
   });
 

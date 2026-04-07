@@ -29,6 +29,7 @@ let lastSpokenMove = ""; // prevent repeating the same announcement
 let runEngineFor = "me"; // "me" | "opponent" | "both" — which turns to analyze
 let searchMovetime = null; // null = disabled, else ms
 let searchNodes = null; // null = disabled, else node count
+let wsBackoff = 3000; // WebSocket reconnect backoff (ms), resets on connect
 
 // ── Log buffer ───────────────────────────────────────────────
 const LOG_BUFFER_MAX = 500;
@@ -163,6 +164,7 @@ function connectWS() {
 
   ws.onopen = () => {
     console.log("[chessbot] connected to backend");
+    wsBackoff = 3000; // reset backoff on successful connect
     // If we queued a FEN before WS was ready, send it now
     if (pendingInitialFen) {
       // Verify the board hasn't changed since we queued the FEN
@@ -245,12 +247,16 @@ function connectWS() {
         }
         drawEvalBar(bestLine, source);
       }
-    } catch { /* ignore malformed */ }
+    } catch {
+      // Malformed message — make sure we don't stay stuck
+      pendingEval = false;
+    }
   };
 
   ws.onclose = () => {
-    console.log("[chessbot] disconnected — retrying in 3s");
-    setTimeout(connectWS, 3000);
+    console.log(`[chessbot] disconnected — retrying in ${Math.min(wsBackoff / 1000, 30)}s`);
+    setTimeout(connectWS, wsBackoff);
+    wsBackoff = Math.min(wsBackoff * 1.5, 30000); // exponential backoff, max 30s
   };
 
   ws.onerror = () => {}; // onclose will fire next
