@@ -1079,8 +1079,19 @@ function gridToFenBoard(grid) {
     if (empty) row += empty;
     rows.push(row);
   }
-  // We can only infer piece placement from the DOM — default to white to move
-  return rows.join("/") + " w KQkq - 0 1";
+  // Derive castling rights from king/rook positions
+  // grid[0] = rank 8 (top), grid[7] = rank 1 (bottom)
+  let castling = "";
+  if (grid[7][4] === "K") { // white king on e1
+    if (grid[7][7] === "R") castling += "K";
+    if (grid[7][0] === "R") castling += "Q";
+  }
+  if (grid[0][4] === "k") { // black king on e8
+    if (grid[0][7] === "r") castling += "k";
+    if (grid[0][0] === "r") castling += "q";
+  }
+  if (!castling) castling = "-";
+  return rows.join("/") + " w " + castling + " - 0 1";
 }
 
 function boardToFen() {
