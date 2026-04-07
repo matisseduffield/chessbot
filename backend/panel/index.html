@@ -794,6 +794,12 @@
             <label><input type="radio" name="run-for" value="opponent"><span>Opponent</span></label>
             <label><input type="radio" name="run-for" value="both"><span>Both</span></label>
           </div>
+          <div class="sub-label">Display Mode</div>
+          <div class="radio-group">
+            <label><input type="radio" name="display-mode" value="arrow"><span>Arrow</span></label>
+            <label><input type="radio" name="display-mode" value="box"><span>Box</span></label>
+            <label><input type="radio" name="display-mode" value="both" checked><span>Both</span></label>
+          </div>
         </div>
 
         <div class="settings-group">
@@ -949,6 +955,7 @@ function saveSettings() {
     depth: parseInt(document.getElementById("depth-slider").value),
     multiPV: parseInt(document.getElementById("multipv-slider").value),
     runFor: document.querySelector('input[name="run-for"]:checked')?.value || "me",
+    displayMode: document.querySelector('input[name="display-mode"]:checked')?.value || "both",
     timeLimitEnabled: document.getElementById("chk-time-limit").checked,
     timeValue: parseInt(document.getElementById("time-slider").value),
     nodesLimitEnabled: document.getElementById("chk-nodes-limit").checked,
@@ -1376,6 +1383,16 @@ document.querySelectorAll('input[name="run-for"]').forEach((radio) => {
   });
 });
 
+// Display Mode radio buttons — broadcast to all extension tabs
+document.querySelectorAll('input[name="display-mode"]').forEach((radio) => {
+  radio.addEventListener("change", (e) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_display_mode", value: e.target.value } }));
+    }
+    saveSettings();
+  });
+});
+
 document.getElementById("multipv-slider").addEventListener("input", (e) => {
   document.getElementById("multipv-value").textContent = e.target.value;
 });
@@ -1582,6 +1599,9 @@ function applySettings(msg) {
     const runForRadio = document.querySelector(`input[name="run-for"][value="${saved.runFor}"]`);
     if (runForRadio) runForRadio.checked = true;
 
+    const displayModeRadio = document.querySelector(`input[name="display-mode"][value="${saved.displayMode || "both"}"]`);
+    if (displayModeRadio) displayModeRadio.checked = true;
+
     document.getElementById("chk-time-limit").checked = saved.timeLimitEnabled;
     document.getElementById("time-slider").disabled = !saved.timeLimitEnabled;
     document.getElementById("time-slider").value = saved.timeValue;
@@ -1637,6 +1657,7 @@ function applySettings(msg) {
       ws.send(JSON.stringify({ type: "switch_syzygy", name: szSel.value }));
     }
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_run_engine_for", value: saved.runFor } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_display_mode", value: saved.displayMode || "both" } }));
     broadcastSearchLimits();
   } else {
     // No saved settings — use server defaults
