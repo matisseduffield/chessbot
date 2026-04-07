@@ -206,4 +206,4 @@ chessbot/
 
 ## License
 
-For personal/educational use only.
+This project is licensed under the [GNU General Public License v3.0](LICENSE.md). See the [LICENSE.md](LICENSE.md) file for details.
