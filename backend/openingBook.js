@@ -3,61 +3,85 @@ const { Polyglot } = require("chess-openings");
 
 class OpeningBook {
   constructor(bookPath) {
-    this.bookPath = bookPath;
-    this.book = null;
+    // Support single path (string) or multiple paths (array)
+    if (Array.isArray(bookPath)) {
+      this.bookPaths = bookPath.filter(Boolean);
+      this.bookPath = this.bookPaths[0] || "";
+    } else {
+      this.bookPath = bookPath || "";
+      this.bookPaths = this.bookPath ? [this.bookPath] : [];
+    }
+    this.books = []; // array of { path, book } objects
     this.enabled = false;
   }
 
-  /** Open the book file. Silently disables itself if the file doesn't exist. */
+  /** Open all book files. Silently skips files that don't exist. */
   async init() {
-    if (!this.bookPath || !fs.existsSync(this.bookPath)) {
-      console.log(`[book] no opening book found at "${this.bookPath}" – disabled`);
-      return;
+    this.books = [];
+    for (const p of this.bookPaths) {
+      if (!p || !fs.existsSync(p)) {
+        console.log(`[book] no opening book found at "${p}" – skipped`);
+        continue;
+      }
+      try {
+        const b = new Polyglot(p);
+        await b.open();
+        this.books.push({ path: p, book: b });
+        console.log(`[book] loaded opening book: ${p}`);
+      } catch (err) {
+        console.error(`[book] failed to load book "${p}": ${err.message}`);
+      }
     }
-
-    try {
-      this.book = new Polyglot(this.bookPath);
-      await this.book.open();
-      this.enabled = true;
-      console.log(`[book] loaded opening book: ${this.bookPath}`);
-    } catch (err) {
-      console.error(`[book] failed to load book: ${err.message}`);
-      this.book = null;
+    this.enabled = this.books.length > 0;
+    if (!this.enabled) {
+      console.log("[book] no books loaded – disabled");
     }
   }
 
   /**
-   * Look up a FEN in the opening book.
-   * Returns a UCI move string (e.g. "e2e4") or null if not found.
+   * Look up a FEN in all loaded books.
+   * Merges continuations across books by summing weights.
+   * Returns the best move (UCI string) or null if not found.
    */
   async lookup(fen) {
-    if (!this.enabled || !this.book) return null;
+    if (!this.enabled || this.books.length === 0) return null;
 
-    try {
-      const entry = await this.book.lookup(fen);
-      if (!entry) return null;
+    const merged = {}; // move → total weight
 
-      const bestMove = entry.getBestMove();
-      if (bestMove) {
-        console.log(
-          `[book] hit: ${bestMove}  (candidates: ${entry
-            .continuations()
-            .map((c) => `${c.move}(w=${c.weight})`)
-            .join(", ")})`
-        );
+    for (const { book, path } of this.books) {
+      try {
+        const entry = await book.lookup(fen);
+        if (!entry) continue;
+        for (const c of entry.continuations()) {
+          merged[c.move] = (merged[c.move] || 0) + c.weight;
+        }
+      } catch (err) {
+        console.error(`[book] lookup error in "${path}": ${err.message}`);
       }
-      return bestMove || null;
-    } catch (err) {
-      console.error(`[book] lookup error: ${err.message}`);
-      return null;
     }
+
+    if (Object.keys(merged).length === 0) return null;
+
+    // Pick the move with the highest combined weight
+    const best = Object.entries(merged).sort((a, b) => b[1] - a[1])[0];
+    console.log(
+      `[book] hit: ${best[0]}  (candidates: ${Object.entries(merged)
+        .sort((a, b) => b[1] - a[1])
+        .map(([m, w]) => `${m}(w=${w})`)
+        .join(", ")})`
+    );
+    return best[0];
   }
 
   async close() {
-    if (this.book) {
-      await this.book.close();
-      console.log("[book] closed");
+    for (const { book, path } of this.books) {
+      try {
+        await book.close();
+        console.log(`[book] closed: ${path}`);
+      } catch {}
     }
+    this.books = [];
+    this.enabled = false;
   }
 }
 

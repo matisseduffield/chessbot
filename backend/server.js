@@ -104,6 +104,29 @@ async function main() {
   // ── 2. Load opening book (optional) ───────────────────
   let book = new OpeningBook(config.openingBookPath);
   await book.init();
+  let lichessBookEnabled = false; // Lichess opening explorer API
+
+  /** Query Lichess opening explorer for a FEN.
+   *  Returns best UCI move string or null. */
+  async function lichessLookup(fen) {
+    if (!lichessBookEnabled) return null;
+    try {
+      const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}&topGames=0&recentGames=0`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!data.moves || data.moves.length === 0) return null;
+      // Pick the move with the most total games
+      const best = data.moves.reduce((a, b) =>
+        (a.white + a.draws + a.black) >= (b.white + b.draws + b.black) ? a : b
+      );
+      console.log(`[lichess-book] hit: ${best.uci} (${best.san}, ${best.white + best.draws + best.black} games)`);
+      return best.uci;
+    } catch (err) {
+      console.warn(`[lichess-book] lookup failed: ${err.message}`);
+      return null;
+    }
+  }
 
   // ── 3. Start HTTP + WebSocket server ────────────────────
 
@@ -305,7 +328,7 @@ async function main() {
           }
         }
 
-        const depth = Number(msg.depth) || config.defaultDepth;
+        const depth = msg.depth !== undefined && msg.depth !== null ? Number(msg.depth) : config.defaultDepth;
         const searchOptions = {};
         if (msg.movetime) searchOptions.movetime = Number(msg.movetime);
         if (msg.nodes) searchOptions.nodes = Number(msg.nodes);
@@ -358,9 +381,51 @@ async function main() {
                 broadcast(ws, bookMsg);
                 return;
               }
+
+              // Try Lichess opening explorer as fallback
+              const lichessMove = await lichessLookup(fen);
+              if (lichessMove) {
+                if (gen !== evalGeneration) return;
+                console.log(`[server] → bestmove (lichess): ${lichessMove}`);
+                const lichessMsg = {
+                  type: "bestmove",
+                  bestmove: lichessMove,
+                  source: "lichess",
+                  fen,
+                  variant: currentVariant,
+                  eco: posEco ? posEco.name : null,
+                  ecoCode: posEco ? posEco.code : null,
+                };
+                safeSend(ws, lichessMsg);
+                broadcast(ws, lichessMsg);
+                return;
+              }
             }
 
             // Fall back to Stockfish
+            // For infinite analysis (depth=0), stream intermediate results
+            if (depth === 0) {
+              searchOptions.infinite = true;
+              searchOptions.onInfo = (info) => {
+                if (gen !== evalGeneration) return;
+                if (ws.readyState !== ws.OPEN) return;
+                const enrichedLines = enrichLines(info.lines || [], fen);
+                const infoMsg = {
+                  type: "bestmove",
+                  bestmove: info.bestmove,
+                  lines: enrichedLines,
+                  source: "engine",
+                  depth: info.depth,
+                  fen,
+                  variant: currentVariant,
+                  eco: posEco ? posEco.name : null,
+                  ecoCode: posEco ? posEco.code : null,
+                  streaming: true,
+                };
+                safeSend(ws, infoMsg);
+                broadcast(ws, infoMsg);
+              };
+            }
             const result = await engine.evaluate(fen, depth, searchOptions);
             // Check again after eval finishes — a newer FEN may have arrived
             if (gen !== evalGeneration) {
@@ -369,6 +434,25 @@ async function main() {
             }
             const enrichedLines = enrichLines(result.lines || [], fen);
             console.log(`[server] → bestmove (engine): ${result.bestmove}`);
+
+            // Endgame tablebase classification
+            let tbResult = null;
+            if (config.syzygyPath && isStandard) {
+              const pieceCount = fen.split(" ")[0].replace(/[^a-zA-Z]/g, "").length;
+              if (pieceCount <= 7 && result.lines && result.lines[0]) {
+                const line = result.lines[0];
+                const score = line.score;
+                const mate = line.mate;
+                if (mate !== undefined && mate !== null) {
+                  tbResult = mate > 0 ? "win" : "loss";
+                } else if (score !== undefined && score !== null) {
+                  if (Math.abs(score) >= 9000) tbResult = score > 0 ? "win" : "loss";
+                  else if (Math.abs(score) <= 5) tbResult = "draw";
+                  else tbResult = score > 0 ? "win" : "loss";
+                }
+              }
+            }
+
             const engineMsg = {
               type: "bestmove",
               bestmove: result.bestmove,
@@ -378,6 +462,7 @@ async function main() {
               variant: currentVariant,
               eco: posEco ? posEco.name : null,
               ecoCode: posEco ? posEco.code : null,
+              tablebase: tbResult,
             };
             safeSend(ws, engineMsg);
             broadcast(ws, engineMsg);
@@ -411,6 +496,12 @@ async function main() {
         broadcast(ws, msg.payload);
       }
 
+      // ── Lichess opening explorer toggle ────────────────
+      if (msg.type === "set_lichess_book") {
+        lichessBookEnabled = !!msg.value;
+        console.log(`[server] Lichess opening book: ${lichessBookEnabled ? "enabled" : "disabled"}`);
+      }
+
       if (msg.type === "get_settings") {
         safeSend(ws, {
           type: "settings",
@@ -419,6 +510,7 @@ async function main() {
           activeEngine: path.basename(config.stockfishPath),
           activeBook: book.enabled ? path.basename(book.bookPath) : null,
           activeSyzygy: config.syzygyPath || null,
+          lichessBook: lichessBookEnabled,
           engines: listEngines().map((e) => e.name),
           books: listBooks().map((b) => b.name),
           syzygy: listSyzygyDirs().map((s) => s.name),
@@ -514,27 +606,39 @@ async function main() {
         }
       }
 
-      // ── Switch opening book ────────────────────────────
+      // ── Switch opening book (supports multiple books) ──
       if (msg.type === "switch_book" && msg.name !== undefined) {
         try {
           await book.close();
-          if (msg.name === "" || msg.name === null) {
+          // Accept single name (string) or array of names
+          const names = Array.isArray(msg.name) ? msg.name : [msg.name];
+          const validNames = names.filter(n => n && n !== "");
+          if (validNames.length === 0) {
             // Disable book
-            book = new OpeningBook("");
+            book = new OpeningBook([]);
             config.openingBookPath = "";
             console.log("[server] opening book disabled");
             safeSend(ws, { type: "book_switched", name: null });
           } else {
-            const found = listBooks().find((b) => b.name === msg.name);
-            if (!found) {
-              safeSend(ws, { type: "error", message: `Book not found: ${msg.name}` });
+            const allBooks = listBooks();
+            const paths = [];
+            const resolvedNames = [];
+            for (const name of validNames) {
+              const found = allBooks.find((b) => b.name === name);
+              if (found) {
+                paths.push(found.path);
+                resolvedNames.push(found.name);
+              }
+            }
+            if (paths.length === 0) {
+              safeSend(ws, { type: "error", message: `No valid books found` });
               return;
             }
-            config.openingBookPath = found.path;
-            book = new OpeningBook(found.path);
+            config.openingBookPath = paths[0];
+            book = new OpeningBook(paths);
             await book.init();
-            console.log(`[server] switched book to: ${found.name}`);
-            safeSend(ws, { type: "book_switched", name: found.name });
+            console.log(`[server] switched book to: ${resolvedNames.join(", ")}`);
+            safeSend(ws, { type: "book_switched", name: resolvedNames.length === 1 ? resolvedNames[0] : resolvedNames });
           }
         } catch (err) {
           console.error(`[server] failed to switch book: ${err.message}`);

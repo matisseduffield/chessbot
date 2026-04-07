@@ -117,12 +117,17 @@ class StockfishBridge {
     return new Promise((resolve, reject) => {
       if (!this.ready) return reject(new Error("Engine not ready"));
 
+      const isInfinite = options.infinite || depth === 0;
       const goParams = [];
-      if (options.movetime) goParams.push(`movetime ${options.movetime}`);
-      else if (options.nodes) goParams.push(`nodes ${options.nodes}`);
-      if (depth) goParams.push(`depth ${depth}`);
-      // If no limit specified at all, use depth as fallback
-      if (!goParams.length) goParams.push(`depth 15`);
+      if (isInfinite) {
+        goParams.push("infinite");
+      } else {
+        if (options.movetime) goParams.push(`movetime ${options.movetime}`);
+        else if (options.nodes) goParams.push(`nodes ${options.nodes}`);
+        if (depth) goParams.push(`depth ${depth}`);
+        // If no limit specified at all, use depth as fallback
+        if (!goParams.length) goParams.push(`depth 15`);
+      }
 
       console.log(`[stockfish] evaluating: ${fen} (${goParams.join(" ")})`);
 
@@ -133,10 +138,14 @@ class StockfishBridge {
       this._pendingPV = pvLines;
       this._pendingMultiPV = multiPV;
       this._pendingTargetDepth = depth;
+      this._isInfinite = isInfinite;
+      this._onInfoCallback = options.onInfo || null;
 
       // Safety-net timeout: if Stockfish doesn't respond within 20s, force resolve
+      // Skip for infinite analysis (engine runs until explicitly stopped)
       clearTimeout(this._evalTimeout);
-      this._evalTimeout = setTimeout(() => {
+      if (!isInfinite) {
+        this._evalTimeout = setTimeout(() => {
         if (this._pendingResolve) {
           console.warn("[stockfish] evaluation timeout — forcing stop");
           this._send("stop");
@@ -154,6 +163,7 @@ class StockfishBridge {
           }, 2000);
         }
       }, 20_000);
+      }
 
       this._send(`position fen ${fen}`);
       this._send(`go ${goParams.join(" ")}`);
@@ -303,6 +313,15 @@ class StockfishBridge {
           const prev = this._pendingPV[idx];
           if (!prev || d >= prev.depth) {
             this._pendingPV[idx] = entry;
+          }
+          // For infinite analysis, emit intermediate results when all PVs updated
+          if (this._isInfinite && this._onInfoCallback) {
+            const mpv = this._pendingMultiPV || 1;
+            const filledCount = Object.keys(this._pendingPV).length;
+            if (filledCount >= mpv) {
+              const lines = Object.keys(this._pendingPV).map(Number).sort((a, b) => a - b).map(i => this._pendingPV[i]);
+              this._onInfoCallback({ bestmove: lines[0].move, lines, depth: d });
+            }
           }
         }
       }

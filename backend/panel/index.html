@@ -616,6 +616,32 @@
     content: '✓ ';
     font-size: 10px;
   }
+  /* Multi-select: use real check element instead of ::before */
+  .custom-select-multi .custom-select-option.selected::before {
+    content: none;
+  }
+  .custom-select-multi .custom-select-option {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .custom-select-check {
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid var(--bg-500);
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    flex-shrink: 0;
+    color: var(--accent);
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .custom-select-option.selected .custom-select-check {
+    border-color: var(--accent);
+    background: var(--accent-muted);
+  }
 
   /* ── Number Input ── */
   .num-input {
@@ -780,7 +806,7 @@
           <div class="group-title">Analysis</div>
           <div class="setting-row">
             <span class="setting-label">Depth</span>
-            <input type="range" id="depth-slider" min="1" max="30" value="15">
+            <input type="range" id="depth-slider" min="0" max="30" value="15">
             <span class="range-value" id="depth-value">15</span>
           </div>
           <div class="setting-row">
@@ -870,6 +896,20 @@
             </label>
             <label class="toggle-row">
               <span class="toggle-switch">
+                <input type="checkbox" id="chk-voice-eval">
+                <span class="toggle-track"></span>
+              </span>
+              <span class="toggle-label">Speak eval</span>
+            </label>
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="chk-voice-opening">
+                <span class="toggle-track"></span>
+              </span>
+              <span class="toggle-label">Speak opening</span>
+            </label>
+            <label class="toggle-row">
+              <span class="toggle-switch">
                 <input type="checkbox" id="chk-evalbar" checked>
                 <span class="toggle-track"></span>
               </span>
@@ -882,6 +922,13 @@
               </span>
               <span class="toggle-label">PV cards</span>
             </label>
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="chk-opponent-response" checked>
+                <span class="toggle-track"></span>
+              </span>
+              <span class="toggle-label">Opponent reply</span>
+            </label>
           </div>
           <div class="sub-label" style="margin-top:10px">Move Display</div>
           <div class="radio-group">
@@ -889,14 +936,33 @@
             <label><input type="radio" name="display-mode" value="box"><span>Box</span></label>
             <label><input type="radio" name="display-mode" value="both" checked><span>Both</span></label>
           </div>
+          <div class="sub-label" style="margin-top:10px">Training</div>
+          <label class="toggle-row">
+            <span class="toggle-switch">
+              <input type="checkbox" id="chk-training-mode">
+              <span class="toggle-track"></span>
+            </span>
+            <span class="toggle-label">Training mode</span>
+          </label>
+          <div class="sub-label" style="margin-top:10px">Voice Speed</div>
+          <div class="slider-row">
+            <input type="range" class="panel-slider" id="voice-speed-slider" min="0.5" max="2" step="0.1" value="1.1">
+            <span class="slider-value" id="voice-speed-value">1.1</span>
+          </div>
         </div>
 
         <div class="settings-group">
           <div class="group-title">Resources</div>
           <div class="sub-label">Opening Book</div>
-          <select id="book-select" class="panel-select" style="margin-bottom:10px">
-            <option value="">None</option>
+          <select id="book-select" class="panel-select" multiple size="3" style="margin-bottom:10px">
           </select>
+          <label class="toggle-row" style="margin-bottom:10px">
+            <span class="toggle-switch">
+              <input type="checkbox" id="chk-lichess-book">
+              <span class="toggle-track"></span>
+            </span>
+            <span class="toggle-label">Lichess Masters DB</span>
+          </label>
           <div class="sub-label">Endgame Tables</div>
           <select id="syzygy-select" class="panel-select">
             <option value="">None</option>
@@ -958,10 +1024,16 @@ function saveSettings() {
     hash: document.getElementById("hash-select").value,
     skill: parseInt(document.getElementById("skill-slider").value),
     voice: document.getElementById("chk-voice").checked,
+    voiceEval: document.getElementById("chk-voice-eval").checked,
+    voiceOpening: document.getElementById("chk-voice-opening").checked,
+    voiceSpeed: parseFloat(document.getElementById("voice-speed-slider").value),
+    trainingMode: document.getElementById("chk-training-mode").checked,
     evalbar: document.getElementById("chk-evalbar").checked,
     displayMode: document.querySelector('input[name="display-mode"]:checked')?.value || "both",
     pvs: document.getElementById("chk-pvs").checked,
-    book: document.getElementById("book-select").value,
+    opponentResponse: document.getElementById("chk-opponent-response").checked,
+    lichessBook: document.getElementById("chk-lichess-book").checked,
+    books: Array.from(document.getElementById("book-select").selectedOptions).map(o => o.value).filter(Boolean),
     syzygy: document.getElementById("syzygy-select").value,
   };
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
@@ -1359,7 +1431,7 @@ function sendOpt(name, value) {
 }
 
 document.getElementById("depth-slider").addEventListener("input", (e) => {
-  document.getElementById("depth-value").textContent = e.target.value;
+  document.getElementById("depth-value").textContent = e.target.value === "0" ? "∞" : e.target.value;
 });
 document.getElementById("depth-slider").addEventListener("change", (e) => {
   sendOpt("depth", parseInt(e.target.value));
@@ -1417,6 +1489,34 @@ document.getElementById("skill-slider").addEventListener("change", (e) => {
 
 document.getElementById("chk-voice").addEventListener("change", (e) => {
   voiceEnabled = e.target.checked;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice", value: e.target.checked } }));
+  }
+  saveSettings();
+});
+document.getElementById("chk-voice-eval").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_eval", value: e.target.checked } }));
+  }
+  saveSettings();
+});
+document.getElementById("chk-voice-opening").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_opening", value: e.target.checked } }));
+  }
+  saveSettings();
+});
+document.getElementById("voice-speed-slider").addEventListener("input", (e) => {
+  document.getElementById("voice-speed-value").textContent = e.target.value;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_speed", value: parseFloat(e.target.value) } }));
+  }
+  saveSettings();
+});
+document.getElementById("chk-training-mode").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_mode", value: e.target.checked } }));
+  }
   saveSettings();
 });
 
@@ -1465,6 +1565,18 @@ function broadcastSearchLimits() {
 }
 document.getElementById("chk-evalbar").addEventListener("change", () => { renderAll(); saveSettings(); });
 document.getElementById("chk-pvs").addEventListener("change", () => { renderAll(); saveSettings(); });
+document.getElementById("chk-opponent-response").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_show_opponent_response", value: e.target.checked } }));
+  }
+  saveSettings();
+});
+document.getElementById("chk-lichess-book").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "set_lichess_book", value: e.target.checked }));
+  }
+  saveSettings();
+});
 
 document.getElementById("engine-select").addEventListener("change", (e) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1482,7 +1594,8 @@ document.getElementById("variant-select").addEventListener("change", (e) => {
 });
 document.getElementById("book-select").addEventListener("change", (e) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "switch_book", name: e.target.value }));
+    const selected = Array.from(e.target.selectedOptions).map(o => o.value).filter(Boolean);
+    ws.send(JSON.stringify({ type: "switch_book", name: selected }));
   }
   saveSettings();
 });
@@ -1555,11 +1668,12 @@ function applySettings(msg) {
   filterEnginesByVariant(msg.activeEngine);
 
   const bookSel = document.getElementById("book-select");
-  bookSel.innerHTML = '<option value="">None (disabled)</option>';
+  bookSel.innerHTML = '';
   (msg.books || []).forEach((name) => {
     const opt = document.createElement("option");
     opt.value = name; opt.textContent = name;
-    if (name === msg.activeBook) opt.selected = true;
+    const activeBooks = Array.isArray(msg.activeBook) ? msg.activeBook : (msg.activeBook ? [msg.activeBook] : []);
+    if (activeBooks.includes(name)) opt.selected = true;
     bookSel.appendChild(opt);
   });
 
@@ -1584,7 +1698,7 @@ function applySettings(msg) {
 
     // Restore saved settings onto controls
     document.getElementById("depth-slider").value = saved.depth;
-    document.getElementById("depth-value").textContent = saved.depth;
+    document.getElementById("depth-value").textContent = saved.depth === 0 ? "∞" : saved.depth;
     document.getElementById("multipv-slider").value = saved.multiPV;
     document.getElementById("multipv-value").textContent = saved.multiPV;
 
@@ -1618,19 +1732,38 @@ function applySettings(msg) {
     // Display toggles
     document.getElementById("chk-voice").checked = saved.voice;
     voiceEnabled = saved.voice;
+    if (saved.voiceEval !== undefined) document.getElementById("chk-voice-eval").checked = saved.voiceEval;
+    if (saved.voiceOpening !== undefined) document.getElementById("chk-voice-opening").checked = saved.voiceOpening;
+    if (saved.voiceSpeed !== undefined) {
+      document.getElementById("voice-speed-slider").value = saved.voiceSpeed;
+      document.getElementById("voice-speed-value").textContent = saved.voiceSpeed;
+    }
     document.getElementById("chk-evalbar").checked = saved.evalbar;
     if (saved.displayMode) {
       const radio = document.querySelector(`input[name="display-mode"][value="${saved.displayMode}"]`);
       if (radio) radio.checked = true;
     }
     document.getElementById("chk-pvs").checked = saved.pvs;
+    if (saved.opponentResponse !== undefined) {
+      document.getElementById("chk-opponent-response").checked = saved.opponentResponse;
+    }
+    if (saved.lichessBook !== undefined) {
+      document.getElementById("chk-lichess-book").checked = saved.lichessBook;
+    }
+    if (saved.trainingMode !== undefined) {
+      document.getElementById("chk-training-mode").checked = saved.trainingMode;
+    }
 
     // Book / Syzygy — only restore for standard chess
     const restoredVariant = saved.variant || "chess";
     const variantIsStandard = !FAIRY_VARIANTS.includes(restoredVariant);
     if (variantIsStandard) {
-      if (saved.book !== undefined && [...bookSel.options].some(o => o.value === saved.book)) {
-        bookSel.value = saved.book;
+      // Restore multi-book selection
+      const savedBooks = saved.books || (saved.book ? [saved.book] : []);
+      if (savedBooks.length > 0) {
+        for (const opt of bookSel.options) {
+          opt.selected = savedBooks.includes(opt.value);
+        }
       }
       if (saved.syzygy !== undefined && [...szSel.options].some(o => o.value === saved.syzygy)) {
         szSel.value = saved.syzygy;
@@ -1648,11 +1781,19 @@ function applySettings(msg) {
       ws.send(JSON.stringify({ type: "switch_engine", name: saved.engine }));
     }
     if (variantIsStandard) {
-      ws.send(JSON.stringify({ type: "switch_book", name: bookSel.value }));
+      const selectedBooks = Array.from(bookSel.selectedOptions).map(o => o.value).filter(Boolean);
+      ws.send(JSON.stringify({ type: "switch_book", name: selectedBooks }));
       ws.send(JSON.stringify({ type: "switch_syzygy", name: szSel.value }));
     }
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_run_engine_for", value: saved.runFor } }));
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_display_mode", value: saved.displayMode || "both" } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_show_opponent_response", value: saved.opponentResponse !== undefined ? saved.opponentResponse : true } }));
+    ws.send(JSON.stringify({ type: "set_lichess_book", value: !!saved.lichessBook }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice", value: !!saved.voice } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_eval", value: !!saved.voiceEval } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_opening", value: !!saved.voiceOpening } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_speed", value: saved.voiceSpeed || 1.1 } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_mode", value: !!saved.trainingMode } }));
     broadcastSearchLimits();
   } else {
     // No saved settings — use server defaults
@@ -1692,8 +1833,9 @@ function initCustomSelects() {
     if (sel.dataset.customized) return; // already wrapped
     sel.dataset.customized = "1";
 
+    const isMulti = sel.multiple;
     const wrapper = document.createElement("div");
-    wrapper.className = "custom-select";
+    wrapper.className = "custom-select" + (isMulti ? " custom-select-multi" : "");
     // Preserve any inline margin from the native select
     if (sel.style.marginBottom) wrapper.style.marginBottom = sel.style.marginBottom;
 
@@ -1715,25 +1857,64 @@ function initCustomSelects() {
         const item = document.createElement("div");
         item.className = "custom-select-option" + (opt.selected ? " selected" : "");
         item.dataset.value = opt.value;
-        item.textContent = opt.textContent;
-        item.addEventListener("click", (e) => {
-          e.stopPropagation();
-          sel.value = opt.value;
-          sel.dispatchEvent(new Event("change", { bubbles: true }));
-          syncTrigger();
-          close();
-        });
+        if (isMulti) {
+          // Checkbox-style: show a check indicator + label
+          const check = document.createElement("span");
+          check.className = "custom-select-check";
+          check.textContent = opt.selected ? "✓" : "";
+          item.appendChild(check);
+          const label = document.createElement("span");
+          label.textContent = opt.textContent;
+          item.appendChild(label);
+          item.addEventListener("click", (e) => {
+            e.stopPropagation();
+            opt.selected = !opt.selected;
+            item.classList.toggle("selected", opt.selected);
+            item.querySelector(".custom-select-check").textContent = opt.selected ? "✓" : "";
+            sel.dispatchEvent(new Event("change", { bubbles: true }));
+            syncTrigger();
+            // Don't close — allow multiple selections
+          });
+        } else {
+          item.textContent = opt.textContent;
+          item.addEventListener("click", (e) => {
+            e.stopPropagation();
+            sel.value = opt.value;
+            sel.dispatchEvent(new Event("change", { bubbles: true }));
+            syncTrigger();
+            close();
+          });
+        }
         dropdown.appendChild(item);
       }
     }
 
     function syncTrigger() {
-      const selected = sel.options[sel.selectedIndex];
-      trigger.textContent = selected ? selected.textContent : "—";
-      // Update selected state in dropdown
-      dropdown.querySelectorAll(".custom-select-option").forEach((item) => {
-        item.classList.toggle("selected", item.dataset.value === sel.value);
-      });
+      if (isMulti) {
+        const selected = Array.from(sel.selectedOptions);
+        if (selected.length === 0) {
+          trigger.textContent = "None selected";
+        } else if (selected.length <= 2) {
+          trigger.textContent = selected.map(o => o.textContent).join(", ");
+        } else {
+          trigger.textContent = `${selected.length} selected`;
+        }
+        // Update checkmarks in dropdown
+        dropdown.querySelectorAll(".custom-select-option").forEach((item) => {
+          const opt = Array.from(sel.options).find(o => o.value === item.dataset.value);
+          const isSelected = opt ? opt.selected : false;
+          item.classList.toggle("selected", isSelected);
+          const check = item.querySelector(".custom-select-check");
+          if (check) check.textContent = isSelected ? "✓" : "";
+        });
+      } else {
+        const selected = sel.options[sel.selectedIndex];
+        trigger.textContent = selected ? selected.textContent : "—";
+        // Update selected state in dropdown
+        dropdown.querySelectorAll(".custom-select-option").forEach((item) => {
+          item.classList.toggle("selected", item.dataset.value === sel.value);
+        });
+      }
     }
 
     function close() {
@@ -1770,15 +1951,17 @@ function initCustomSelects() {
     mo.observe(sel, { childList: true, subtree: true, attributes: true, attributeFilter: ["value"] });
 
     // Also re-sync when value is set programmatically via JS
-    const origValueDescriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
-    Object.defineProperty(sel, "value", {
-      get() { return origValueDescriptor.get.call(sel); },
-      set(v) {
-        origValueDescriptor.set.call(sel, v);
-        syncTrigger();
-      },
-      configurable: true,
-    });
+    if (!isMulti) {
+      const origValueDescriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+      Object.defineProperty(sel, "value", {
+        get() { return origValueDescriptor.get.call(sel); },
+        set(v) {
+          origValueDescriptor.set.call(sel, v);
+          syncTrigger();
+        },
+        configurable: true,
+      });
+    }
   });
 
   // Close all dropdowns when clicking outside

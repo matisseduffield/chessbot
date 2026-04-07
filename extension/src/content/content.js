@@ -26,13 +26,24 @@ let renderGeneration = 0;
 let dragHandlersAttached = false; // prevent duplicate drag listeners on reconnect // increments on each board change — prevents stale overlays
 let lastKnownTurn = null; // last successfully detected turn — for alternation fallback
 let voiceEnabled = false; // TTS — toggled from popup
+let voiceEvalEnabled = false; // announce eval score changes
+let voiceOpeningEnabled = false; // announce opening names
+let voiceSpeed = 1.1; // TTS speech rate
 let lastSpokenMove = ""; // prevent repeating the same announcement
+let lastSpokenOpening = ""; // prevent repeating the same opening announcement
 let runEngineFor = "me"; // "me" | "opponent" | "both" — which turns to analyze
 let displayMode = "both"; // "arrow" | "box" | "both" — how to show best moves
+let showOpponentResponse = true; // show predicted opponent reply (red arrow/box)
 let searchMovetime = null; // null = disabled, else ms
 let searchNodes = null; // null = disabled, else node count
 let wsBackoff = 3000; // WebSocket reconnect backoff (ms), resets on connect
 let detectedVariant = null; // chess variant detected from URL
+let trainingMode = false; // progressive hint mode
+let trainingStage = 0; // 0=piece hint, 1=zone hint, 2=full reveal
+let trainingBestMove = null; // stored best move for comparison
+let trainingCorrect = 0; // number of correct moves
+let trainingTotal = 0; // total moves played
+let trainingLastFen = ""; // FEN when training hint was shown
 
 // ── Log buffer ───────────────────────────────────────────────
 const LOG_BUFFER_MAX = 500;
@@ -85,6 +96,18 @@ function detectVariant() {
     if (path.includes("racingkings") || path.includes("racing-kings")) return "racingkings";
   }
   return null;
+}
+
+/** Detect if the current page is a puzzle/training page. */
+function isPuzzlePage() {
+  const path = location.pathname.toLowerCase();
+  if (SITE === "chesscom") {
+    return path.includes("/puzzles") || path.includes("/puzzle") || path.includes("/lessons");
+  }
+  if (SITE === "lichess") {
+    return path.startsWith("/training") || path.startsWith("/streak") || path.startsWith("/storm");
+  }
+  return false;
 }
 
 if (!SITE) {
@@ -288,6 +311,11 @@ function connectWS() {
         }
         pendingInitialFen = null;
       }
+    } else if (lastSentFen && enabled) {
+      // Reconnected — resend last position for continuity
+      console.log(`[chessbot] reconnected — resending last position`);
+      pendingEval = true;
+      sendFen(lastSentFen);
     } else if (boardReady && !lastSentFen) {
       // Board found but no FEN queued or sent — try reading now
       console.log("[chessbot] WS connected, triggering initial read");
@@ -329,12 +357,37 @@ function connectWS() {
         resendCurrentPosition();
         return;
       }
+      if (msg.type === "set_show_opponent_response") {
+        showOpponentResponse = !!msg.value;
+        console.log(`[chessbot] show opponent response: ${showOpponentResponse}`);
+        resendCurrentPosition();
+        return;
+      }
+      if (msg.type === "set_voice") { voiceEnabled = !!msg.value; return; }
+      if (msg.type === "set_voice_eval") { voiceEvalEnabled = !!msg.value; return; }
+      if (msg.type === "set_voice_opening") { voiceOpeningEnabled = !!msg.value; return; }
+      if (msg.type === "set_voice_speed") { voiceSpeed = Number(msg.value) || 1.1; return; }
+      if (msg.type === "set_training_mode") {
+        trainingMode = !!msg.value;
+        trainingStage = 0;
+        trainingBestMove = null;
+        console.log(`[chessbot] training mode: ${trainingMode}`);
+        resendCurrentPosition();
+        return;
+      }
+      if (msg.type === "set_display_mode") {        if (["arrow", "box", "both"].includes(msg.value)) {
+          displayMode = msg.value;
+          resendCurrentPosition();
+        }
+        return;
+      }
       if (msg.type === "variant_switched") {
         console.log(`[chessbot] variant switched to: ${msg.variant} (${msg.label})`);
         return;
       }
       if (msg.type === "bestmove") {
-        pendingEval = false;
+        // For streaming (infinite analysis), keep pendingEval true
+        if (!msg.streaming) pendingEval = false;
         // Null bestmove = engine timeout / error — just unblock
         if (!msg.bestmove) {
           console.warn("[chessbot] received null bestmove (engine timeout?)");
@@ -362,12 +415,20 @@ function connectWS() {
         const source = msg.source || "engine";
         const lines = msg.lines || [];
         const bestLine = lines[0] || null;
-        if (lines.length > 1) {
+        if (trainingMode && !msg.streaming) {
+          // Training mode: store best move, show progressive hint
+          trainingBestMove = msg.bestmove;
+          trainingStage = 0;
+          trainingLastFen = msg.fen || lastSentFen;
+          drawTrainingHint(msg.bestmove, bestLine, source);
+          drawEvalBar(bestLine, source, msg.tablebase);
+        } else if (lines.length > 1) {
           drawMultiPV(lines, source);
+          drawEvalBar(bestLine, source, msg.tablebase);
         } else {
           drawSingleMove(msg.bestmove, bestLine, source);
+          drawEvalBar(bestLine, source, msg.tablebase);
         }
-        drawEvalBar(bestLine, source);
       }
     } catch {
       // Malformed message — make sure we don't stay stuck
@@ -377,6 +438,7 @@ function connectWS() {
 
   ws.onclose = () => {
     console.log(`[chessbot] disconnected — retrying in ${Math.min(wsBackoff / 1000, 30)}s`);
+    pendingEval = false; // unblock so we can resend on reconnect
     setTimeout(connectWS, wsBackoff);
     wsBackoff = Math.min(wsBackoff * 1.5, 30000); // exponential backoff, max 30s
   };
@@ -624,7 +686,7 @@ function readAndSend() {
 
   // Client-side eval timeout: if we've been waiting too long for a response,
   // reset state so we can re-analyze on the next board change
-  if (pendingEval && evalSentAt && (Date.now() - evalSentAt > EVAL_TIMEOUT_MS)) {
+  if (pendingEval && evalSentAt && currentDepth !== 0 && (Date.now() - evalSentAt > EVAL_TIMEOUT_MS)) {
     console.warn(`[chessbot] eval timeout (${EVAL_TIMEOUT_MS}ms) — resetting state`);
     pendingEval = false;
     lastSentFen = "";
@@ -662,6 +724,11 @@ function readAndSend() {
   lastPieceCount = pieceCount;
   renderGeneration++; // new position — invalidate any in-flight responses
   const myGen = renderGeneration;
+
+  // Training mode: check if user's move matched the engine suggestion
+  if (trainingMode && trainingBestMove) {
+    checkTrainingAccuracy(fen);
+  }
 
   // Detect new game: piece count jumped back to 32 (or close) from fewer,
   // OR the board reset to the starting position. Reset cached player color
@@ -703,8 +770,11 @@ function readAndSend() {
   if (turn) lastKnownTurn = turn;
 
   // Only show move suggestions based on runEngineFor setting
+  // On puzzle pages, always analyze regardless of turn
   const isMyTurn = effectiveTurn === playerColor;
+  const onPuzzle = isPuzzlePage();
   const shouldAnalyze =
+    onPuzzle ||
     runEngineFor === "both" ||
     (runEngineFor === "me" && isMyTurn) ||
     (runEngineFor === "opponent" && !isMyTurn);
@@ -1609,6 +1679,124 @@ function drawSquareHighlight(svg, file, rank, sqSize, flipped, color, style) {
   svg.appendChild(rect);
 }
 
+// ── Training mode ────────────────────────────────────────────
+
+/**
+ * Draw progressive training hints:
+ * Stage 0: Highlight the piece to move (source square only)
+ * Stage 1: Also highlight the zone (rank or file of destination)
+ * Stage 2: Full reveal (same as normal)
+ */
+function drawTrainingHint(uci, bestLine, source) {
+  clearArrow();
+  if (!uci || uci.length < 4) return;
+  const geo = getBoardGeometry();
+  if (!geo) return;
+  const { board, rect, sqSize, flipped } = geo;
+  const { from, to } = uciToSquares(uci);
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.id = "chessbot-arrow-svg";
+  svg.setAttribute("width", rect.width);
+  svg.setAttribute("height", rect.height);
+  svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;cursor:pointer;`;
+  // Allow clicks to advance stage
+  svg.style.pointerEvents = "all";
+
+  const hintColor = "rgba(168,85,247,0.5)"; // purple
+  const zoneColor = "rgba(168,85,247,0.2)";
+  const fromPos = squareTopLeft(from.file, from.rank, sqSize, flipped);
+
+  if (trainingStage >= 0) {
+    // Stage 0: Source square highlight
+    const sq = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    sq.setAttribute("x", fromPos.x);
+    sq.setAttribute("y", fromPos.y);
+    sq.setAttribute("width", sqSize);
+    sq.setAttribute("height", sqSize);
+    sq.setAttribute("fill", hintColor);
+    sq.setAttribute("rx", "3");
+    svg.appendChild(sq);
+
+    // "?" label on source square
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", fromPos.x + sqSize / 2);
+    label.setAttribute("y", fromPos.y + sqSize / 2 + 6);
+    label.setAttribute("text-anchor", "middle");
+    label.setAttribute("font-size", Math.max(14, sqSize * 0.35));
+    label.setAttribute("font-weight", "900");
+    label.setAttribute("fill", "rgba(255,255,255,0.9)");
+    label.setAttribute("font-family", "monospace");
+    label.textContent = "?";
+    svg.appendChild(label);
+  }
+
+  if (trainingStage >= 1) {
+    // Stage 1: Highlight destination file (column)
+    const toPos = squareTopLeft(to.file, to.rank, sqSize, flipped);
+    for (let r = 0; r < 8; r++) {
+      const pos = squareTopLeft(to.file, r, sqSize, flipped);
+      const zone = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      zone.setAttribute("x", pos.x);
+      zone.setAttribute("y", pos.y);
+      zone.setAttribute("width", sqSize);
+      zone.setAttribute("height", sqSize);
+      zone.setAttribute("fill", zoneColor);
+      svg.appendChild(zone);
+    }
+  }
+
+  if (trainingStage >= 2) {
+    // Stage 2: Full reveal — draw the actual move
+    clearArrow();
+    drawSingleMove(uci, bestLine, source);
+    return;
+  }
+
+  // Score badge
+  const scoreBadge = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  scoreBadge.setAttribute("x", rect.width - 4);
+  scoreBadge.setAttribute("y", 16);
+  scoreBadge.setAttribute("text-anchor", "end");
+  scoreBadge.setAttribute("font-size", "11");
+  scoreBadge.setAttribute("font-weight", "700");
+  scoreBadge.setAttribute("fill", "rgba(168,85,247,0.9)");
+  scoreBadge.setAttribute("font-family", "'Inter', sans-serif");
+  scoreBadge.textContent = `${trainingCorrect}/${trainingTotal}`;
+  svg.appendChild(scoreBadge);
+
+  // Click handler to advance stages
+  svg.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    trainingStage++;
+    drawTrainingHint(uci, bestLine, source);
+  });
+
+  const { target: parent, dx, dy } = getOverlayTarget(board);
+  if (!parent) return;
+  svg.style.left = `${dx}px`;
+  svg.style.top = `${dy}px`;
+  parent.appendChild(svg);
+}
+
+/** Check if the user's move matched the engine's suggestion */
+function checkTrainingAccuracy(currentFen) {
+  if (!trainingMode || !trainingBestMove || !trainingLastFen) return;
+  // Only check if the position changed from the training hint position
+  const currentBoard = currentFen.split(" ")[0];
+  const trainingBoard = trainingLastFen.split(" ")[0];
+  if (currentBoard === trainingBoard) return; // same position, no move made
+
+  trainingTotal++;
+  // We can't directly know what move the user played, but if they played
+  // the best move, the resulting position will match what we'd get from the hint FEN
+  // Instead, just show the score badge — accuracy tracking is approximate
+  trainingBestMove = null;
+  trainingLastFen = "";
+  trainingStage = 0;
+}
+
 // ── Single best move: green squares (our move) + red squares (opponent response) ──
 
 function drawSingleMove(uci, bestLine, source) {
@@ -1619,7 +1807,7 @@ function drawSingleMove(uci, bestLine, source) {
   const { board, rect, sqSize, flipped } = geo;
   console.log(`[chessbot] drawing move ${uci} on board ${rect.width}x${rect.height} sq=${sqSize} flipped=${flipped}`);
   const { from, to } = uciToSquares(uci);
-  const isBook = source === "book";
+  const isBook = source === "book" || source === "lichess";
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.id = "chessbot-arrow-svg";
@@ -1627,9 +1815,9 @@ function drawSingleMove(uci, bestLine, source) {
   svg.setAttribute("height", rect.height);
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
-  const moveColor = isBook ? "rgba(212,160,23,0.9)" : "hsla(145,100%,50%,0.85)";
-  const boxColorFrom = isBook ? "rgba(212,160,23,0.45)" : "rgba(100,235,137,0.45)";
-  const boxColorTo   = isBook ? "rgba(212,160,23,0.55)" : "rgba(100,235,137,0.55)";
+  const moveColor = source === "lichess" ? "rgba(100,180,235,0.9)" : isBook ? "rgba(212,160,23,0.9)" : "hsla(145,100%,50%,0.85)";
+  const boxColorFrom = source === "lichess" ? "rgba(100,180,235,0.45)" : isBook ? "rgba(212,160,23,0.45)" : "rgba(100,235,137,0.45)";
+  const boxColorTo   = source === "lichess" ? "rgba(100,180,235,0.55)" : isBook ? "rgba(212,160,23,0.55)" : "rgba(100,235,137,0.55)";
 
   // Box highlights (drawn first so they sit behind arrows)
   if (displayMode === "box" || displayMode === "both") {
@@ -1643,7 +1831,7 @@ function drawSingleMove(uci, bestLine, source) {
   }
 
   // Red opponent response
-  if (bestLine && bestLine.pv && bestLine.pv.length >= 2) {
+  if (showOpponentResponse && bestLine && bestLine.pv && bestLine.pv.length >= 2) {
     const response = bestLine.pv[1];
     if (response && response.length >= 4) {
       const resp = uciToSquares(response);
@@ -1662,12 +1850,13 @@ function drawSingleMove(uci, bestLine, source) {
   const badgeH = sqSize * 0.28;
   const fontSize = Math.max(9, sqSize * 0.17);
   if (isBook) {
+    const badgeFill = source === "lichess" ? "rgba(59,130,246,0.85)" : "rgba(160,120,0,0.85)";
     const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     bg.setAttribute("x", dst.x);
     bg.setAttribute("y", dst.y + sqSize - badgeH);
     bg.setAttribute("width", sqSize);
     bg.setAttribute("height", badgeH);
-    bg.setAttribute("fill", "rgba(160,120,0,0.85)");
+    bg.setAttribute("fill", badgeFill);
     bg.setAttribute("rx", "2");
     svg.appendChild(bg);
 
@@ -1679,7 +1868,7 @@ function drawSingleMove(uci, bestLine, source) {
     text.setAttribute("font-weight", "800");
     text.setAttribute("font-family", "monospace");
     text.setAttribute("fill", "#fff");
-    text.textContent = "OB";
+    text.textContent = source === "lichess" ? "LI" : "OB";
     svg.appendChild(text);
   } else if (bestLine) {
     const scoreText = formatScore(bestLine);
@@ -1847,12 +2036,12 @@ function injectOverlay(board, svg) {
 
 // ── Eval bar + WDL display ───────────────────────────────────
 
-function drawEvalBar(bestLine, source) {
+function drawEvalBar(bestLine, source, tablebase) {
   // Remove existing
   const old = document.getElementById("chessbot-eval-bar");
   if (old) old.remove();
 
-  const isBook = source === "book";
+  const isBook = source === "book" || source === "lichess";
   if (!bestLine && !isBook) return;
 
   const board = getBoardElement();
@@ -1886,9 +2075,12 @@ function drawEvalBar(bestLine, source) {
   `;
 
   if (isBook) {
-    // Show gold "OB" bar for opening book moves
+    // Show gold "OB" bar for opening book, or blue "LI" for Lichess
     const bookBar = document.createElement("div");
-    bookBar.style.cssText = `background:linear-gradient(180deg,#d4a017,#b8860b);flex:1;display:flex;align-items:center;justify-content:center;`;
+    const barGrad = source === "lichess"
+      ? "background:linear-gradient(180deg,#3b82f6,#2563eb)"
+      : "background:linear-gradient(180deg,#d4a017,#b8860b)";
+    bookBar.style.cssText = `${barGrad};flex:1;display:flex;align-items:center;justify-content:center;`;
     container.appendChild(bookBar);
 
     const label = document.createElement("div");
@@ -1907,7 +2099,7 @@ function drawEvalBar(bestLine, source) {
       pointer-events: none;
       z-index: 1;
     `;
-    label.textContent = "OB";
+    label.textContent = source === "lichess" ? "LI" : "OB";
     container.appendChild(label);
 
     parent.appendChild(container);
@@ -1963,6 +2155,30 @@ function drawEvalBar(bestLine, source) {
   `;
   scoreLabel.textContent = scoreText;
   container.appendChild(scoreLabel);
+
+  // Tablebase result indicator
+  if (tablebase) {
+    const tbLabel = document.createElement("div");
+    const tbColor = tablebase === "win" ? "#2ecc71" : tablebase === "loss" ? "#e74c3c" : "#95a5a6";
+    const tbText = tablebase === "win" ? "TB+" : tablebase === "loss" ? "TB−" : "TB=";
+    tbLabel.style.cssText = `
+      position: absolute;
+      top: 50%;
+      left: 0;
+      width: 22px;
+      transform: translateY(-50%);
+      text-align: center;
+      font-size: 7px;
+      font-weight: 900;
+      font-family: monospace;
+      color: ${tbColor};
+      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+      pointer-events: none;
+      z-index: 2;
+    `;
+    tbLabel.textContent = tbText;
+    container.appendChild(tbLabel);
+  }
 
   // WDL bar at the bottom
   if (bestLine.wdl) {
@@ -2028,17 +2244,38 @@ function speakMove(msg) {
   if (!move || move === lastSpokenMove) return;
   lastSpokenMove = move;
 
-  // Prefer SAN from first line for natural speech
-  const lines = msg.lines || [];
-  let text = move;
-  if (lines.length && lines[0].san && lines[0].san.length) {
-    text = lines[0].san[0];
-  }
-  text = text.replace(/\+/g, " check").replace(/#/g, " checkmate")
-    .replace(/^O-O-O$/i, "queen side castle").replace(/^O-O$/i, "king side castle");
+  const parts = [];
 
+  // Move announcement
+  const lines = msg.lines || [];
+  let moveText = move;
+  if (lines.length && lines[0].san && lines[0].san.length) {
+    moveText = lines[0].san[0];
+  }
+  moveText = moveText.replace(/\+/g, " check").replace(/#/g, " checkmate")
+    .replace(/^O-O-O$/i, "queen side castle").replace(/^O-O$/i, "king side castle");
+  parts.push(moveText);
+
+  // Eval announcement
+  if (voiceEvalEnabled && lines.length && lines[0]) {
+    const line = lines[0];
+    if (line.mate !== undefined && line.mate !== null) {
+      parts.push(`mate in ${Math.abs(line.mate)}`);
+    } else if (line.score !== undefined && line.score !== null) {
+      const pawns = (line.score / 100).toFixed(1);
+      parts.push(`eval ${pawns >= 0 ? "plus" : "minus"} ${Math.abs(pawns)}`);
+    }
+  }
+
+  // Opening announcement
+  if (voiceOpeningEnabled && msg.eco && msg.eco !== lastSpokenOpening) {
+    lastSpokenOpening = msg.eco;
+    parts.push(msg.eco);
+  }
+
+  const text = parts.join(". ");
   const utt = new SpeechSynthesisUtterance(text);
-  utt.rate = 1.1;
+  utt.rate = voiceSpeed;
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utt);
 }
@@ -2088,6 +2325,13 @@ document.addEventListener("keydown", (e) => {
     pendingEval = false;
     console.log("[chessbot] hotkey: analyze for Opponent (Alt+Q)");
     readAndSend();
+  } else if (key === "t") {
+    e.preventDefault();
+    trainingMode = !trainingMode;
+    trainingStage = 0;
+    trainingBestMove = null;
+    console.log(`[chessbot] training mode: ${trainingMode} (Alt+T)`);
+    resendCurrentPosition();
   }
 });
 
@@ -2124,6 +2368,34 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         // Re-draw with current data by re-sending position
         resendCurrentPosition();
       }
+    }
+    if (msg.type === "set_show_opponent_response") {
+      showOpponentResponse = !!msg.value;
+      console.log(`[chessbot] show opponent response: ${showOpponentResponse}`);
+      resendCurrentPosition();
+    }
+    if (msg.type === "set_voice") {
+      voiceEnabled = !!msg.value;
+      console.log(`[chessbot] voice: ${voiceEnabled}`);
+    }
+    if (msg.type === "set_voice_eval") {
+      voiceEvalEnabled = !!msg.value;
+      console.log(`[chessbot] voice eval: ${voiceEvalEnabled}`);
+    }
+    if (msg.type === "set_voice_opening") {
+      voiceOpeningEnabled = !!msg.value;
+      console.log(`[chessbot] voice opening: ${voiceOpeningEnabled}`);
+    }
+    if (msg.type === "set_voice_speed") {
+      voiceSpeed = Number(msg.value) || 1.1;
+      console.log(`[chessbot] voice speed: ${voiceSpeed}`);
+    }
+    if (msg.type === "set_training_mode") {
+      trainingMode = !!msg.value;
+      trainingStage = 0;
+      trainingBestMove = null;
+      console.log(`[chessbot] training mode: ${trainingMode}`);
+      resendCurrentPosition();
     }
     if (msg.type === "set_option") {
       // Relay engine setting to backend
