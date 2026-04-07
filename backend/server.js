@@ -109,55 +109,69 @@ async function main() {
 
   /** Switch to a different variant, auto-switching engine if needed.
    *  Returns { switched: bool, error?: string } */
+  let engineSwitchLock = false; // prevents concurrent engine swaps
+
   async function switchVariant(variantKey) {
     const def = VARIANTS[variantKey];
     if (!def) return { switched: false, error: `Unknown variant: ${variantKey}` };
 
-    // Abort any pending evaluation before switching
-    await engine.abort();
-
-    const needEngine = def.engine; // "stockfish" | "fairy"
-    const needSwitch = needEngine !== currentEngineType;
-
-    if (needSwitch) {
-      const newPath = needEngine === "fairy"
-        ? config.fairyStockfishPath
-        : originalStockfishPath;
-      if (!fs.existsSync(newPath)) {
-        return { switched: false, error: `Engine binary not found: ${newPath}` };
-      }
-      console.log(`[server] variant ${variantKey} requires ${needEngine} engine — switching`);
-      engine.stop();
-      const oldPath = config.stockfishPath;
-      config.stockfishPath = newPath;
-      engine = new StockfishBridge();
-      try {
-        await engine.start();
-      } catch (err) {
-        // Rollback
-        config.stockfishPath = oldPath;
-        engine = new StockfishBridge();
-        await engine.start();
-        return { switched: false, error: `Failed to start ${needEngine}: ${err.message}` };
-      }
-      currentEngineType = needEngine;
-    }
-
-    // Set UCI options for the variant
-    if (def.uciVariant) {
-      engine.setOption("UCI_Variant", def.uciVariant);
-    } else if (currentEngineType === "fairy") {
-      // Reset to standard chess on fairy-stockfish
-      engine.setOption("UCI_Variant", "chess");
-    }
-    engine.setOption("UCI_Chess960", def.uci960 ? "true" : "false");
-
-    // Clear hash since transposition table is variant-specific
-    engine.clearHash();
-
+    // Set variant immediately so concurrent switch_engine messages see the new variant
+    const previousVariant = currentVariant;
     currentVariant = variantKey;
-    console.log(`[server] variant set to: ${def.label} (engine: ${currentEngineType})`);
-    return { switched: true };
+
+    // Acquire lock to prevent concurrent engine operations
+    engineSwitchLock = true;
+
+    try {
+      // Abort any pending evaluation before switching
+      await engine.abort();
+
+      const needEngine = def.engine; // "stockfish" | "fairy"
+      const needSwitch = needEngine !== currentEngineType;
+
+      if (needSwitch) {
+        const newPath = needEngine === "fairy"
+          ? config.fairyStockfishPath
+          : originalStockfishPath;
+        if (!fs.existsSync(newPath)) {
+          currentVariant = previousVariant; // rollback
+          return { switched: false, error: `Engine binary not found: ${newPath}` };
+        }
+        console.log(`[server] variant ${variantKey} requires ${needEngine} engine — switching`);
+        engine.stop();
+        const oldPath = config.stockfishPath;
+        config.stockfishPath = newPath;
+        engine = new StockfishBridge();
+        try {
+          await engine.start();
+        } catch (err) {
+          // Rollback
+          currentVariant = previousVariant;
+          config.stockfishPath = oldPath;
+          engine = new StockfishBridge();
+          await engine.start();
+          return { switched: false, error: `Failed to start ${needEngine}: ${err.message}` };
+        }
+        currentEngineType = needEngine;
+      }
+
+      // Set UCI options for the variant
+      if (def.uciVariant) {
+        engine.setOption("UCI_Variant", def.uciVariant);
+      } else if (currentEngineType === "fairy") {
+        // Reset to standard chess on fairy-stockfish
+        engine.setOption("UCI_Variant", "chess");
+      }
+      engine.setOption("UCI_Chess960", def.uci960 ? "true" : "false");
+
+      // Clear hash since transposition table is variant-specific
+      engine.clearHash();
+
+      console.log(`[server] variant set to: ${def.label} (engine: ${currentEngineType})`);
+      return { switched: true };
+    } finally {
+      engineSwitchLock = false;
+    }
   }
 
   /** Convert UCI PV lines to SAN and add ECO classification. */
@@ -441,9 +455,22 @@ async function main() {
 
       // ── Switch engine ──────────────────────────────────
       if (msg.type === "switch_engine" && msg.name) {
+        if (engineSwitchLock) {
+          console.log(`[server] ignoring switch_engine to ${msg.name} — engine switch in progress`);
+          safeSend(ws, { type: "engine_switched", name: path.basename(config.stockfishPath) });
+          return;
+        }
         const found = listEngines().find((e) => e.name === msg.name);
         if (!found) {
           safeSend(ws, { type: "error", message: `Engine not found: ${msg.name}` });
+          return;
+        }
+        // Guard: if the active variant requires a specific engine type, block incompatible switches
+        const requiredType = VARIANTS[currentVariant]?.engine || "stockfish";
+        const requestedType = found.name.toLowerCase().includes("fairy") ? "fairy" : "stockfish";
+        if (requiredType !== requestedType) {
+          console.log(`[server] ignoring switch_engine to ${found.name} — variant ${currentVariant} requires ${requiredType} engine`);
+          safeSend(ws, { type: "engine_switched", name: path.basename(config.stockfishPath) });
           return;
         }
         console.log(`[server] switching engine to: ${found.name}`);

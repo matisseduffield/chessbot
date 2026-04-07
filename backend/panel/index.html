@@ -1541,7 +1541,8 @@ function applySettings(msg) {
     document.getElementById("nodes-input").value = saved.nodesValue;
     searchNodes = saved.nodesLimitEnabled ? saved.nodesValue : null;
 
-    // Engine settings
+    // Engine settings — only restore if compatible with current variant
+    const variantRequiresFairy = ["atomic","crazyhouse","kingofthehill","3check","antichess","horde","racingkings"].includes(saved.variant);
     if (saved.engine && [...engineSel.options].some(o => o.value === saved.engine)) {
       engineSel.value = saved.engine;
     }
@@ -1572,7 +1573,9 @@ function applySettings(msg) {
     sendOpt("Threads", saved.threads);
     sendOpt("Hash", parseInt(saved.hash));
     sendOpt("Skill Level", saved.skill);
-    if (saved.engine && engineSel.value === saved.engine) {
+    // Only send switch_engine if engine type matches variant requirement
+    const savedIsFairy = saved.engine && saved.engine.toLowerCase().includes("fairy");
+    if (saved.engine && engineSel.value === saved.engine && (variantRequiresFairy === !!savedIsFairy)) {
       ws.send(JSON.stringify({ type: "switch_engine", name: saved.engine }));
     }
     ws.send(JSON.stringify({ type: "switch_book", name: bookSel.value }));

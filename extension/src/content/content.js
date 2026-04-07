@@ -392,9 +392,14 @@ function sendFen(fen) {
 /** Wait for the board element to appear (polling). */
 function waitForBoard() {
   return new Promise((resolve) => {
+    let attempts = 0;
     const check = () => {
       const el = getBoardElement();
       if (el) return resolve(el);
+      attempts++;
+      if (attempts % 10 === 0) { // log every 5 seconds
+        console.log(`[chessbot] waiting for board element... (attempt ${attempts})`);
+      }
       setTimeout(check, 500);
     };
     check();
@@ -404,9 +409,24 @@ function waitForBoard() {
 function getBoardElement() {
   if (SITE === "chesscom") {
     // Prefer the web component (which has shadowRoot) over the outer .board div
-    return document.querySelector("wc-chess-board") ||
-           document.querySelector("chess-board") ||
-           document.querySelector(".board");
+    const el = document.querySelector("wc-chess-board") ||
+               document.querySelector("chess-board") ||
+               document.querySelector(".board");
+    if (el) return el;
+
+    // Chess.com variant pages may embed the game in an iframe
+    const iframes = document.querySelectorAll("iframe");
+    for (const iframe of iframes) {
+      try {
+        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (!doc) continue;
+        const iframeEl = doc.querySelector("wc-chess-board") ||
+                         doc.querySelector("chess-board") ||
+                         doc.querySelector(".board");
+        if (iframeEl) return iframeEl;
+      } catch { /* cross-origin — skip */ }
+    }
+    return null;
   }
   if (SITE === "lichess") {
     return document.querySelector("cg-board");
@@ -1873,6 +1893,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
     if (msg.type === "get_logs") {
       // Build diagnostic header for debugging
       const board = getBoardElement();
+      const iframeCount = document.querySelectorAll("iframe").length;
       const header = [
         "=== CONTENT SCRIPT DIAGNOSTIC INFO ===",
         `Timestamp: ${new Date().toISOString()}`,
@@ -1882,6 +1903,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         `WS state: ${ws ? ["CONNECTING","OPEN","CLOSING","CLOSED"][ws.readyState] : "null"}`,
         `Board found: ${boardReady}`,
         `Board element: ${board ? board.tagName + (board.shadowRoot ? " (has shadowRoot)" : "") : "null"}`,
+        `Iframes on page: ${iframeCount}`,
         `Enabled: ${enabled}`,
         `Last board FEN: ${lastBoardFen || "none"}`,
         `Last sent FEN: ${lastSentFen || "none"}`,
@@ -1902,6 +1924,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
     if (msg.type === "get_all_logs") {
       // Fetch server logs via WebSocket, then combine with content script logs
       const board = getBoardElement();
+      const iframeCount = document.querySelectorAll("iframe").length;
       const csHeader = [
         "=== CONTENT SCRIPT DIAGNOSTIC INFO ===",
         `Timestamp: ${new Date().toISOString()}`,
@@ -1911,6 +1934,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         `WS state: ${ws ? ["CONNECTING","OPEN","CLOSING","CLOSED"][ws.readyState] : "null"}`,
         `Board found: ${boardReady}`,
         `Board element: ${board ? board.tagName + (board.shadowRoot ? " (has shadowRoot)" : "") : "null"}`,
+        `Iframes on page: ${iframeCount}`,
         `Enabled: ${enabled}`,
         `Last board FEN: ${lastBoardFen || "none"}`,
         `Last sent FEN: ${lastSentFen || "none"}`,

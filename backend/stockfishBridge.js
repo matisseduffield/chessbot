@@ -7,6 +7,7 @@ class StockfishBridge {
     this.process = null;
     this.ready = false;
     this._restartPromise = null; // set while engine is restarting
+    this._stopping = false; // set when stop() is called to suppress exit error
     this._pendingResolve = null;
     this._handleLine = this._defaultLineHandler.bind(this);
     this._settings = {
@@ -30,6 +31,10 @@ class StockfishBridge {
       });
 
       this.process.on("exit", (code, signal) => {
+        if (this._stopping) {
+          this._stopping = false;
+          return; // Expected exit from stop()
+        }
         console.error(`[stockfish] process exited unexpectedly (code=${code}, signal=${signal})`);
         this.ready = false;
         // Force-resolve any pending evaluation so the queue doesn't deadlock
@@ -218,6 +223,7 @@ class StockfishBridge {
   /** Stop the engine process. */
   stop() {
     if (this.process) {
+      this._stopping = true;
       this._send("quit");
       this.process = null;
       this.ready = false;
