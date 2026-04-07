@@ -1488,9 +1488,6 @@ document.getElementById("btn-clear-hash").addEventListener("click", () => {
 // All engines from the server (unfiltered)
 let allEngines = [];
 
-// Fairy-engine variants
-const FAIRY_VARIANTS = ["atomic","crazyhouse","kingofthehill","3check","antichess","horde","racingkings"];
-
 /** Rebuild the engine dropdown showing only engines compatible with the current variant. */
 function filterEnginesByVariant(activeEngine) {
   const variant = document.getElementById("variant-select").value || "chess";
