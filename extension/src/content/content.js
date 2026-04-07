@@ -1797,16 +1797,89 @@ function drawTrainingHint(uci, bestLine, source) {
   // (will create a new one below the board after appending the SVG)
 
   if (trainingStage >= 1) {
-    // Stage 1: Also highlight destination file (column) — fill behind pieces
-    for (let r = 0; r < 8; r++) {
-      const pos = squareTopLeft(to.file, r, sqSize, flipped);
+    // Stage 1: Context-aware zone hint based on piece type
+    // Look up the piece from the FEN at the source square
+    const fen = trainingLastFen || "";
+    const fenBoard = fen.split(" ")[0] || "";
+    const fenRows = fenBoard.split("/");
+    let piece = "";
+    if (fenRows.length === 8) {
+      const row = fenRows[7 - from.rank]; // rank 0 = row index 7
+      let col = 0;
+      for (const ch of row) {
+        if (ch >= "1" && ch <= "8") col += parseInt(ch);
+        else { if (col === from.file) { piece = ch.toLowerCase(); break; } col++; }
+      }
+    }
+
+    const isDiagonal = Math.abs(to.file - from.file) === Math.abs(to.rank - from.rank) && to.file !== from.file;
+    const isStraight = to.file === from.file || to.rank === from.rank;
+
+    if (piece === "p" || piece === "k") {
+      // Pawns: file is obvious. Kings: limited range. Just highlight destination square.
+      const destPos = squareTopLeft(to.file, to.rank, sqSize, flipped);
       const zone = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      zone.setAttribute("x", pos.x);
-      zone.setAttribute("y", pos.y);
+      zone.setAttribute("x", destPos.x);
+      zone.setAttribute("y", destPos.y);
       zone.setAttribute("width", sqSize);
       zone.setAttribute("height", sqSize);
       zone.setAttribute("fill", zoneColor);
       bgSvg.appendChild(zone);
+    } else if ((piece === "b" || (piece === "q" && isDiagonal)) && isDiagonal) {
+      // Bishops / Queens moving diagonally: highlight the diagonal
+      const df = to.file > from.file ? 1 : -1;
+      const dr = to.rank > from.rank ? 1 : -1;
+      let f = from.file, r = from.rank;
+      while (f >= 0 && f < 8 && r >= 0 && r < 8) {
+        const pos = squareTopLeft(f, r, sqSize, flipped);
+        const zone = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        zone.setAttribute("x", pos.x);
+        zone.setAttribute("y", pos.y);
+        zone.setAttribute("width", sqSize);
+        zone.setAttribute("height", sqSize);
+        zone.setAttribute("fill", zoneColor);
+        bgSvg.appendChild(zone);
+        f += df; r += dr;
+      }
+    } else if ((piece === "r" || (piece === "q" && isStraight)) && isStraight) {
+      // Rooks / Queens moving straight: highlight the rank or file they're moving along
+      if (to.file === from.file) {
+        // Moving along a file — highlight the rank of destination
+        for (let f = 0; f < 8; f++) {
+          const pos = squareTopLeft(f, to.rank, sqSize, flipped);
+          const zone = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          zone.setAttribute("x", pos.x);
+          zone.setAttribute("y", pos.y);
+          zone.setAttribute("width", sqSize);
+          zone.setAttribute("height", sqSize);
+          zone.setAttribute("fill", zoneColor);
+          bgSvg.appendChild(zone);
+        }
+      } else {
+        // Moving along a rank — highlight the file of destination
+        for (let r = 0; r < 8; r++) {
+          const pos = squareTopLeft(to.file, r, sqSize, flipped);
+          const zone = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          zone.setAttribute("x", pos.x);
+          zone.setAttribute("y", pos.y);
+          zone.setAttribute("width", sqSize);
+          zone.setAttribute("height", sqSize);
+          zone.setAttribute("fill", zoneColor);
+          bgSvg.appendChild(zone);
+        }
+      }
+    } else {
+      // Knights or fallback: highlight the destination file
+      for (let r = 0; r < 8; r++) {
+        const pos = squareTopLeft(to.file, r, sqSize, flipped);
+        const zone = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        zone.setAttribute("x", pos.x);
+        zone.setAttribute("y", pos.y);
+        zone.setAttribute("width", sqSize);
+        zone.setAttribute("height", sqSize);
+        zone.setAttribute("fill", zoneColor);
+        bgSvg.appendChild(zone);
+      }
     }
   }
 
