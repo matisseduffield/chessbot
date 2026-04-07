@@ -1575,6 +1575,7 @@ function clearMoveIndicators() {
     root.querySelectorAll(".chessbot-eval-badge").forEach((el) => el.remove());
     root.querySelectorAll(".chessbot-training-feedback").forEach((el) => el.remove());
     root.querySelectorAll(".chessbot-hint-btn").forEach((el) => el.remove());
+    root.querySelectorAll(".chessbot-score-badge").forEach((el) => el.remove());
   }
 }
 
@@ -1816,17 +1817,7 @@ function drawTrainingHint(uci, bestLine, source) {
     return;
   }
 
-  // Score badge
-  const scoreBadge = document.createElementNS("http://www.w3.org/2000/svg", "text");
-  scoreBadge.setAttribute("x", rect.width - 4);
-  scoreBadge.setAttribute("y", 16);
-  scoreBadge.setAttribute("text-anchor", "end");
-  scoreBadge.setAttribute("font-size", "11");
-  scoreBadge.setAttribute("font-weight", "700");
-  scoreBadge.setAttribute("fill", "rgba(168,85,247,0.9)");
-  scoreBadge.setAttribute("font-family", "'Inter', sans-serif");
-  scoreBadge.textContent = `${trainingCorrect}/${trainingTotal}`;
-  svg.appendChild(scoreBadge);
+  // Score badge will be placed as HTML element below the board
 
   const { target: parent, dx, dy } = getOverlayTarget(board);
   if (!parent) return;
@@ -1834,27 +1825,29 @@ function drawTrainingHint(uci, bestLine, source) {
   svg.style.top = `${dy}px`;
   parent.appendChild(svg);
 
-  // Hint button below the board
+  // Remove old hint button and score badge
+  parent.querySelectorAll(".chessbot-hint-btn, .chessbot-score-badge").forEach(el => el.remove());
+
+  // Hint button below the board (square)
   if (trainingStage < 2) {
-    const oldBtn = parent.querySelector(".chessbot-hint-btn");
-    if (oldBtn) oldBtn.remove();
+    const btnSize = Math.max(28, sqSize * 0.42);
+    const fontSize = Math.max(11, btnSize * 0.4);
     const btn = document.createElement("button");
     btn.className = "chessbot-hint-btn";
     btn.textContent = "Hint";
-    const btnH = Math.max(24, sqSize * 0.35);
-    const btnW = Math.max(60, sqSize * 0.9);
-    const fontSize = Math.max(11, sqSize * 0.16);
     btn.style.cssText = `
       position:absolute;
-      left:${dx + rect.width / 2 - btnW / 2}px;
+      left:${dx + rect.width / 2 - btnSize / 2}px;
       top:${dy + rect.height + 6}px;
-      width:${btnW}px; height:${btnH}px;
+      width:${btnSize}px; height:${btnSize}px;
       background:rgba(168,85,247,0.9); color:#fff;
       border:none; border-radius:4px; cursor:pointer;
       font-size:${fontSize}px; font-weight:700;
       font-family:'Inter',sans-serif;
       z-index:1001; pointer-events:auto;
       box-shadow:0 2px 6px rgba(0,0,0,0.3);
+      display:flex; align-items:center; justify-content:center;
+      line-height:1; padding:0;
     `;
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1863,6 +1856,25 @@ function drawTrainingHint(uci, bestLine, source) {
       drawTrainingHint(uci, bestLine, source);
     });
     parent.appendChild(btn);
+
+    // Score tracker to the right of the hint button
+    const scoreEl = document.createElement("span");
+    scoreEl.className = "chessbot-score-badge";
+    const scoreFontSize = Math.max(13, btnSize * 0.45);
+    scoreEl.style.cssText = `
+      position:absolute;
+      left:${dx + rect.width / 2 + btnSize / 2 + 8}px;
+      top:${dy + rect.height + 6}px;
+      height:${btnSize}px;
+      display:flex; align-items:center;
+      font-size:${scoreFontSize}px; font-weight:700;
+      font-family:'Inter',sans-serif;
+      color:rgba(168,85,247,0.9);
+      z-index:1001; pointer-events:none;
+      text-shadow:0 1px 3px rgba(0,0,0,0.4);
+    `;
+    scoreEl.textContent = `${trainingCorrect}/${trainingTotal}`;
+    parent.appendChild(scoreEl);
   }
 }
 
