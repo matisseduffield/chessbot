@@ -393,12 +393,58 @@ function sendFen(fen) {
 function waitForBoard() {
   return new Promise((resolve) => {
     let attempts = 0;
+    let diagDumped = false;
     const check = () => {
       const el = getBoardElement();
       if (el) return resolve(el);
       attempts++;
-      if (attempts % 10 === 0) { // log every 5 seconds
+      if (attempts % 10 === 0) {
         console.log(`[chessbot] waiting for board element... (attempt ${attempts})`);
+      }
+      // One-time DOM diagnostic at attempt 20
+      if (attempts === 20 && !diagDumped) {
+        diagDumped = true;
+        const tags = new Set();
+        document.querySelectorAll("*").forEach(el => tags.add(el.tagName.toLowerCase()));
+        const interesting = [...tags].filter(t => t.includes("board") || t.includes("chess") || t.includes("game")).sort();
+        const iframes = document.querySelectorAll("iframe");
+        const boardClasses = document.querySelectorAll("[class*='board']");
+        const boardIds = document.querySelectorAll("[id*='board']");
+        console.log(`[chessbot] DOM diagnostic — URL: ${location.href}`);
+        console.log(`[chessbot] interesting tags: ${interesting.join(", ") || "(none)"}`);
+        console.log(`[chessbot] elements with 'board' in class: ${boardClasses.length}`, [...boardClasses].map(e => `${e.tagName}.${e.className.toString().substring(0,60)}`).slice(0, 10));
+        console.log(`[chessbot] elements with 'board' in id: ${boardIds.length}`, [...boardIds].map(e => `${e.tagName}#${e.id}`).slice(0, 10));
+        console.log(`[chessbot] iframes: ${iframes.length}`, [...iframes].map(f => f.src || "(no src)").slice(0, 5));
+        // Piece detection diagnostics
+        const dotPiece = document.querySelectorAll(".piece");
+        const squareClass = document.querySelectorAll("[class*='square-']");
+        const dataPiece = document.querySelectorAll("[data-piece]");
+        const wbPattern = document.querySelectorAll("[class]");
+        let wbCount = 0;
+        for (const el of wbPattern) {
+          if (/\b[wb][prnbqk]\b/.test(el.className.toString())) wbCount++;
+        }
+        console.log(`[chessbot] piece elements: .piece=${dotPiece.length}, [class*='square-']=${squareClass.length}, [data-piece]=${dataPiece.length}, [wb][prnbqk] pattern=${wbCount}`);
+        if (dotPiece.length > 0) {
+          console.log(`[chessbot] sample .piece:`, dotPiece[0].tagName, dotPiece[0].className.toString().substring(0, 100), `parent: ${dotPiece[0].parentElement?.tagName}.${dotPiece[0].parentElement?.className.toString().substring(0, 60)}`);
+        }
+        // Check for TheBoard or variant-specific board containers
+        const theBoard = document.querySelector("[class*='TheBoard']");
+        if (theBoard) {
+          console.log(`[chessbot] TheBoard element:`, theBoard.tagName, theBoard.className.toString().substring(0, 100));
+          console.log(`[chessbot] TheBoard children:`, [...theBoard.children].map(c => `${c.tagName}.${c.className.toString().substring(0, 40)}`).slice(0, 15));
+          const tbRect = theBoard.getBoundingClientRect();
+          console.log(`[chessbot] TheBoard rect: ${tbRect.width}x${tbRect.height} at (${tbRect.left},${tbRect.top})`);
+        }
+        // Check for shadow roots on custom elements
+        document.querySelectorAll("*").forEach(el => {
+          if (el.shadowRoot) {
+            const shadowBoard = el.shadowRoot.querySelector("wc-chess-board, chess-board, [class*='board']");
+            if (shadowBoard) {
+              console.log(`[chessbot] found board-like element inside shadow root of <${el.tagName.toLowerCase()}>:`, shadowBoard);
+            }
+          }
+        });
       }
       setTimeout(check, 500);
     };
@@ -413,6 +459,11 @@ function getBoardElement() {
                document.querySelector("chess-board") ||
                document.querySelector(".board");
     if (el) return el;
+
+    // Chess.com variant pages (Vue-based) use a different board container.
+    // Find the element that contains piece children with [wb][prnbqk] classes.
+    const variantBoard = findVariantBoardContainer();
+    if (variantBoard) return variantBoard;
 
     // Chess.com variant pages may embed the game in an iframe
     const iframes = document.querySelectorAll("iframe");
@@ -430,6 +481,45 @@ function getBoardElement() {
   }
   if (SITE === "lichess") {
     return document.querySelector("cg-board");
+  }
+  return null;
+}
+
+/** Chess.com variant pages use a Vue-based board with different selectors.
+ *  Find the board container by looking for known variant-page class patterns,
+ *  or by finding the element whose children include chess piece divs. */
+function findVariantBoardContainer() {
+  // Known variant-page board selectors (chess.com Vue app)
+  const candidates = [
+    "[class*='TheBoard']",
+    ".TheBoard-boardCenter",
+    "[class*='board-container']",
+    "[class*='board-wrapper']",
+    "[class*='container-four-board-container']",
+  ];
+  for (const sel of candidates) {
+    const el = document.querySelector(sel);
+    if (!el) continue;
+    // Verify this element (or descendants) actually contains piece-like elements
+    const hasPieces = el.querySelector(".piece, [class*=' wp '], [class*=' bp '], [class*='square-']") ||
+                      el.querySelectorAll("[class]").length > 5;
+    if (hasPieces || el.getBoundingClientRect().width > 100) {
+      return el;
+    }
+  }
+  // Last resort: look for the parent of piece elements
+  const pieces = document.querySelectorAll(".piece");
+  if (pieces.length >= 2) {
+    // Find the closest common ancestor that looks like a board (roughly square)
+    let parent = pieces[0].parentElement;
+    while (parent && parent !== document.body) {
+      const rect = parent.getBoundingClientRect();
+      const ratio = rect.width / rect.height;
+      if (ratio > 0.8 && ratio < 1.2 && rect.width > 100) {
+        return parent;
+      }
+      parent = parent.parentElement;
+    }
   }
   return null;
 }
@@ -522,9 +612,7 @@ function observeBoard(boardEl) {
 /** Check if the board currently has premove ghost/indicator elements. */
 function hasPremoveElements() {
   if (SITE === "chesscom") {
-    const board = document.querySelector("wc-chess-board") ||
-                  document.querySelector("chess-board") ||
-                  document.querySelector(".board");
+    const board = getBoardElement();
     if (!board) return false;
     // Check both regular DOM and shadow root for ghost or premove elements
     const roots = [board];
@@ -669,9 +757,7 @@ function readAndSend() {
 // ── Chess.com board reader ───────────────────────────────────
 
 function chesscomBoardToFen() {
-  const board = document.querySelector("wc-chess-board") ||
-                document.querySelector("chess-board") ||
-                document.querySelector(".board");
+  const board = getBoardElement();
   if (!board) return null;
 
   // Chess.com renders pieces in various ways depending on version.
@@ -1032,7 +1118,7 @@ function detectTurnFromHighlights() {
         const file = parseInt(sqMatch[1], 10) - 1;
         const rank = parseInt(sqMatch[2], 10) - 1;
         // Check all pieces to find one on this square
-        const pieces = findChesscomPieces(hl.closest("wc-chess-board, chess-board, .board") || document);
+        const pieces = findChesscomPieces(hl.closest("wc-chess-board, chess-board, .board, [class*='TheBoard']") || getBoardElement() || document);
         if (!pieces) continue;
         for (const piece of pieces) {
           const pcls = typeof piece.className === "string" ? piece.className : "";
