@@ -577,7 +577,7 @@ function observeBoard(boardEl) {
       const t = m.target;
       if (t.id && t.id.startsWith("chessbot-")) return true;
       if (t.classList && t.classList.contains("chessbot-eval-badge")) return true;
-      if (t.closest && t.closest("#chessbot-arrow-svg, #chessbot-eval-bar, .chessbot-eval-badge")) return true;
+      if (t.closest && t.closest("#chessbot-arrow-svg, #chessbot-bg-svg, #chessbot-eval-bar, .chessbot-eval-badge")) return true;
       return false;
     });
     if (dominated) return;
@@ -1558,6 +1558,8 @@ function clearMoveIndicators() {
   for (const root of roots) {
     const existing = root.getElementById("chessbot-arrow-svg");
     if (existing) existing.remove();
+    const bg = root.getElementById("chessbot-bg-svg");
+    if (bg) bg.remove();
     root.querySelectorAll(".chessbot-eval-badge").forEach((el) => el.remove());
   }
 }
@@ -1656,9 +1658,40 @@ function drawArrowOnBoard(svg, fromFile, fromRank, toFile, toRank, sqSize, flipp
 
 // ── Square highlight drawing ─────────────────────────────────
 
-/** Draw a coloured square highlight (goes behind pieces via low z-index). */
-function drawSquareHighlight(svg, file, rank, sqSize, flipped, color, style) {
+/** Create or retrieve the background SVG layer (sits behind pieces). */
+function getOrCreateBgSvg(board, rect) {
+  const { target, dx, dy } = getOverlayTarget(board);
+  let bg = target.querySelector ? target.querySelector("#chessbot-bg-svg") : null;
+  if (!bg) {
+    bg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    bg.id = "chessbot-bg-svg";
+    bg.setAttribute("width", rect.width);
+    bg.setAttribute("height", rect.height);
+    bg.style.cssText = `position:absolute;top:${dy}px;left:${dx}px;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:0;`;
+    // Insert as first child so it's behind pieces in DOM stacking order
+    if (target.firstChild) {
+      target.insertBefore(bg, target.firstChild);
+    } else {
+      target.appendChild(bg);
+    }
+  }
+  return bg;
+}
+
+/** Draw a coloured square highlight: fill on background SVG (behind pieces), border on foreground SVG (on top). */
+function drawSquareHighlight(svg, file, rank, sqSize, flipped, color, style, bgSvg) {
   const tl = squareTopLeft(file, rank, sqSize, flipped);
+  // Filled rectangle on background layer (behind pieces)
+  if (bgSvg) {
+    const fill = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    fill.setAttribute("x", tl.x);
+    fill.setAttribute("y", tl.y);
+    fill.setAttribute("width", sqSize);
+    fill.setAttribute("height", sqSize);
+    fill.setAttribute("fill", color);
+    bgSvg.appendChild(fill);
+  }
+  // Border on foreground layer (on top of pieces)
   const strokeW = Math.max(3, sqSize * 0.06);
   const inset = strokeW / 2 + 1;
   const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -1813,13 +1846,16 @@ function drawSingleMove(uci, bestLine, source) {
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
   const moveColor = source === "lichess" ? "rgba(66,133,244,0.95)" : isBook ? "rgba(212,160,23,0.9)" : "rgba(16,185,129,0.9)";
-  const boxColorFrom = source === "lichess" ? "rgba(66,133,244,0.8)" : isBook ? "rgba(212,160,23,0.8)" : "rgba(16,185,129,0.8)";
-  const boxColorTo   = source === "lichess" ? "rgba(66,133,244,0.9)" : isBook ? "rgba(212,160,23,0.9)" : "rgba(16,185,129,0.9)";
+  const boxColorFrom = source === "lichess" ? "rgba(66,133,244,0.4)" : isBook ? "rgba(212,160,23,0.4)" : "rgba(16,185,129,0.4)";
+  const boxColorTo   = source === "lichess" ? "rgba(66,133,244,0.5)" : isBook ? "rgba(212,160,23,0.5)" : "rgba(16,185,129,0.5)";
+
+  // Background SVG for fills (behind pieces)
+  const bgSvg = (displayMode === "box" || displayMode === "both") ? getOrCreateBgSvg(board, rect) : null;
 
   // Box highlights (drawn first so they sit behind arrows)
   if (displayMode === "box" || displayMode === "both") {
-    drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, boxColorFrom, "from");
-    drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, boxColorTo, "to");
+    drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, boxColorFrom, "from", bgSvg);
+    drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, boxColorTo, "to", bgSvg);
   }
 
   // Arrow
@@ -1833,8 +1869,8 @@ function drawSingleMove(uci, bestLine, source) {
     if (response && response.length >= 4) {
       const resp = uciToSquares(response);
       if (displayMode === "box" || displayMode === "both") {
-        drawSquareHighlight(svg, resp.from.file, resp.from.rank, sqSize, flipped, "rgba(231,76,60,0.8)", "from");
-        drawSquareHighlight(svg, resp.to.file, resp.to.rank, sqSize, flipped, "rgba(231,76,60,0.9)", "to");
+        drawSquareHighlight(svg, resp.from.file, resp.from.rank, sqSize, flipped, "rgba(231,76,60,0.4)", "from", bgSvg);
+        drawSquareHighlight(svg, resp.to.file, resp.to.rank, sqSize, flipped, "rgba(231,76,60,0.5)", "to", bgSvg);
       }
       if (displayMode === "arrow" || displayMode === "both") {
         drawArrowOnBoard(svg, resp.from.file, resp.from.rank, resp.to.file, resp.to.rank, sqSize, flipped, "hsla(350,100%,50%,0.7)", 0.7);
@@ -1927,6 +1963,9 @@ function drawMultiPV(lines) {
   svg.setAttribute("height", rect.height);
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
+  // Background SVG for fills (behind pieces)
+  const bgSvg = (displayMode === "box" || displayMode === "both") ? getOrCreateBgSvg(board, rect) : null;
+
   // Draw highlights + arrows for each PV line
   const parsed = [];
   for (let i = 0; i < lines.length; i++) {
@@ -1937,14 +1976,14 @@ function drawMultiPV(lines) {
     const opacity = i === 0 ? 0.9 : 0.6;
     // Box highlights first (behind arrows)
     if (displayMode === "box" || displayMode === "both") {
-      const boxAlpha = i === 0 ? 0.85 : 0.7;
+      const boxAlpha = i === 0 ? 0.5 : 0.35;
       const hexToRgba = (hex, a) => {
         const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
         return `rgba(${r},${g},${b},${a})`;
       };
       const bc = color.startsWith("#") ? hexToRgba(color, boxAlpha) : color.replace(")", `,${boxAlpha})`).replace("rgb(", "rgba(");
-      drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, bc, "from");
-      drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, bc, "to");
+      drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, bc, "from", bgSvg);
+      drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, bc, "to", bgSvg);
     }
     if (displayMode === "arrow" || displayMode === "both") {
       drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, color, opacity);
