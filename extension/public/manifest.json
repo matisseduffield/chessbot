@@ -3,7 +3,7 @@
   "name": "Chess Analysis Helper",
   "version": "1.0.0",
   "description": "Real-time chess analysis with Stockfish — shows best move arrows on the board.",
-  "permissions": [],
+  "permissions": ["storage"],
   "host_permissions": [
     "https://www.chess.com/*",
     "https://lichess.org/*"

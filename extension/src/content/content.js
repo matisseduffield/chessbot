@@ -193,6 +193,15 @@ let boardReady = false;
 function init() {
   detectedVariant = detectVariant();
   if (detectedVariant) console.log(`[chessbot] detected variant: ${detectedVariant}`);
+  // Restore persisted training mode
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get("chessbot_trainingMode", (result) => {
+      if (result.chessbot_trainingMode) {
+        trainingMode = true;
+        console.log("[chessbot] training mode restored from storage");
+      }
+    });
+  }
   connectWS();
   findBoard();
 }
@@ -372,6 +381,9 @@ function connectWS() {
         trainingStage = 0;
         trainingBestMove = null;
         console.log(`[chessbot] training mode: ${trainingMode}`);
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ chessbot_trainingMode: trainingMode });
+        }
         resendCurrentPosition();
         return;
       }
@@ -1725,6 +1737,9 @@ function drawTrainingHint(uci, bestLine, source) {
   const { board, rect, sqSize, flipped } = geo;
   const { from, to } = uciToSquares(uci);
 
+  // Background SVG for fills (behind pieces)
+  const bgSvg = getOrCreateBgSvg(board, rect);
+
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.id = "chessbot-arrow-svg";
   svg.setAttribute("width", rect.width);
@@ -1734,36 +1749,51 @@ function drawTrainingHint(uci, bestLine, source) {
   svg.style.pointerEvents = "all";
 
   const hintColor = "rgba(168,85,247,0.5)"; // purple
+  const borderColor = "rgba(168,85,247,0.9)";
   const zoneColor = "rgba(168,85,247,0.2)";
   const fromPos = squareTopLeft(from.file, from.rank, sqSize, flipped);
 
-  if (trainingStage >= 0) {
-    // Stage 0: Source square highlight
-    const sq = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    sq.setAttribute("x", fromPos.x);
-    sq.setAttribute("y", fromPos.y);
-    sq.setAttribute("width", sqSize);
-    sq.setAttribute("height", sqSize);
-    sq.setAttribute("fill", hintColor);
-    sq.setAttribute("rx", "3");
-    svg.appendChild(sq);
+  // Stage 0: Source square highlight (which piece to move)
+  // Fill on background layer (behind piece), border + "?" on foreground
+  const bgFill = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  bgFill.setAttribute("x", fromPos.x);
+  bgFill.setAttribute("y", fromPos.y);
+  bgFill.setAttribute("width", sqSize);
+  bgFill.setAttribute("height", sqSize);
+  bgFill.setAttribute("fill", hintColor);
+  bgSvg.appendChild(bgFill);
 
-    // "?" label on source square
-    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    label.setAttribute("x", fromPos.x + sqSize / 2);
-    label.setAttribute("y", fromPos.y + sqSize / 2 + 6);
-    label.setAttribute("text-anchor", "middle");
-    label.setAttribute("font-size", Math.max(14, sqSize * 0.35));
-    label.setAttribute("font-weight", "900");
-    label.setAttribute("fill", "rgba(255,255,255,0.9)");
-    label.setAttribute("font-family", "monospace");
-    label.textContent = "?";
-    svg.appendChild(label);
-  }
+  // Border on foreground (on top of piece)
+  const strokeW = Math.max(3, sqSize * 0.06);
+  const inset = strokeW / 2 + 1;
+  const border = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  border.setAttribute("x", fromPos.x + inset);
+  border.setAttribute("y", fromPos.y + inset);
+  border.setAttribute("width", sqSize - inset * 2);
+  border.setAttribute("height", sqSize - inset * 2);
+  border.setAttribute("rx", "3");
+  border.setAttribute("fill", "none");
+  border.setAttribute("stroke", borderColor);
+  border.setAttribute("stroke-width", strokeW);
+  svg.appendChild(border);
+
+  // "?" label on source square (foreground, on top)
+  const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  label.setAttribute("x", fromPos.x + sqSize / 2);
+  label.setAttribute("y", fromPos.y + sqSize - 4);
+  label.setAttribute("text-anchor", "middle");
+  label.setAttribute("font-size", Math.max(12, sqSize * 0.22));
+  label.setAttribute("font-weight", "900");
+  label.setAttribute("fill", "#fff");
+  label.setAttribute("font-family", "monospace");
+  label.setAttribute("paint-order", "stroke");
+  label.setAttribute("stroke", "rgba(0,0,0,0.5)");
+  label.setAttribute("stroke-width", "3");
+  label.textContent = "?";
+  svg.appendChild(label);
 
   if (trainingStage >= 1) {
-    // Stage 1: Highlight destination file (column)
-    const toPos = squareTopLeft(to.file, to.rank, sqSize, flipped);
+    // Stage 1: Also highlight destination file (column) — fill behind pieces
     for (let r = 0; r < 8; r++) {
       const pos = squareTopLeft(to.file, r, sqSize, flipped);
       const zone = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -1772,7 +1802,7 @@ function drawTrainingHint(uci, bestLine, source) {
       zone.setAttribute("width", sqSize);
       zone.setAttribute("height", sqSize);
       zone.setAttribute("fill", zoneColor);
-      svg.appendChild(zone);
+      bgSvg.appendChild(zone);
     }
   }
 
@@ -2373,6 +2403,9 @@ document.addEventListener("keydown", (e) => {
     trainingStage = 0;
     trainingBestMove = null;
     console.log(`[chessbot] training mode: ${trainingMode} (Alt+T)`);
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ chessbot_trainingMode: trainingMode });
+    }
     resendCurrentPosition();
   }
 });
@@ -2437,6 +2470,9 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       trainingStage = 0;
       trainingBestMove = null;
       console.log(`[chessbot] training mode: ${trainingMode}`);
+      if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ chessbot_trainingMode: trainingMode });
+      }
       resendCurrentPosition();
     }
     if (msg.type === "set_option") {
