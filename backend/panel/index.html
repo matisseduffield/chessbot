@@ -545,6 +545,11 @@
     transform: translateY(-50%) rotate(180deg);
     border-top-color: var(--accent);
   }
+  .custom-select.disabled .custom-select-trigger {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
   .custom-select-trigger:hover {
     border-color: var(--bg-500);
     background: var(--bg-750);
@@ -1508,6 +1513,26 @@ function filterEnginesByVariant(activeEngine) {
   if (compatible.length > 0 && !compatible.includes(engineSel.value)) {
     engineSel.value = compatible[0];
   }
+  updateResourcesForVariant();
+}
+
+/** Disable opening book and syzygy dropdowns for non-standard variants. */
+function updateResourcesForVariant() {
+  const variant = document.getElementById("variant-select").value || "chess";
+  const isStandard = !FAIRY_VARIANTS.includes(variant);
+  const bookSel = document.getElementById("book-select");
+  const szSel = document.getElementById("syzygy-select");
+  bookSel.disabled = !isStandard;
+  szSel.disabled = !isStandard;
+  if (!isStandard) {
+    bookSel.value = "";
+    szSel.value = "";
+  }
+  // Toggle disabled class on custom-select wrappers
+  const bookWrapper = bookSel.closest(".custom-select");
+  const szWrapper = szSel.closest(".custom-select");
+  if (bookWrapper) bookWrapper.classList.toggle("disabled", !isStandard);
+  if (szWrapper) szWrapper.classList.toggle("disabled", !isStandard);
 }
 
 function applySettings(msg) {
@@ -1585,12 +1610,16 @@ function applySettings(msg) {
     document.getElementById("chk-board").checked = saved.board;
     document.getElementById("chk-pvs").checked = saved.pvs;
 
-    // Book / Syzygy
-    if (saved.book !== undefined && [...bookSel.options].some(o => o.value === saved.book)) {
-      bookSel.value = saved.book;
-    }
-    if (saved.syzygy !== undefined && [...szSel.options].some(o => o.value === saved.syzygy)) {
-      szSel.value = saved.syzygy;
+    // Book / Syzygy — only restore for standard chess
+    const restoredVariant = saved.variant || "chess";
+    const variantIsStandard = !FAIRY_VARIANTS.includes(restoredVariant);
+    if (variantIsStandard) {
+      if (saved.book !== undefined && [...bookSel.options].some(o => o.value === saved.book)) {
+        bookSel.value = saved.book;
+      }
+      if (saved.syzygy !== undefined && [...szSel.options].some(o => o.value === saved.syzygy)) {
+        szSel.value = saved.syzygy;
+      }
     }
 
     // Re-send saved settings to server
@@ -1603,8 +1632,10 @@ function applySettings(msg) {
     if (saved.engine && [...engineSel.options].some(o => o.value === saved.engine)) {
       ws.send(JSON.stringify({ type: "switch_engine", name: saved.engine }));
     }
-    ws.send(JSON.stringify({ type: "switch_book", name: bookSel.value }));
-    ws.send(JSON.stringify({ type: "switch_syzygy", name: szSel.value }));
+    if (variantIsStandard) {
+      ws.send(JSON.stringify({ type: "switch_book", name: bookSel.value }));
+      ws.send(JSON.stringify({ type: "switch_syzygy", name: szSel.value }));
+    }
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_run_engine_for", value: saved.runFor } }));
     broadcastSearchLimits();
   } else {

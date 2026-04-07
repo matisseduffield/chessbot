@@ -167,6 +167,16 @@ async function main() {
       // Clear hash since transposition table is variant-specific
       engine.clearHash();
 
+      // Syzygy tablebases only apply to standard chess
+      const isStandard = variantKey === "chess" || variantKey === "chess960";
+      if (!isStandard) {
+        engine.setOption("SyzygyPath", "");
+        console.log("[server] Syzygy disabled for variant game");
+      } else if (config.syzygyPath) {
+        engine.setOption("SyzygyPath", config.syzygyPath);
+        console.log(`[server] Syzygy restored: ${config.syzygyPath}`);
+      }
+
       console.log(`[server] variant set to: ${def.label} (engine: ${currentEngineType})`);
       return { switched: true };
     } finally {
