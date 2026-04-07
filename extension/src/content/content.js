@@ -91,6 +91,75 @@ if (!SITE) {
 } else {
   console.log(`[chessbot] detected site: ${SITE}`);
   init();
+  watchForSPANavigation();
+}
+
+// ── SPA Navigation Detection ─────────────────────────────────
+// Chess.com is a SPA — navigating from /variants (lobby) to
+// /variants/atomic/game/... doesn't reload the page. We need
+// to detect URL changes and re-initialise variant detection + board finding.
+let lastKnownPath = location.pathname;
+
+function watchForSPANavigation() {
+  // Monkey-patch history methods to detect pushState/replaceState
+  const origPushState = history.pushState;
+  const origReplaceState = history.replaceState;
+
+  history.pushState = function (...args) {
+    origPushState.apply(this, args);
+    onPossibleNavigation();
+  };
+  history.replaceState = function (...args) {
+    origReplaceState.apply(this, args);
+    onPossibleNavigation();
+  };
+
+  // popstate fires on back/forward navigation
+  window.addEventListener("popstate", () => onPossibleNavigation());
+
+  // Fallback: poll for URL changes every 1.5s (catches edge cases)
+  setInterval(() => {
+    if (location.pathname !== lastKnownPath) {
+      onPossibleNavigation();
+    }
+  }, 1500);
+}
+
+function onPossibleNavigation() {
+  const newPath = location.pathname;
+  if (newPath === lastKnownPath) return;
+
+  const oldPath = lastKnownPath;
+  lastKnownPath = newPath;
+  console.log(`[chessbot] SPA navigation detected: ${oldPath} → ${newPath}`);
+
+  // Re-detect variant from the new URL
+  const newVariant = detectVariant();
+  const oldVariant = detectedVariant;
+  detectedVariant = newVariant;
+  console.log(`[chessbot] variant re-detected: ${newVariant || "standard"} (was: ${oldVariant || "standard"})`);
+
+  // Notify server of variant change if it changed
+  if (newVariant !== oldVariant && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "switch_variant", variant: newVariant || "chess" }));
+  }
+
+  // Reset board state and re-find the board
+  boardReady = false;
+  initialReadDone = false;
+  lastBoardFen = "";
+  lastSentFen = "";
+  lastPieceCount = 0;
+  pendingEval = false;
+  waitingForOpponent = false;
+  renderGeneration++;
+  clearArrow();
+
+  // Small delay to let the SPA render the new page
+  setTimeout(() => {
+    console.log(`[chessbot] re-initialising board search after navigation`);
+    findBoard();
+  }, 500);
 }
 
 // ── Initialisation ───────────────────────────────────────────
