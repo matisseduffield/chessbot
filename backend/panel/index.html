@@ -4,41 +4,65 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ChessBot Panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg-900: #1a202c;
-    --bg-800: #2d3748;
-    --bg-700: #4a5568;
-    --text-100: #f7fafc;
-    --text-400: #cbd5e0;
-    --text-500: #a0aec0;
-    --text-600: #718096;
-    --accent: #667eea;
-    --accent-hover: #5a67d8;
-    --green: #2ecc71;
-    --red: #e74c3c;
-    --orange: #f39c12;
-    --cyan: #00bcd4;
-    --purple: #9b59b6;
+    --bg-950: #0a0c13;
+    --bg-900: #0f1219;
+    --bg-850: #131620;
+    --bg-800: #181c28;
+    --bg-750: #1e2233;
+    --bg-700: #272d3f;
+    --bg-600: #343c54;
+    --bg-500: #454f6b;
+    --text-50: #f8fafc;
+    --text-100: #e2e8f0;
+    --text-200: #cbd5e1;
+    --text-300: #94a3b8;
+    --text-400: #64748b;
+    --text-500: #475569;
+    --text-600: #334155;
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+    --accent-muted: rgba(99, 102, 241, 0.12);
+    --accent-glow: 0 0 20px rgba(99, 102, 241, 0.15);
+    --green: #22c55e;
+    --green-muted: rgba(34, 197, 94, 0.12);
+    --red: #ef4444;
+    --red-muted: rgba(239, 68, 68, 0.12);
+    --orange: #f59e0b;
+    --cyan: #06b6d4;
+    --purple: #a855f7;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --sidebar-w: 300px;
   }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
+
   body {
-    background: var(--bg-900);
+    background: var(--bg-950);
     color: var(--text-100);
-    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     line-height: 1.5;
     overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
   }
+
+  /* ── Layout ── */
   #layout {
     display: grid;
-    grid-template-columns: 280px 1fr;
+    grid-template-columns: var(--sidebar-w) 1fr;
     grid-template-rows: 1fr auto;
     grid-template-areas:
       "settings board"
       "settings pvs";
     height: 100vh;
-    gap: 2px;
-    padding: 2px;
+    gap: 1px;
+    background: var(--bg-700);
   }
   @media (max-width: 900px) {
     #layout {
@@ -48,140 +72,395 @@
     }
   }
 
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--bg-600); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--bg-500); }
+
   /* ── Settings Panel ── */
   #settings {
     grid-area: settings;
-    background: var(--bg-800);
-    padding: 16px;
+    background: var(--bg-900);
+    padding: 0;
     overflow-y: auto;
   }
-  .section-label {
-    color: var(--text-500);
-    font-weight: 700;
+
+  .panel-header {
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--bg-700);
+    position: sticky;
+    top: 0;
+    background: var(--bg-900);
+    z-index: 10;
+    backdrop-filter: blur(8px);
+  }
+  .panel-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 800;
+    font-size: 15px;
+    color: var(--text-50);
+    letter-spacing: -0.02em;
+  }
+  .panel-logo .logo-icon {
+    width: 28px;
+    height: 28px;
+    background: var(--accent);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    color: #fff;
+  }
+  .status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
     font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 8px;
-    margin-top: 16px;
+    font-weight: 600;
   }
-  .section-label:first-child { margin-top: 0; }
-
   .status-dot {
-    display: inline-block;
-    width: 8px; height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
-    margin-right: 6px;
-    vertical-align: middle;
+    flex-shrink: 0;
   }
-  .status-dot.connected { background: var(--green); }
+  .status-dot.connected {
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
   .status-dot.disconnected { background: var(--red); }
+  #status-text {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-300);
+  }
 
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ── Settings Groups ── */
+  .settings-group {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--bg-750);
+  }
+  .group-title {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-400);
+    margin-bottom: 14px;
+  }
+
+  /* ── Setting Rows ── */
   .setting-row {
     display: flex;
     align-items: center;
-    margin-bottom: 8px;
-    gap: 8px;
+    margin-bottom: 12px;
+    gap: 10px;
   }
-  .setting-row label {
+  .setting-row:last-child { margin-bottom: 0; }
+  .setting-label {
     font-size: 13px;
-    color: var(--text-400);
-    min-width: 60px;
+    font-weight: 500;
+    color: var(--text-200);
+    min-width: 52px;
+    flex-shrink: 0;
   }
+  .sub-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-300);
+    margin-bottom: 8px;
+    margin-top: 4px;
+  }
+
+  /* ── Range Sliders ── */
   input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
-    background: var(--bg-900);
-    height: 6px;
-    border-radius: 3px;
+    background: var(--bg-700);
+    height: 4px;
+    border-radius: 2px;
     outline: none;
     flex: 1;
-    max-width: 140px;
+    cursor: pointer;
+    transition: background 0.2s;
   }
+  input[type="range"]:hover { background: var(--bg-600); }
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 16px; height: 16px;
+    width: 16px;
+    height: 16px;
     background: var(--accent);
     border-radius: 50%;
     cursor: pointer;
+    box-shadow: 0 0 0 3px var(--accent-muted);
+    transition: box-shadow 0.2s, transform 0.15s;
+  }
+  input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+    box-shadow: 0 0 0 5px var(--accent-muted);
   }
   input[type="range"]::-moz-range-thumb {
-    width: 16px; height: 16px;
+    width: 16px;
+    height: 16px;
     background: var(--accent);
     border-radius: 50%;
     cursor: pointer;
     border: none;
+    box-shadow: 0 0 0 3px var(--accent-muted);
   }
+  input[type="range"]:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+  input[type="range"]:disabled::-webkit-slider-thumb { cursor: not-allowed; }
+
   .range-value {
+    font-family: 'JetBrains Mono', monospace;
     font-size: 13px;
     font-weight: 700;
-    color: var(--text-100);
-    min-width: 28px;
+    color: var(--accent-hover);
+    min-width: 32px;
     text-align: right;
   }
+
+  /* ── Radio Group (Segmented Control) ── */
+  .radio-group {
+    display: flex;
+    background: var(--bg-950);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+    gap: 2px;
+    margin-bottom: 12px;
+  }
+  .radio-group label {
+    flex: 1;
+    text-align: center;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-400);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .radio-group input[type="radio"] { display: none; }
+  .radio-group label:has(input:checked) {
+    background: var(--accent);
+    color: white;
+    box-shadow: 0 1px 4px rgba(99, 102, 241, 0.4);
+  }
+  .radio-group label:hover:not(:has(input:checked)) {
+    color: var(--text-200);
+    background: var(--bg-700);
+  }
+
+  /* ── Toggle Switch ── */
   .toggle-row {
     display: flex;
     align-items: center;
-    margin-bottom: 6px;
+    margin-bottom: 10px;
     cursor: pointer;
-    gap: 8px;
+    gap: 12px;
   }
-  .toggle-row input[type="checkbox"] {
-    width: 18px; height: 18px;
-    accent-color: var(--accent);
+  .toggle-row:last-child { margin-bottom: 0; }
+  .toggle-switch {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+  .toggle-switch input[type="checkbox"] {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+  }
+  .toggle-track {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-600);
+    border-radius: 20px;
+    transition: background 0.25s;
     cursor: pointer;
   }
-  .toggle-row span {
+  .toggle-track::before {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    left: 3px;
+    top: 3px;
+    background: var(--text-400);
+    border-radius: 50%;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background 0.25s;
+  }
+  .toggle-switch input:checked + .toggle-track {
+    background: var(--accent);
+  }
+  .toggle-switch input:checked + .toggle-track::before {
+    transform: translateX(16px);
+    background: white;
+  }
+  .toggle-label {
     font-size: 13px;
-    color: var(--text-400);
+    font-weight: 500;
+    color: var(--text-200);
   }
-  .info-text {
-    font-size: 12px;
-    color: var(--text-600);
-    margin-top: 4px;
+
+  /* ── Inline toggle (for time/nodes enable) ── */
+  .toggle-inline {
+    position: relative;
+    width: 32px;
+    height: 18px;
+    flex-shrink: 0;
   }
+  .toggle-inline input[type="checkbox"] {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+  }
+  .toggle-inline .toggle-track {
+    border-radius: 18px;
+  }
+  .toggle-inline .toggle-track::before {
+    width: 12px;
+    height: 12px;
+  }
+  .toggle-inline input:checked + .toggle-track::before {
+    transform: translateX(14px);
+  }
+
+  /* ── Selects ── */
+  .panel-select {
+    width: 100%;
+    padding: 8px 32px 8px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--bg-600);
+    background: var(--bg-800);
+    color: var(--text-200);
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+  }
+  .panel-select:hover { border-color: var(--bg-500); }
+  .panel-select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-muted);
+  }
+
+  /* ── Number Input ── */
+  .num-input {
+    width: 100px;
+    background: var(--bg-800);
+    border: 1px solid var(--bg-600);
+    border-radius: var(--radius-sm);
+    color: var(--text-200);
+    padding: 6px 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .num-input:hover { border-color: var(--bg-500); }
+  .num-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-muted);
+  }
+  .num-input:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* ── Buttons ── */
+  .panel-btn {
+    width: 100%;
+    padding: 9px 14px;
+    border: 1px solid var(--bg-600);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-200);
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .panel-btn:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+    box-shadow: var(--accent-glow);
+  }
+  .panel-btn:active { transform: scale(0.98); }
 
   /* ── Board Area ── */
   #board-area {
     grid-area: board;
-    background: var(--bg-800);
-    padding: 16px;
+    background: var(--bg-900);
+    padding: 20px;
     display: flex;
     align-items: flex-start;
-    gap: 12px;
+    gap: 14px;
   }
   #eval-bar {
     width: 28px;
     min-height: 200px;
-    border-radius: 4px;
+    border-radius: var(--radius-lg);
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 0 6px rgba(0,0,0,0.4);
+    box-shadow: inset 0 0 8px rgba(0,0,0,0.3);
     position: relative;
     flex-shrink: 0;
     align-self: stretch;
+    border: 1px solid var(--bg-600);
   }
-  #eval-bar-top { background: #333; transition: height 0.4s ease; }
-  #eval-bar-bot { background: #f0f0f0; flex: 1; }
+  #eval-bar-top {
+    background: #1a1a1a;
+    transition: height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  #eval-bar-bot { background: #e8e8e8; flex: 1; }
   #eval-bar-score {
     position: absolute;
     width: 100%;
     text-align: center;
     font-size: 9px;
     font-weight: 800;
-    font-family: monospace;
+    font-family: 'JetBrains Mono', monospace;
     z-index: 1;
   }
+
   #board-col {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
   }
   #eco-label {
     font-size: 14px;
     font-weight: 600;
-    color: var(--text-400);
-    min-height: 20px;
+    color: var(--text-300);
+    min-height: 22px;
   }
   #board-svg-container {
     width: 100%;
@@ -189,8 +468,9 @@
     max-width: min(67vh, 600px);
     position: relative;
     background: var(--bg-700);
-    border-radius: 4px;
+    border-radius: var(--radius-md);
     overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
   }
   #board-svg {
     width: 100%;
@@ -201,110 +481,101 @@
   /* ── PV Cards ── */
   #pvs {
     grid-area: pvs;
-    background: var(--bg-800);
-    padding: 12px 16px;
+    background: var(--bg-900);
+    padding: 14px 20px;
     overflow-y: auto;
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 12px;
     align-content: flex-start;
+    border-top: 1px solid var(--bg-700);
   }
   .pv-card {
-    width: 220px;
-    padding: 10px;
-    border: 2px solid var(--bg-700);
-    border-radius: 6px;
+    width: 240px;
+    padding: 12px 14px;
+    border: 1px solid var(--bg-600);
+    border-radius: var(--radius-md);
     cursor: pointer;
-    transition: border-color 0.2s;
-    background: var(--bg-900);
+    transition: all 0.2s;
+    background: var(--bg-800);
   }
-  .pv-card:hover { border-color: var(--accent); }
-  .pv-card.selected { border-color: var(--accent); }
+  .pv-card:hover {
+    border-color: var(--accent);
+    box-shadow: var(--accent-glow);
+    transform: translateY(-1px);
+  }
+  .pv-card.selected {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, var(--accent-muted), transparent);
+  }
   .pv-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
   }
   .pv-rank {
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-500);
+    color: var(--text-400);
   }
   .pv-score {
-    font-size: 15px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
     font-weight: 800;
-    font-family: monospace;
   }
   .pv-eco {
     font-size: 11px;
-    color: var(--text-600);
+    color: var(--text-500);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }
   .pv-moves {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 1px 8px;
+    gap: 2px 10px;
+    font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
   }
   .pv-moves span { white-space: nowrap; }
-  .pv-moves span:nth-child(odd) { color: var(--text-100); }
-  .pv-moves span:nth-child(even) { color: var(--text-500); }
+  .pv-moves span:nth-child(odd) { color: var(--text-100); font-weight: 600; }
+  .pv-moves span:nth-child(even) { color: var(--text-400); }
   .pv-source {
     display: inline-block;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
-    padding: 1px 5px;
-    border-radius: 3px;
+    padding: 2px 6px;
+    border-radius: 4px;
     margin-left: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
   .pv-source.engine { background: var(--accent); color: #fff; }
   .pv-source.book { background: var(--orange); color: #fff; }
 
-  /* ── Empty state ── */
   .empty-state {
-    color: var(--text-600);
+    color: var(--text-500);
     font-size: 14px;
-    padding: 20px;
+    padding: 24px;
     text-align: center;
     width: 100%;
   }
 
-  .panel-select {
-    width: 100%;
-    padding: 6px 8px;
-    border-radius: 4px;
-    border: 1px solid var(--bg-700);
-    background: var(--bg-900);
+  /* ── FEN Display ── */
+  #fen-display {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
     color: var(--text-400);
-    font-size: 13px;
-    outline: none;
-    cursor: pointer;
-  }
-  .panel-select:focus { border-color: var(--accent); }
-
-  .panel-btn {
-    width: 100%;
-    padding: 8px 12px;
+    word-break: break-all;
+    padding: 8px 10px;
+    background: var(--bg-800);
+    border-radius: var(--radius-sm);
     border: 1px solid var(--bg-700);
-    border-radius: 4px;
-    background: var(--bg-900);
-    color: var(--text-400);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
-    margin-bottom: 6px;
-  }
-  .panel-btn:hover {
-    background: var(--accent);
-    color: #fff;
-    border-color: var(--accent);
+    line-height: 1.4;
   }
 </style>
 </head>
@@ -312,113 +583,143 @@
 <div id="layout">
   <!-- Settings -->
   <div id="settings">
-    <div class="section-label" style="margin-top:0">
-      <span id="status-dot" class="status-dot disconnected"></span>
-      <span id="status-text">Disconnected</span>
+    <div class="panel-header">
+      <div class="panel-logo">
+        <div class="logo-icon">♞</div>
+        <span>ChessBot</span>
+      </div>
+      <div class="status-indicator">
+        <span id="status-dot" class="status-dot disconnected"></span>
+        <span id="status-text">Disconnected</span>
+      </div>
     </div>
 
-    <div class="section-label">Analysis Depth</div>
-    <div class="setting-row">
-      <input type="range" id="depth-slider" min="1" max="30" value="15">
-      <span class="range-value" id="depth-value">15</span>
+    <!-- Analysis -->
+    <div class="settings-group">
+      <div class="group-title">Analysis</div>
+      <div class="setting-row">
+        <span class="setting-label">Depth</span>
+        <input type="range" id="depth-slider" min="1" max="30" value="15">
+        <span class="range-value" id="depth-value">15</span>
+      </div>
+
+      <div class="sub-label">Analyze For</div>
+      <div class="radio-group">
+        <label><input type="radio" name="run-for" value="me" checked><span>Me</span></label>
+        <label><input type="radio" name="run-for" value="opponent"><span>Opponent</span></label>
+        <label><input type="radio" name="run-for" value="both"><span>Both</span></label>
+      </div>
+
+      <div class="setting-row">
+        <span class="setting-label">Time</span>
+        <label class="toggle-inline">
+          <input type="checkbox" id="chk-time-limit">
+          <span class="toggle-track"></span>
+        </label>
+        <input type="range" id="time-slider" min="100" max="30000" step="100" value="1000" disabled>
+        <span class="range-value" id="time-value">1000</span>
+      </div>
+
+      <div class="setting-row">
+        <span class="setting-label">Nodes</span>
+        <label class="toggle-inline">
+          <input type="checkbox" id="chk-nodes-limit">
+          <span class="toggle-track"></span>
+        </label>
+        <input type="number" id="nodes-input" class="num-input" min="1000" max="100000000" step="1000" value="100000" disabled>
+      </div>
+
+      <div class="setting-row">
+        <span class="setting-label">PVs</span>
+        <input type="range" id="multipv-slider" min="1" max="8" value="1">
+        <span class="range-value" id="multipv-value">1</span>
+      </div>
     </div>
 
-    <div class="section-label">Analyze For</div>
-    <div class="setting-row" style="gap:12px">
-      <label class="toggle-row" style="margin:0"><input type="radio" name="run-for" value="me" checked style="accent-color:var(--accent)"><span>Me</span></label>
-      <label class="toggle-row" style="margin:0"><input type="radio" name="run-for" value="opponent" style="accent-color:var(--accent)"><span>Opponent</span></label>
-      <label class="toggle-row" style="margin:0"><input type="radio" name="run-for" value="both" style="accent-color:var(--accent)"><span>Both</span></label>
+    <!-- Engine -->
+    <div class="settings-group">
+      <div class="group-title">Engine</div>
+      <div class="setting-row" style="margin-bottom:14px">
+        <select id="engine-select" class="panel-select">
+          <option value="">—</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Threads</span>
+        <input type="range" id="threads-slider" min="1" max="16" value="1">
+        <span class="range-value" id="threads-value">1</span>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Hash</span>
+        <select id="hash-select" class="panel-select">
+          <option value="16">16 MB</option>
+          <option value="32">32 MB</option>
+          <option value="64">64 MB</option>
+          <option value="128">128 MB</option>
+          <option value="256">256 MB</option>
+          <option value="512">512 MB</option>
+          <option value="1024">1024 MB</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Skill</span>
+        <input type="range" id="skill-slider" min="0" max="20" value="20">
+        <span class="range-value" id="skill-value">20</span>
+      </div>
     </div>
 
-    <div class="section-label">Time Limit (ms)</div>
-    <div class="setting-row">
-      <label class="toggle-row" style="margin:0;flex-shrink:0"><input type="checkbox" id="chk-time-limit"><span></span></label>
-      <input type="range" id="time-slider" min="100" max="30000" step="100" value="1000" disabled>
-      <span class="range-value" id="time-value">1000</span>
+    <!-- Display -->
+    <div class="settings-group">
+      <div class="group-title">Display</div>
+      <label class="toggle-row">
+        <span class="toggle-switch">
+          <input type="checkbox" id="chk-voice">
+          <span class="toggle-track"></span>
+        </span>
+        <span class="toggle-label">Voice announce</span>
+      </label>
+      <label class="toggle-row">
+        <span class="toggle-switch">
+          <input type="checkbox" id="chk-evalbar" checked>
+          <span class="toggle-track"></span>
+        </span>
+        <span class="toggle-label">Eval bar</span>
+      </label>
+      <label class="toggle-row">
+        <span class="toggle-switch">
+          <input type="checkbox" id="chk-board" checked>
+          <span class="toggle-track"></span>
+        </span>
+        <span class="toggle-label">Board arrows</span>
+      </label>
+      <label class="toggle-row">
+        <span class="toggle-switch">
+          <input type="checkbox" id="chk-pvs" checked>
+          <span class="toggle-track"></span>
+        </span>
+        <span class="toggle-label">PV cards</span>
+      </label>
     </div>
 
-    <div class="section-label">Nodes Limit</div>
-    <div class="setting-row">
-      <label class="toggle-row" style="margin:0;flex-shrink:0"><input type="checkbox" id="chk-nodes-limit"><span></span></label>
-      <input type="number" id="nodes-input" min="1000" max="100000000" step="1000" value="100000" disabled
-        style="width:100px;background:var(--bg-900);border:1px solid var(--bg-700);border-radius:4px;color:var(--text-400);padding:4px 6px;font-size:13px;">
-    </div>
-
-    <div class="section-label">Principal Variations</div>
-    <div class="setting-row">
-      <input type="range" id="multipv-slider" min="1" max="8" value="1">
-      <span class="range-value" id="multipv-value">1</span>
-    </div>
-
-    <div class="section-label">Threads</div>
-    <div class="setting-row">
-      <input type="range" id="threads-slider" min="1" max="16" value="1">
-      <span class="range-value" id="threads-value">1</span>
-    </div>
-
-    <div class="section-label">Hash (MB)</div>
-    <div class="setting-row">
-      <select id="hash-select" class="panel-select">
-        <option value="16">16</option>
-        <option value="32">32</option>
-        <option value="64">64</option>
-        <option value="128">128</option>
-        <option value="256">256</option>
-        <option value="512">512</option>
-        <option value="1024">1024</option>
-      </select>
-    </div>
-
-    <div class="section-label">Skill Level</div>
-    <div class="setting-row">
-      <input type="range" id="skill-slider" min="0" max="20" value="20">
-      <span class="range-value" id="skill-value">20</span>
-    </div>
-
-    <div class="section-label">Display</div>
-    <label class="toggle-row">
-      <input type="checkbox" id="chk-voice">
-      <span>Voice announce</span>
-    </label>
-    <label class="toggle-row">
-      <input type="checkbox" id="chk-evalbar" checked>
-      <span>Eval bar</span>
-    </label>
-    <label class="toggle-row">
-      <input type="checkbox" id="chk-board" checked>
-      <span>Board arrows</span>
-    </label>
-    <label class="toggle-row">
-      <input type="checkbox" id="chk-pvs" checked>
-      <span>PV cards</span>
-    </label>
-
-    <div class="section-label">Engine</div>
-    <div class="setting-row">
-      <select id="engine-select" class="panel-select">
-        <option value="">—</option>
-      </select>
-    </div>
-
-    <div class="section-label">Opening Book</div>
-    <div class="setting-row">
-      <select id="book-select" class="panel-select">
+    <!-- Resources -->
+    <div class="settings-group">
+      <div class="group-title">Resources</div>
+      <div class="sub-label">Opening Book</div>
+      <select id="book-select" class="panel-select" style="margin-bottom:12px">
         <option value="">None (disabled)</option>
       </select>
-    </div>
-
-    <div class="section-label">Endgame Tablebases</div>
-    <div class="setting-row">
-      <select id="syzygy-select" class="panel-select">
+      <div class="sub-label">Endgame Tables</div>
+      <select id="syzygy-select" class="panel-select" style="margin-bottom:14px">
         <option value="">None (disabled)</option>
       </select>
+      <button id="btn-clear-hash" class="panel-btn">Clear Hash Table</button>
     </div>
 
-    <div class="section-label">Actions</div>
-    <button id="btn-clear-hash" class="panel-btn">Clear Hash Table</button>
-
-    <div class="section-label">Position</div>
-    <div id="fen-display" class="info-text" style="word-break:break-all;font-family:monospace;font-size:11px;">—</div>
+    <!-- Position -->
+    <div class="settings-group">
+      <div class="group-title">Position</div>
+      <div id="fen-display">—</div>
+    </div>
   </div>
 
   <!-- Board -->
