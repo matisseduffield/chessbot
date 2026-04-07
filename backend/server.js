@@ -110,6 +110,7 @@ async function main() {
   /** Switch to a different variant, auto-switching engine if needed.
    *  Returns { switched: bool, error?: string } */
   let engineSwitchLock = false; // prevents concurrent engine swaps
+  let engineSwitchPromise = null; // resolves when current switch completes
 
   async function switchVariant(variantKey) {
     const def = VARIANTS[variantKey];
@@ -121,6 +122,8 @@ async function main() {
 
     // Acquire lock to prevent concurrent engine operations
     engineSwitchLock = true;
+    let resolveSwitchPromise;
+    engineSwitchPromise = new Promise(r => { resolveSwitchPromise = r; });
 
     try {
       // Abort any pending evaluation before switching
@@ -181,6 +184,8 @@ async function main() {
       return { switched: true };
     } finally {
       engineSwitchLock = false;
+      resolveSwitchPromise();
+      engineSwitchPromise = null;
     }
   }
 
@@ -317,6 +322,12 @@ async function main() {
             // If client disconnected, bail — prevents stale queue handlers
             // from racing with a new client's evaluations on the shared engine.
             if (ws.readyState !== ws.OPEN) return;
+
+            // If an engine/variant switch is in progress, wait for it
+            if (engineSwitchPromise) {
+              console.log(`[server] eval gen ${gen} waiting for engine switch to complete...`);
+              await engineSwitchPromise;
+            }
 
             // If a newer FEN arrived since we queued, skip this one
             if (gen !== evalGeneration) {
