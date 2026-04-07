@@ -1869,8 +1869,15 @@ function drawSingleMove(uci, bestLine, source) {
     if (response && response.length >= 4) {
       const resp = uciToSquares(response);
       if (displayMode === "box" || displayMode === "both") {
-        drawSquareHighlight(svg, resp.from.file, resp.from.rank, sqSize, flipped, "rgba(231,76,60,0.4)", "from", bgSvg);
-        drawSquareHighlight(svg, resp.to.file, resp.to.rank, sqSize, flipped, "rgba(231,76,60,0.5)", "to", bgSvg);
+        // Skip highlight if square overlaps with best-move squares to avoid muddy blending
+        const sameAsFrom = (sq) => sq.file === from.file && sq.rank === from.rank;
+        const sameAsTo = (sq) => sq.file === to.file && sq.rank === to.rank;
+        if (!sameAsFrom(resp.from) && !sameAsTo(resp.from)) {
+          drawSquareHighlight(svg, resp.from.file, resp.from.rank, sqSize, flipped, "rgba(231,76,60,0.4)", "from", bgSvg);
+        }
+        if (!sameAsFrom(resp.to) && !sameAsTo(resp.to)) {
+          drawSquareHighlight(svg, resp.to.file, resp.to.rank, sqSize, flipped, "rgba(231,76,60,0.5)", "to", bgSvg);
+        }
       }
       if (displayMode === "arrow" || displayMode === "both") {
         drawArrowOnBoard(svg, resp.from.file, resp.from.rank, resp.to.file, resp.to.rank, sqSize, flipped, "hsla(350,100%,50%,0.7)", 0.7);
