@@ -6,6 +6,7 @@ class StockfishBridge {
   constructor() {
     this.process = null;
     this.ready = false;
+    this._restartPromise = null; // set while engine is restarting
     this._pendingResolve = null;
     this._handleLine = this._defaultLineHandler.bind(this);
     this._settings = {
@@ -102,7 +103,12 @@ class StockfishBridge {
   /** Send a FEN to Stockfish and return evaluation results.
    *  options: { depth, movetime, nodes } — at least one should be set.
    *  Returns { bestmove, lines: [{ move, score, mate, pv }] } */
-  evaluate(fen, depth = 15, options = {}) {
+  async evaluate(fen, depth = 15, options = {}) {
+    // If engine is restarting, wait for it before proceeding
+    if (this._restartPromise) {
+      console.log("[stockfish] waiting for engine restart before evaluating...");
+      await this._restartPromise;
+    }
     return new Promise((resolve, reject) => {
       if (!this.ready) return reject(new Error("Engine not ready"));
 
@@ -219,24 +225,30 @@ class StockfishBridge {
   }
 
   /** Kill and restart the engine after it becomes unresponsive. */
-  async _restart() {
-    console.log("[stockfish] restarting engine...");
-    if (this.process) {
-      try { this.process.kill("SIGKILL"); } catch {}
-      this.process = null;
-    }
-    this.ready = false;
-    try {
-      await this.start();
-      // Re-apply saved settings
-      for (const [name, value] of Object.entries(this._settings)) {
-        this._send(`setoption name ${name} value ${value}`);
+  _restart() {
+    if (this._restartPromise) return this._restartPromise;
+    this._restartPromise = (async () => {
+      console.log("[stockfish] restarting engine...");
+      if (this.process) {
+        try { this.process.kill("SIGKILL"); } catch {}
+        this.process = null;
       }
-      this._send("isready");
-      console.log("[stockfish] engine restarted successfully");
-    } catch (err) {
-      console.error("[stockfish] failed to restart:", err.message);
-    }
+      this.ready = false;
+      try {
+        await this.start();
+        // Re-apply saved settings
+        for (const [name, value] of Object.entries(this._settings)) {
+          this._send(`setoption name ${name} value ${value}`);
+        }
+        this._send("isready");
+        console.log("[stockfish] engine restarted successfully");
+      } catch (err) {
+        console.error("[stockfish] failed to restart:", err.message);
+      } finally {
+        this._restartPromise = null;
+      }
+    })();
+    return this._restartPromise;
   }
 
   // ── internals ──────────────────────────────────────────

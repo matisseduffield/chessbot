@@ -196,6 +196,11 @@ function connectWS() {
       if (msg.type === "error") {
         console.error(`[chessbot] server error: ${msg.message}`);
         pendingEval = false;
+        // If engine not ready (restarting), retry after a short delay
+        if (msg.message && msg.message.includes("not ready")) {
+          lastSentFen = "";
+          setTimeout(() => readAndSend(), 3000);
+        }
         return;
       }
       // Handle settings broadcast from panel

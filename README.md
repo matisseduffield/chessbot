@@ -140,7 +140,7 @@ All settings can be changed at runtime via the dashboard panel. Environment vari
 ```
 chessbot/
 ├── backend/
-│   ├── server.js           # HTTP + WebSocket server
+│   ├── server.js            # HTTP + WebSocket server
 │   ├── stockfishBridge.js   # UCI engine communication
 │   ├── openingBook.js       # Polyglot book reader
 │   ├── eco.js               # ECO opening database
