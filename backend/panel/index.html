@@ -38,7 +38,6 @@
     --radius-sm: 6px;
     --radius-md: 10px;
     --radius-lg: 14px;
-    --sidebar-w: 300px;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -48,55 +47,187 @@
     color: var(--text-100);
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     line-height: 1.5;
-    overflow-x: hidden;
+    overflow: hidden;
     -webkit-font-smoothing: antialiased;
+    height: 100vh;
   }
 
-  /* ── Layout ── */
+  /* ── Layout: board left, settings right ── */
   #layout {
     display: grid;
-    grid-template-columns: var(--sidebar-w) 1fr;
-    grid-template-rows: 1fr auto;
-    grid-template-areas:
-      "settings board"
-      "settings pvs";
+    grid-template-columns: auto 1fr;
+    grid-template-rows: 1fr;
     height: 100vh;
-    gap: 1px;
-    background: var(--bg-700);
-  }
-  @media (max-width: 900px) {
-    #layout {
-      grid-template-columns: 1fr;
-      grid-template-areas: "board" "pvs" "settings";
-      grid-template-rows: auto auto 1fr;
-    }
+    background: var(--bg-950);
   }
 
-  /* ── Scrollbar ── */
-  ::-webkit-scrollbar { width: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--bg-600); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--bg-500); }
-
-  /* ── Settings Panel ── */
-  #settings {
-    grid-area: settings;
+  /* ── Left column: board + PVs ── */
+  #left-col {
+    display: flex;
+    flex-direction: column;
     background: var(--bg-900);
-    padding: 0;
+    border-right: 1px solid var(--bg-700);
+    overflow: hidden;
+  }
+  #board-area {
+    padding: 16px 20px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  #eval-bar {
+    width: 26px;
+    min-height: 200px;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: inset 0 0 8px rgba(0,0,0,0.3);
+    position: relative;
+    flex-shrink: 0;
+    align-self: stretch;
+    border: 1px solid var(--bg-600);
+  }
+  #eval-bar-top {
+    background: #1a1a1a;
+    transition: height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  #eval-bar-bot { background: #e8e8e8; flex: 1; }
+  #eval-bar-score {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 9px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    z-index: 1;
+  }
+  #board-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  #eco-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-300);
+    min-height: 20px;
+  }
+  #board-svg-container {
+    width: 100%;
+    aspect-ratio: 1;
+    max-width: min(calc(100vh - 160px), 560px);
+    position: relative;
+    background: var(--bg-700);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  }
+  #board-svg { width: 100%; height: 100%; display: block; }
+
+  /* ── PV Cards (below board) ── */
+  #pvs {
+    padding: 10px 20px 14px;
     overflow-y: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-content: flex-start;
+    flex: 1;
+    min-height: 0;
+  }
+  .pv-card {
+    width: 230px;
+    padding: 10px 12px;
+    border: 1px solid var(--bg-600);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--bg-800);
+  }
+  .pv-card:hover {
+    border-color: var(--accent);
+    box-shadow: var(--accent-glow);
+    transform: translateY(-1px);
+  }
+  .pv-card.selected {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, var(--accent-muted), transparent);
+  }
+  .pv-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+  .pv-rank {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-400);
+  }
+  .pv-score {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 800;
+  }
+  .pv-eco {
+    font-size: 11px;
+    color: var(--text-500);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 6px;
+  }
+  .pv-moves {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+  .pv-moves span { white-space: nowrap; }
+  .pv-moves span:nth-child(odd) { color: var(--text-100); font-weight: 600; }
+  .pv-moves span:nth-child(even) { color: var(--text-400); }
+  .pv-source {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .pv-source.engine { background: var(--accent); color: #fff; }
+  .pv-source.book { background: var(--orange); color: #fff; }
+  .empty-state {
+    color: var(--text-500);
+    font-size: 13px;
+    padding: 16px;
+    text-align: center;
+    width: 100%;
   }
 
+  /* ── Right column: settings ── */
+  #settings {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-900);
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  /* Header bar */
   .panel-header {
-    padding: 16px 20px;
+    padding: 12px 24px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     border-bottom: 1px solid var(--bg-700);
-    position: sticky;
-    top: 0;
-    background: var(--bg-900);
-    z-index: 10;
-    backdrop-filter: blur(8px);
+    flex-shrink: 0;
   }
   .panel-logo {
     display: flex;
@@ -145,47 +276,66 @@
     font-weight: 600;
     color: var(--text-300);
   }
-
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
   }
 
-  /* ── Settings Groups ── */
+  /* Settings grid: 3 columns of groups */
+  .settings-body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  /* Each column */
+  .settings-col {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    border-right: 1px solid var(--bg-750);
+  }
+  .settings-col:last-child { border-right: none; }
+
+  /* Groups inside columns */
   .settings-group {
-    padding: 16px 20px;
+    padding: 14px 20px;
     border-bottom: 1px solid var(--bg-750);
   }
+  .settings-group:last-child { border-bottom: none; }
   .group-title {
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.1em;
     color: var(--text-400);
-    margin-bottom: 14px;
+    margin-bottom: 10px;
   }
 
   /* ── Setting Rows ── */
   .setting-row {
     display: flex;
     align-items: center;
-    margin-bottom: 12px;
-    gap: 10px;
+    margin-bottom: 8px;
+    gap: 8px;
   }
   .setting-row:last-child { margin-bottom: 0; }
   .setting-label {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
-    color: var(--text-200);
-    min-width: 52px;
+    color: var(--text-300);
+    min-width: 46px;
     flex-shrink: 0;
   }
   .sub-label {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
-    color: var(--text-300);
-    margin-bottom: 8px;
-    margin-top: 4px;
+    color: var(--text-400);
+    margin-bottom: 6px;
+    margin-top: 2px;
   }
 
   /* ── Range Sliders ── */
@@ -197,14 +347,15 @@
     border-radius: 2px;
     outline: none;
     flex: 1;
+    min-width: 60px;
     cursor: pointer;
     transition: background 0.2s;
   }
   input[type="range"]:hover { background: var(--bg-600); }
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     background: var(--accent);
     border-radius: 50%;
     cursor: pointer;
@@ -216,26 +367,23 @@
     box-shadow: 0 0 0 5px var(--accent-muted);
   }
   input[type="range"]::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     background: var(--accent);
     border-radius: 50%;
     cursor: pointer;
     border: none;
     box-shadow: 0 0 0 3px var(--accent-muted);
   }
-  input[type="range"]:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-  }
+  input[type="range"]:disabled { opacity: 0.3; cursor: not-allowed; }
   input[type="range"]:disabled::-webkit-slider-thumb { cursor: not-allowed; }
 
   .range-value {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--accent-hover);
-    min-width: 32px;
+    min-width: 30px;
     text-align: right;
   }
 
@@ -244,16 +392,16 @@
     display: flex;
     background: var(--bg-950);
     border-radius: var(--radius-sm);
-    padding: 3px;
+    padding: 2px;
     gap: 2px;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
   }
   .radio-group label {
     flex: 1;
     text-align: center;
-    padding: 6px 8px;
+    padding: 5px 6px;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--text-400);
     cursor: pointer;
@@ -274,15 +422,15 @@
   .toggle-row {
     display: flex;
     align-items: center;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     cursor: pointer;
-    gap: 12px;
+    gap: 10px;
   }
   .toggle-row:last-child { margin-bottom: 0; }
   .toggle-switch {
     position: relative;
-    width: 36px;
-    height: 20px;
+    width: 34px;
+    height: 18px;
     flex-shrink: 0;
   }
   .toggle-switch input[type="checkbox"] {
@@ -295,15 +443,15 @@
     position: absolute;
     inset: 0;
     background: var(--bg-600);
-    border-radius: 20px;
+    border-radius: 18px;
     transition: background 0.25s;
     cursor: pointer;
   }
   .toggle-track::before {
     content: '';
     position: absolute;
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     left: 3px;
     top: 3px;
     background: var(--text-400);
@@ -318,7 +466,7 @@
     background: white;
   }
   .toggle-label {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--text-200);
   }
@@ -326,8 +474,8 @@
   /* ── Inline toggle (for time/nodes enable) ── */
   .toggle-inline {
     position: relative;
-    width: 32px;
-    height: 18px;
+    width: 30px;
+    height: 16px;
     flex-shrink: 0;
   }
   .toggle-inline input[type="checkbox"] {
@@ -337,11 +485,11 @@
     position: absolute;
   }
   .toggle-inline .toggle-track {
-    border-radius: 18px;
+    border-radius: 16px;
   }
   .toggle-inline .toggle-track::before {
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
   }
   .toggle-inline input:checked + .toggle-track::before {
     transform: translateX(14px);
@@ -350,13 +498,13 @@
   /* ── Selects ── */
   .panel-select {
     width: 100%;
-    padding: 8px 32px 8px 12px;
+    padding: 6px 28px 6px 10px;
     border-radius: var(--radius-sm);
     border: 1px solid var(--bg-600);
     background: var(--bg-800);
     color: var(--text-200);
     font-family: 'Inter', sans-serif;
-    font-size: 13px;
+    font-size: 12px;
     outline: none;
     cursor: pointer;
     transition: border-color 0.2s, box-shadow 0.2s;
@@ -364,7 +512,7 @@
     appearance: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 10px center;
+    background-position: right 8px center;
   }
   .panel-select:hover { border-color: var(--bg-500); }
   .panel-select:focus {
@@ -374,14 +522,14 @@
 
   /* ── Number Input ── */
   .num-input {
-    width: 100px;
+    width: 90px;
     background: var(--bg-800);
     border: 1px solid var(--bg-600);
     border-radius: var(--radius-sm);
     color: var(--text-200);
-    padding: 6px 10px;
+    padding: 5px 8px;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
+    font-size: 12px;
     outline: none;
     transition: border-color 0.2s, box-shadow 0.2s;
   }
@@ -395,13 +543,13 @@
   /* ── Buttons ── */
   .panel-btn {
     width: 100%;
-    padding: 9px 14px;
+    padding: 7px 12px;
     border: 1px solid var(--bg-600);
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-200);
     font-family: 'Inter', sans-serif;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
@@ -414,174 +562,57 @@
   }
   .panel-btn:active { transform: scale(0.98); }
 
-  /* ── Board Area ── */
-  #board-area {
-    grid-area: board;
-    background: var(--bg-900);
-    padding: 20px;
-    display: flex;
-    align-items: flex-start;
-    gap: 14px;
-  }
-  #eval-bar {
-    width: 28px;
-    min-height: 200px;
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    box-shadow: inset 0 0 8px rgba(0,0,0,0.3);
-    position: relative;
-    flex-shrink: 0;
-    align-self: stretch;
-    border: 1px solid var(--bg-600);
-  }
-  #eval-bar-top {
-    background: #1a1a1a;
-    transition: height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  #eval-bar-bot { background: #e8e8e8; flex: 1; }
-  #eval-bar-score {
-    position: absolute;
-    width: 100%;
-    text-align: center;
-    font-size: 9px;
-    font-weight: 800;
-    font-family: 'JetBrains Mono', monospace;
-    z-index: 1;
-  }
-
-  #board-col {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  #eco-label {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-300);
-    min-height: 22px;
-  }
-  #board-svg-container {
-    width: 100%;
-    aspect-ratio: 1;
-    max-width: min(67vh, 600px);
-    position: relative;
-    background: var(--bg-700);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
-  }
-  #board-svg {
-    width: 100%;
-    height: 100%;
-    display: block;
-  }
-
-  /* ── PV Cards ── */
-  #pvs {
-    grid-area: pvs;
-    background: var(--bg-900);
-    padding: 14px 20px;
-    overflow-y: auto;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    align-content: flex-start;
-    border-top: 1px solid var(--bg-700);
-  }
-  .pv-card {
-    width: 240px;
-    padding: 12px 14px;
-    border: 1px solid var(--bg-600);
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    transition: all 0.2s;
-    background: var(--bg-800);
-  }
-  .pv-card:hover {
-    border-color: var(--accent);
-    box-shadow: var(--accent-glow);
-    transform: translateY(-1px);
-  }
-  .pv-card.selected {
-    border-color: var(--accent);
-    background: linear-gradient(135deg, var(--accent-muted), transparent);
-  }
-  .pv-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 6px;
-  }
-  .pv-rank {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-400);
-  }
-  .pv-score {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 16px;
-    font-weight: 800;
-  }
-  .pv-eco {
-    font-size: 11px;
-    color: var(--text-500);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-bottom: 8px;
-  }
-  .pv-moves {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2px 10px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-  }
-  .pv-moves span { white-space: nowrap; }
-  .pv-moves span:nth-child(odd) { color: var(--text-100); font-weight: 600; }
-  .pv-moves span:nth-child(even) { color: var(--text-400); }
-  .pv-source {
-    display: inline-block;
-    font-size: 9px;
-    font-weight: 700;
-    padding: 2px 6px;
-    border-radius: 4px;
-    margin-left: 6px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .pv-source.engine { background: var(--accent); color: #fff; }
-  .pv-source.book { background: var(--orange); color: #fff; }
-
-  .empty-state {
-    color: var(--text-500);
-    font-size: 14px;
-    padding: 24px;
-    text-align: center;
-    width: 100%;
-  }
-
   /* ── FEN Display ── */
   #fen-display {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-400);
     word-break: break-all;
-    padding: 8px 10px;
+    padding: 6px 8px;
     background: var(--bg-800);
     border-radius: var(--radius-sm);
     border: 1px solid var(--bg-700);
-    line-height: 1.4;
+    line-height: 1.3;
   }
+
+  /* ── Display toggles 2-column grid ── */
+  .toggle-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 16px;
+  }
+  .toggle-grid .toggle-row { margin-bottom: 0; }
+
+  /* ── Scrollbar for PVs ── */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--bg-600); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--bg-500); }
 </style>
 </head>
 <body>
 <div id="layout">
-  <!-- Settings -->
+  <!-- Left: Board + PV cards -->
+  <div id="left-col">
+    <div id="board-area">
+      <div id="eval-bar" style="display:flex">
+        <div id="eval-bar-top" style="height:50%"></div>
+        <div id="eval-bar-bot"></div>
+        <div id="eval-bar-score" style="bottom:2px;color:#333;">0.0</div>
+      </div>
+      <div id="board-col">
+        <div id="eco-label"></div>
+        <div id="board-svg-container">
+          <svg id="board-svg" viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+      </div>
+    </div>
+    <div id="pvs">
+      <div class="empty-state">Waiting for analysis…</div>
+    </div>
+  </div>
+
+  <!-- Right: Settings -->
   <div id="settings">
     <div class="panel-header">
       <div class="panel-logo">
@@ -594,152 +625,138 @@
       </div>
     </div>
 
-    <!-- Analysis -->
-    <div class="settings-group">
-      <div class="group-title">Analysis</div>
-      <div class="setting-row">
-        <span class="setting-label">Depth</span>
-        <input type="range" id="depth-slider" min="1" max="30" value="15">
-        <span class="range-value" id="depth-value">15</span>
+    <div class="settings-body">
+      <!-- Column 1: Analysis -->
+      <div class="settings-col">
+        <div class="settings-group">
+          <div class="group-title">Analysis</div>
+          <div class="setting-row">
+            <span class="setting-label">Depth</span>
+            <input type="range" id="depth-slider" min="1" max="30" value="15">
+            <span class="range-value" id="depth-value">15</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">PVs</span>
+            <input type="range" id="multipv-slider" min="1" max="8" value="1">
+            <span class="range-value" id="multipv-value">1</span>
+          </div>
+          <div class="sub-label">Analyze For</div>
+          <div class="radio-group">
+            <label><input type="radio" name="run-for" value="me" checked><span>Me</span></label>
+            <label><input type="radio" name="run-for" value="opponent"><span>Opponent</span></label>
+            <label><input type="radio" name="run-for" value="both"><span>Both</span></label>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="group-title">Search Limits</div>
+          <div class="setting-row">
+            <span class="setting-label">Time</span>
+            <label class="toggle-inline">
+              <input type="checkbox" id="chk-time-limit">
+              <span class="toggle-track"></span>
+            </label>
+            <input type="range" id="time-slider" min="100" max="30000" step="100" value="1000" disabled>
+            <span class="range-value" id="time-value">1000</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Nodes</span>
+            <label class="toggle-inline">
+              <input type="checkbox" id="chk-nodes-limit">
+              <span class="toggle-track"></span>
+            </label>
+            <input type="number" id="nodes-input" class="num-input" min="1000" max="100000000" step="1000" value="100000" disabled>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="group-title">Position</div>
+          <div id="fen-display">—</div>
+        </div>
       </div>
 
-      <div class="sub-label">Analyze For</div>
-      <div class="radio-group">
-        <label><input type="radio" name="run-for" value="me" checked><span>Me</span></label>
-        <label><input type="radio" name="run-for" value="opponent"><span>Opponent</span></label>
-        <label><input type="radio" name="run-for" value="both"><span>Both</span></label>
+      <!-- Column 2: Engine -->
+      <div class="settings-col">
+        <div class="settings-group">
+          <div class="group-title">Engine</div>
+          <select id="engine-select" class="panel-select" style="margin-bottom:10px">
+            <option value="">—</option>
+          </select>
+          <div class="setting-row">
+            <span class="setting-label">Threads</span>
+            <input type="range" id="threads-slider" min="1" max="16" value="1">
+            <span class="range-value" id="threads-value">1</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Hash</span>
+            <select id="hash-select" class="panel-select">
+              <option value="16">16 MB</option>
+              <option value="32">32 MB</option>
+              <option value="64">64 MB</option>
+              <option value="128">128 MB</option>
+              <option value="256">256 MB</option>
+              <option value="512">512 MB</option>
+              <option value="1024">1024 MB</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Skill</span>
+            <input type="range" id="skill-slider" min="0" max="20" value="20">
+            <span class="range-value" id="skill-value">20</span>
+          </div>
+          <button id="btn-clear-hash" class="panel-btn" style="margin-top:8px">Clear Hash</button>
+        </div>
       </div>
 
-      <div class="setting-row">
-        <span class="setting-label">Time</span>
-        <label class="toggle-inline">
-          <input type="checkbox" id="chk-time-limit">
-          <span class="toggle-track"></span>
-        </label>
-        <input type="range" id="time-slider" min="100" max="30000" step="100" value="1000" disabled>
-        <span class="range-value" id="time-value">1000</span>
-      </div>
+      <!-- Column 3: Display + Resources -->
+      <div class="settings-col">
+        <div class="settings-group">
+          <div class="group-title">Display</div>
+          <div class="toggle-grid">
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="chk-voice">
+                <span class="toggle-track"></span>
+              </span>
+              <span class="toggle-label">Voice</span>
+            </label>
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="chk-evalbar" checked>
+                <span class="toggle-track"></span>
+              </span>
+              <span class="toggle-label">Eval bar</span>
+            </label>
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="chk-board" checked>
+                <span class="toggle-track"></span>
+              </span>
+              <span class="toggle-label">Arrows</span>
+            </label>
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="chk-pvs" checked>
+                <span class="toggle-track"></span>
+              </span>
+              <span class="toggle-label">PV cards</span>
+            </label>
+          </div>
+        </div>
 
-      <div class="setting-row">
-        <span class="setting-label">Nodes</span>
-        <label class="toggle-inline">
-          <input type="checkbox" id="chk-nodes-limit">
-          <span class="toggle-track"></span>
-        </label>
-        <input type="number" id="nodes-input" class="num-input" min="1000" max="100000000" step="1000" value="100000" disabled>
-      </div>
-
-      <div class="setting-row">
-        <span class="setting-label">PVs</span>
-        <input type="range" id="multipv-slider" min="1" max="8" value="1">
-        <span class="range-value" id="multipv-value">1</span>
-      </div>
-    </div>
-
-    <!-- Engine -->
-    <div class="settings-group">
-      <div class="group-title">Engine</div>
-      <div class="setting-row" style="margin-bottom:14px">
-        <select id="engine-select" class="panel-select">
-          <option value="">—</option>
-        </select>
-      </div>
-      <div class="setting-row">
-        <span class="setting-label">Threads</span>
-        <input type="range" id="threads-slider" min="1" max="16" value="1">
-        <span class="range-value" id="threads-value">1</span>
-      </div>
-      <div class="setting-row">
-        <span class="setting-label">Hash</span>
-        <select id="hash-select" class="panel-select">
-          <option value="16">16 MB</option>
-          <option value="32">32 MB</option>
-          <option value="64">64 MB</option>
-          <option value="128">128 MB</option>
-          <option value="256">256 MB</option>
-          <option value="512">512 MB</option>
-          <option value="1024">1024 MB</option>
-        </select>
-      </div>
-      <div class="setting-row">
-        <span class="setting-label">Skill</span>
-        <input type="range" id="skill-slider" min="0" max="20" value="20">
-        <span class="range-value" id="skill-value">20</span>
-      </div>
-    </div>
-
-    <!-- Display -->
-    <div class="settings-group">
-      <div class="group-title">Display</div>
-      <label class="toggle-row">
-        <span class="toggle-switch">
-          <input type="checkbox" id="chk-voice">
-          <span class="toggle-track"></span>
-        </span>
-        <span class="toggle-label">Voice announce</span>
-      </label>
-      <label class="toggle-row">
-        <span class="toggle-switch">
-          <input type="checkbox" id="chk-evalbar" checked>
-          <span class="toggle-track"></span>
-        </span>
-        <span class="toggle-label">Eval bar</span>
-      </label>
-      <label class="toggle-row">
-        <span class="toggle-switch">
-          <input type="checkbox" id="chk-board" checked>
-          <span class="toggle-track"></span>
-        </span>
-        <span class="toggle-label">Board arrows</span>
-      </label>
-      <label class="toggle-row">
-        <span class="toggle-switch">
-          <input type="checkbox" id="chk-pvs" checked>
-          <span class="toggle-track"></span>
-        </span>
-        <span class="toggle-label">PV cards</span>
-      </label>
-    </div>
-
-    <!-- Resources -->
-    <div class="settings-group">
-      <div class="group-title">Resources</div>
-      <div class="sub-label">Opening Book</div>
-      <select id="book-select" class="panel-select" style="margin-bottom:12px">
-        <option value="">None (disabled)</option>
-      </select>
-      <div class="sub-label">Endgame Tables</div>
-      <select id="syzygy-select" class="panel-select" style="margin-bottom:14px">
-        <option value="">None (disabled)</option>
-      </select>
-      <button id="btn-clear-hash" class="panel-btn">Clear Hash Table</button>
-    </div>
-
-    <!-- Position -->
-    <div class="settings-group">
-      <div class="group-title">Position</div>
-      <div id="fen-display">—</div>
-    </div>
-  </div>
-
-  <!-- Board -->
-  <div id="board-area">
-    <div id="eval-bar" style="display:flex">
-      <div id="eval-bar-top" style="height:50%"></div>
-      <div id="eval-bar-bot"></div>
-      <div id="eval-bar-score" style="bottom:2px;color:#333;">0.0</div>
-    </div>
-    <div id="board-col">
-      <div id="eco-label"></div>
-      <div id="board-svg-container">
-        <svg id="board-svg" viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="settings-group">
+          <div class="group-title">Resources</div>
+          <div class="sub-label">Opening Book</div>
+          <select id="book-select" class="panel-select" style="margin-bottom:10px">
+            <option value="">None</option>
+          </select>
+          <div class="sub-label">Endgame Tables</div>
+          <select id="syzygy-select" class="panel-select">
+            <option value="">None</option>
+          </select>
+        </div>
       </div>
     </div>
-  </div>
-
-  <!-- PV Cards -->
-  <div id="pvs">
-    <div class="empty-state">Waiting for analysis…</div>
   </div>
 </div>
 
