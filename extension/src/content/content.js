@@ -488,12 +488,13 @@ function readAndSend() {
     waitingForOpponent = false;
   }
 
-  // Animation guard: if piece count dropped by more than 2, a piece is likely
-  // mid-flight (temporarily off both squares). Threshold of 2 allows en passant
-  // (which legitimately removes 2 pieces from view: captured pawn + moving pawn
-  // in transit). A drop of 3+ is almost certainly animation.
+  // Animation guard: if piece count dropped by more than threshold, a piece is
+  // likely mid-flight (temporarily off both squares). Standard threshold of 2
+  // allows en passant. For atomic chess, explosions can remove up to 9 pieces
+  // in a single capture, so we use a much higher threshold.
   const pieceCount = countPieces(boardPart);
-  if (lastPieceCount > 0 && pieceCount < lastPieceCount - 2) {
+  const animThreshold = detectedVariant === "atomic" ? 10 : 2;
+  if (lastPieceCount > 0 && pieceCount < lastPieceCount - animThreshold) {
     console.log(`[chessbot] piece count dropped ${lastPieceCount}→${pieceCount}, likely mid-animation — skipping`);
     lastPieceCount = pieceCount;
     return;
@@ -1030,6 +1031,19 @@ function detectWhoMoved(prevFen, currFen) {
 
   if (whiteMoved && !blackMoved) return "w";
   if (blackMoved && !whiteMoved) return "b";
+
+  // Atomic chess: captures cause explosions where the capturing piece also
+  // disappears. Both sides lose pieces but neither "appears" on a new square.
+  // In this case, the side that lost MORE pieces likely had the explosion on
+  // their opponent's territory (opponent's pieces got destroyed). The side
+  // with fewer disappearances is the one that got captured = the non-mover.
+  // Actually, the capturing side loses exactly 1 piece (the capturer), while
+  // the captured side loses 1+ (the captured piece + any adjacent friendlies).
+  // But adjacent pieces of BOTH colors explode, so use net disappearance.
+  if (!whiteMoved && !blackMoved && (whiteDisappeared > 0 || blackDisappeared > 0)) {
+    // Explosion detected — fall through to other turn detection methods
+    return null;
+  }
 
   // Both or neither — use net movement as tiebreaker
   if (whiteAppeared > blackAppeared) return "w";
