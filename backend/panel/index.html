@@ -794,12 +794,6 @@
             <label><input type="radio" name="run-for" value="opponent"><span>Opponent</span></label>
             <label><input type="radio" name="run-for" value="both"><span>Both</span></label>
           </div>
-          <div class="sub-label">Display Mode</div>
-          <div class="radio-group">
-            <label><input type="radio" name="display-mode" value="arrow"><span>Arrow</span></label>
-            <label><input type="radio" name="display-mode" value="box"><span>Box</span></label>
-            <label><input type="radio" name="display-mode" value="both" checked><span>Both</span></label>
-          </div>
         </div>
 
         <div class="settings-group">
@@ -881,13 +875,12 @@
               </span>
               <span class="toggle-label">Eval bar</span>
             </label>
-            <label class="toggle-row">
-              <span class="toggle-switch">
-                <input type="checkbox" id="chk-board" checked>
-                <span class="toggle-track"></span>
-              </span>
-              <span class="toggle-label">Arrows</span>
-            </label>
+            <div class="sub-label" style="margin-bottom:4px;margin-top:2px">Move Display</div>
+            <div class="radio-group" style="margin-bottom:4px">
+              <label><input type="radio" name="display-mode" value="arrow"><span>Arrow</span></label>
+              <label><input type="radio" name="display-mode" value="box"><span>Box</span></label>
+              <label><input type="radio" name="display-mode" value="both" checked><span>Both</span></label>
+            </div>
             <label class="toggle-row">
               <span class="toggle-switch">
                 <input type="checkbox" id="chk-pvs" checked>
@@ -966,7 +959,7 @@ function saveSettings() {
     skill: parseInt(document.getElementById("skill-slider").value),
     voice: document.getElementById("chk-voice").checked,
     evalbar: document.getElementById("chk-evalbar").checked,
-    board: document.getElementById("chk-board").checked,
+    displayMode: document.querySelector('input[name="display-mode"]:checked')?.value || "both",
     pvs: document.getElementById("chk-pvs").checked,
     book: document.getElementById("book-select").value,
     syzygy: document.getElementById("syzygy-select").value,
@@ -1129,7 +1122,7 @@ function formatScore(line) {
 // ── Board SVG ────────────────────────────────────────────
 function renderBoard() {
   const container = document.getElementById("board-svg-container");
-  container.style.display = document.getElementById("chk-board").checked ? "block" : "none";
+  container.style.display = "block";
 
   const svg = document.getElementById("board-svg");
   svg.innerHTML = "";
@@ -1471,7 +1464,6 @@ function broadcastSearchLimits() {
   }
 }
 document.getElementById("chk-evalbar").addEventListener("change", () => { renderAll(); saveSettings(); });
-document.getElementById("chk-board").addEventListener("change", () => { renderAll(); saveSettings(); });
 document.getElementById("chk-pvs").addEventListener("change", () => { renderAll(); saveSettings(); });
 
 document.getElementById("engine-select").addEventListener("change", (e) => {
@@ -1627,7 +1619,10 @@ function applySettings(msg) {
     document.getElementById("chk-voice").checked = saved.voice;
     voiceEnabled = saved.voice;
     document.getElementById("chk-evalbar").checked = saved.evalbar;
-    document.getElementById("chk-board").checked = saved.board;
+    if (saved.displayMode) {
+      const radio = document.querySelector(`input[name="display-mode"][value="${saved.displayMode}"]`);
+      if (radio) radio.checked = true;
+    }
     document.getElementById("chk-pvs").checked = saved.pvs;
 
     // Book / Syzygy — only restore for standard chess
