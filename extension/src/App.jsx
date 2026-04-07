@@ -44,9 +44,9 @@ function App() {
   const copyLogs = () => {
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'get_logs' }, (resp) => {
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'get_all_logs' }, (resp) => {
           if (chrome.runtime.lastError || !resp?.logs) {
-            navigator.clipboard.writeText('No logs available (content script not loaded)')
+            navigator.clipboard.writeText('No logs available (content script not loaded on this page)')
             setCopied(true)
             setTimeout(() => setCopied(false), 2000)
             return

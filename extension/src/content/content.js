@@ -194,7 +194,7 @@ function connectWS() {
   ws = new WebSocket(WS_URL);
 
   ws.onopen = () => {
-    console.log("[chessbot] connected to backend");
+    console.log(`[chessbot] connected to backend (variant=${detectedVariant || "standard"}, site=${SITE}, url=${location.pathname})`);
     wsBackoff = 3000; // reset backoff on successful connect
     // If we queued a FEN before WS was ready, send it now
     if (pendingInitialFen) {
@@ -299,15 +299,21 @@ function connectWS() {
     wsBackoff = Math.min(wsBackoff * 1.5, 30000); // exponential backoff, max 30s
   };
 
-  ws.onerror = () => {}; // onclose will fire next
+  ws.onerror = (e) => {
+    console.error(`[chessbot] WebSocket error (readyState=${ws.readyState})`);
+  }; // onclose will fire next
 }
 
 function sendFen(fen) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.warn(`[chessbot] sendFen skipped — WS not open (state=${ws ? ws.readyState : "null"})`);
+    return false;
+  }
   const msg = { type: "fen", fen, depth: currentDepth };
   if (searchMovetime) msg.movetime = searchMovetime;
   if (searchNodes) msg.nodes = searchNodes;
   if (detectedVariant) msg.variant = detectedVariant;
+  console.log(`[chessbot] → sendFen: ${fen.split(" ").slice(0,2).join(" ")} variant=${detectedVariant || "standard"} depth=${currentDepth}`);
   ws.send(JSON.stringify(msg));
   return true;
 }
@@ -1796,8 +1802,90 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       return true; // keep channel open for async response
     }
     if (msg.type === "get_logs") {
-      sendResponse({ logs: logBuffer.join("\n") });
+      // Build diagnostic header for debugging
+      const board = getBoardElement();
+      const header = [
+        "=== CONTENT SCRIPT DIAGNOSTIC INFO ===",
+        `Timestamp: ${new Date().toISOString()}`,
+        `URL: ${location.href}`,
+        `Site: ${SITE || "unknown"}`,
+        `Variant: ${detectedVariant || "none (standard)"}`,
+        `WS state: ${ws ? ["CONNECTING","OPEN","CLOSING","CLOSED"][ws.readyState] : "null"}`,
+        `Board found: ${boardReady}`,
+        `Board element: ${board ? board.tagName + (board.shadowRoot ? " (has shadowRoot)" : "") : "null"}`,
+        `Enabled: ${enabled}`,
+        `Last board FEN: ${lastBoardFen || "none"}`,
+        `Last sent FEN: ${lastSentFen || "none"}`,
+        `Pending eval: ${pendingEval}`,
+        `Run engine for: ${runEngineFor}`,
+        `Depth: ${currentDepth}`,
+        `Search limits: movetime=${searchMovetime} nodes=${searchNodes}`,
+        `Piece count: ${lastPieceCount}`,
+        `Render gen: ${renderGeneration}`,
+        `Dragging: ${isDragging}`,
+        `Waiting for opponent: ${waitingForOpponent}`,
+        `Voice: ${voiceEnabled}`,
+        "=== CONTENT SCRIPT LOGS ===",
+      ].join("\n");
+      sendResponse({ logs: header + "\n" + logBuffer.join("\n") });
       return true;
+    }
+    if (msg.type === "get_all_logs") {
+      // Fetch server logs via WebSocket, then combine with content script logs
+      const board = getBoardElement();
+      const csHeader = [
+        "=== CONTENT SCRIPT DIAGNOSTIC INFO ===",
+        `Timestamp: ${new Date().toISOString()}`,
+        `URL: ${location.href}`,
+        `Site: ${SITE || "unknown"}`,
+        `Variant: ${detectedVariant || "none (standard)"}`,
+        `WS state: ${ws ? ["CONNECTING","OPEN","CLOSING","CLOSED"][ws.readyState] : "null"}`,
+        `Board found: ${boardReady}`,
+        `Board element: ${board ? board.tagName + (board.shadowRoot ? " (has shadowRoot)" : "") : "null"}`,
+        `Enabled: ${enabled}`,
+        `Last board FEN: ${lastBoardFen || "none"}`,
+        `Last sent FEN: ${lastSentFen || "none"}`,
+        `Pending eval: ${pendingEval}`,
+        `Run engine for: ${runEngineFor}`,
+        `Depth: ${currentDepth}`,
+        `Search limits: movetime=${searchMovetime} nodes=${searchNodes}`,
+        `Piece count: ${lastPieceCount}`,
+        `Render gen: ${renderGeneration}`,
+        `Dragging: ${isDragging}`,
+        `Waiting for opponent: ${waitingForOpponent}`,
+        `Voice: ${voiceEnabled}`,
+        "=== CONTENT SCRIPT LOGS ===",
+      ].join("\n");
+      const csLogs = csHeader + "\n" + logBuffer.join("\n");
+
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        sendResponse({ logs: csLogs + "\n\n=== SERVER LOGS ===\n(WebSocket not connected — server logs unavailable)" });
+        return true;
+      }
+
+      // Temporarily listen for server_logs response
+      const timeout = setTimeout(() => {
+        sendResponse({ logs: csLogs + "\n\n=== SERVER LOGS ===\n(Timed out waiting for server logs)" });
+      }, 3000);
+
+      const origHandler = ws.onmessage;
+      const oneShot = (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          if (data.type === "server_logs") {
+            clearTimeout(timeout);
+            ws.onmessage = origHandler;
+            sendResponse({ logs: csLogs + "\n\n" + (data.logs || "(empty)") });
+            // Re-process this message in case original handler needs it
+            return;
+          }
+        } catch {}
+        // Not our message — pass through to original handler
+        if (origHandler) origHandler.call(ws, evt);
+      };
+      ws.onmessage = oneShot;
+      ws.send(JSON.stringify({ type: "get_server_logs" }));
+      return true; // keep sendResponse channel open
     }
     if (msg.type === "ping") {
       return true;

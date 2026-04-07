@@ -9,6 +9,22 @@ const OpeningBook = require("./openingBook");
 const eco = require("./eco");
 const config = require("./config");
 
+// ── Server log buffer ────────────────────────────────────
+const SERVER_LOG_MAX = 1000;
+const serverLogBuffer = [];
+const _origConsoleLog = console.log;
+const _origConsoleWarn = console.warn;
+const _origConsoleError = console.error;
+function bufferServerLog(level, args) {
+  const ts = new Date().toISOString().slice(11, 23);
+  const line = `[${ts}] ${level}: ${Array.from(args).map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ")}`;
+  serverLogBuffer.push(line);
+  if (serverLogBuffer.length > SERVER_LOG_MAX) serverLogBuffer.shift();
+}
+console.log = function (...args) { bufferServerLog("LOG", args); _origConsoleLog.apply(console, args); };
+console.warn = function (...args) { bufferServerLog("WARN", args); _origConsoleWarn.apply(console, args); };
+console.error = function (...args) { bufferServerLog("ERR", args); _origConsoleError.apply(console, args); };
+
 // ── File scanner helpers ─────────────────────────────────
 
 /** Recursively find files matching extensions in a directory */
@@ -377,6 +393,23 @@ async function main() {
       }
 
       // ── Switch variant ─────────────────────────────────
+      // ── Server logs ────────────────────────────────────
+      if (msg.type === "get_server_logs") {
+        const header = [
+          "=== SERVER DIAGNOSTIC INFO ===",
+          `Timestamp: ${new Date().toISOString()}`,
+          `Engine: ${path.basename(config.stockfishPath)} (${currentEngineType})`,
+          `Variant: ${currentVariant} (${VARIANTS[currentVariant]?.label || "unknown"})`,
+          `Book: ${book.enabled ? path.basename(book.bookPath) : "disabled"}`,
+          `Syzygy: ${config.syzygyPath || "disabled"}`,
+          `Clients: ${wss.clients.size}`,
+          `Engine ready: ${engine.ready || false}`,
+          `Settings: ${JSON.stringify(engine.getSettings())}`,
+          "=== SERVER LOGS ===",
+        ].join("\n");
+        safeSend(ws, { type: "server_logs", logs: header + "\n" + serverLogBuffer.join("\n") });
+      }
+
       if (msg.type === "switch_variant" && msg.variant) {
         console.log(`[server] ← switch_variant: ${msg.variant}`);
         const result = await switchVariant(msg.variant);

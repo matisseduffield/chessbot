@@ -565,6 +565,32 @@
   }
   .panel-btn:active { transform: scale(0.98); }
 
+  .header-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    border: 1px solid var(--bg-600);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-300);
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .header-btn:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+  .header-btn.copied {
+    background: var(--green);
+    border-color: var(--green);
+    color: white;
+  }
+
   /* ── FEN Display ── */
   #fen-display {
     font-family: 'JetBrains Mono', monospace;
@@ -628,6 +654,13 @@
         <span id="status-dot" class="status-dot disconnected"></span>
         <span id="status-text">Disconnected</span>
       </div>
+      <button id="btn-copy-logs" class="header-btn" title="Copy diagnostic logs to clipboard">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+        </svg>
+        <span>Copy Logs</span>
+      </button>
     </div>
 
     <div class="settings-body">
@@ -898,6 +931,10 @@ function connect() {
     if (msg.type === "variant_switched") {
       document.getElementById("variant-select").value = msg.variant;
       updateVariantHint(msg.variant);
+    }
+    if (msg.type === "server_logs" && pendingLogResolve) {
+      pendingLogResolve(msg.logs);
+      pendingLogResolve = null;
     }
   };
 }
@@ -1481,6 +1518,67 @@ function applySettings(msg) {
     }
   }
 }
+
+// ── Copy Logs ────────────────────────────────────────────
+let pendingLogResolve = null;
+
+function getServerLogs() {
+  return new Promise((resolve) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      resolve("(WebSocket not connected — server logs unavailable)");
+      return;
+    }
+    pendingLogResolve = resolve;
+    ws.send(JSON.stringify({ type: "get_server_logs" }));
+    setTimeout(() => {
+      if (pendingLogResolve) {
+        pendingLogResolve("(Timed out waiting for server logs)");
+        pendingLogResolve = null;
+      }
+    }, 3000);
+  });
+}
+
+document.getElementById("btn-copy-logs").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-copy-logs");
+  const serverLogs = await getServerLogs();
+
+  const panelInfo = [
+    "=== PANEL DIAGNOSTIC INFO ===",
+    `Timestamp: ${new Date().toISOString()}`,
+    `WS state: ${ws ? ["CONNECTING","OPEN","CLOSING","CLOSED"][ws.readyState] : "null"}`,
+    `Current data: ${currentData ? "yes (fen=" + (currentData.fen || "?") + " variant=" + (currentData.variant || "?") + ")" : "none"}`,
+    `Selected PV: ${selectedPV}`,
+    `Voice: ${voiceEnabled}`,
+    `Search limits: movetime=${searchMovetime} nodes=${searchNodes}`,
+  ].join("\n");
+
+  const full = panelInfo + "\n\n" + serverLogs;
+
+  try {
+    await navigator.clipboard.writeText(full);
+    btn.classList.add("copied");
+    btn.querySelector("span").textContent = "Copied!";
+    setTimeout(() => {
+      btn.classList.remove("copied");
+      btn.querySelector("span").textContent = "Copy Logs";
+    }, 2000);
+  } catch {
+    // Fallback for non-HTTPS contexts
+    const ta = document.createElement("textarea");
+    ta.value = full;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+    btn.classList.add("copied");
+    btn.querySelector("span").textContent = "Copied!";
+    setTimeout(() => {
+      btn.classList.remove("copied");
+      btn.querySelector("span").textContent = "Copy Logs";
+    }, 2000);
+  }
+});
 
 // ── Init ─────────────────────────────────────────────────
 connect();
