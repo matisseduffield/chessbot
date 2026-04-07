@@ -76,17 +76,20 @@
     gap: 12px;
     flex-shrink: 0;
   }
-  #eval-bar {
+  #eval-bar-wrap {
+    position: relative;
     width: 26px;
-    min-height: 200px;
+    flex-shrink: 0;
+    align-self: stretch;
+  }
+  #eval-bar {
+    width: 100%;
+    height: 100%;
     border-radius: var(--radius-lg);
     overflow: hidden;
     display: flex;
     flex-direction: column;
     box-shadow: inset 0 0 8px rgba(0,0,0,0.3);
-    position: relative;
-    flex-shrink: 0;
-    align-self: stretch;
     border: 1px solid var(--bg-600);
   }
   #eval-bar-top {
@@ -101,7 +104,7 @@
     font-size: 9px;
     font-weight: 800;
     font-family: 'JetBrains Mono', monospace;
-    z-index: 1;
+    z-index: 2;
   }
   #board-col {
     display: flex;
@@ -595,10 +598,12 @@
   <!-- Left: Board + PV cards -->
   <div id="left-col">
     <div id="board-area">
-      <div id="eval-bar" style="display:flex">
-        <div id="eval-bar-top" style="height:50%"></div>
-        <div id="eval-bar-bot"></div>
-        <div id="eval-bar-score" style="bottom:2px;color:#333;">0.0</div>
+      <div id="eval-bar-wrap">
+        <div id="eval-bar" style="display:flex">
+          <div id="eval-bar-top" style="height:50%"></div>
+          <div id="eval-bar-bot"></div>
+        </div>
+        <div id="eval-bar-score" style="bottom:4px;color:#333;">0.0</div>
       </div>
       <div id="board-col">
         <div id="eco-label"></div>
@@ -838,8 +843,8 @@ function renderEco() {
 }
 
 function renderEvalBar() {
-  const bar = document.getElementById("eval-bar");
-  bar.style.display = document.getElementById("chk-evalbar").checked ? "flex" : "none";
+  const wrap = document.getElementById("eval-bar-wrap");
+  wrap.style.display = document.getElementById("chk-evalbar").checked ? "block" : "none";
 
   const topEl = document.getElementById("eval-bar-top");
   const scoreEl = document.getElementById("eval-bar-score");
@@ -850,8 +855,8 @@ function renderEvalBar() {
     scoreEl.textContent = "Book";
     scoreEl.style.color = "#fff";
     scoreEl.style.bottom = "auto";
-    scoreEl.style.top = "50%";
-    scoreEl.style.transform = "translateY(-50%)";
+    scoreEl.style.top = "calc(50% - 5px)";
+    scoreEl.style.transform = "none";
     return;
   }
 
@@ -863,7 +868,7 @@ function renderEvalBar() {
     topEl.style.height = "50%";
     scoreEl.textContent = "—";
     scoreEl.style.color = "#333";
-    scoreEl.style.bottom = "2px";
+    scoreEl.style.bottom = "4px";
     scoreEl.style.top = "auto";
     return;
   }
@@ -884,10 +889,10 @@ function renderEvalBar() {
   scoreEl.textContent = scoreText;
 
   if (whitePct > 50) {
-    scoreEl.style.bottom = "2px"; scoreEl.style.top = "auto";
+    scoreEl.style.bottom = "4px"; scoreEl.style.top = "auto";
     scoreEl.style.color = "#333";
   } else {
-    scoreEl.style.top = "2px"; scoreEl.style.bottom = "auto";
+    scoreEl.style.top = "4px"; scoreEl.style.bottom = "auto";
     scoreEl.style.color = "#ccc";
   }
 }
