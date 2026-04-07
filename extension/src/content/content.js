@@ -1574,6 +1574,7 @@ function clearMoveIndicators() {
     if (bg) bg.remove();
     root.querySelectorAll(".chessbot-eval-badge").forEach((el) => el.remove());
     root.querySelectorAll(".chessbot-training-feedback").forEach((el) => el.remove());
+    root.querySelectorAll(".chessbot-hint-btn").forEach((el) => el.remove());
   }
 }
 
@@ -1745,9 +1746,7 @@ function drawTrainingHint(uci, bestLine, source) {
   svg.id = "chessbot-arrow-svg";
   svg.setAttribute("width", rect.width);
   svg.setAttribute("height", rect.height);
-  svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;cursor:pointer;`;
-  // Allow clicks to advance stage
-  svg.style.pointerEvents = "all";
+  svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
   const hintColor = "rgba(168,85,247,0.5)"; // purple
   const borderColor = "rgba(168,85,247,0.9)";
@@ -1793,22 +1792,8 @@ function drawTrainingHint(uci, bestLine, source) {
   label.textContent = "?";
   svg.appendChild(label);
 
-  // "Click for hint" prompt at bottom of board
-  if (trainingStage < 2) {
-    const hintPrompt = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    hintPrompt.setAttribute("x", rect.width / 2);
-    hintPrompt.setAttribute("y", rect.height - 6);
-    hintPrompt.setAttribute("text-anchor", "middle");
-    hintPrompt.setAttribute("font-size", Math.max(10, sqSize * 0.16));
-    hintPrompt.setAttribute("font-weight", "600");
-    hintPrompt.setAttribute("fill", "rgba(168,85,247,0.85)");
-    hintPrompt.setAttribute("font-family", "'Inter', sans-serif");
-    hintPrompt.setAttribute("paint-order", "stroke");
-    hintPrompt.setAttribute("stroke", "rgba(0,0,0,0.6)");
-    hintPrompt.setAttribute("stroke-width", "2");
-    hintPrompt.textContent = trainingStage === 0 ? "Click for more help" : "Click to reveal move";
-    svg.appendChild(hintPrompt);
-  }
+  // Remove any old hint button
+  // (will create a new one below the board after appending the SVG)
 
   if (trainingStage >= 1) {
     // Stage 1: Also highlight destination file (column) — fill behind pieces
@@ -1843,19 +1828,42 @@ function drawTrainingHint(uci, bestLine, source) {
   scoreBadge.textContent = `${trainingCorrect}/${trainingTotal}`;
   svg.appendChild(scoreBadge);
 
-  // Click handler to advance stages
-  svg.addEventListener("click", (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    trainingStage++;
-    drawTrainingHint(uci, bestLine, source);
-  });
-
   const { target: parent, dx, dy } = getOverlayTarget(board);
   if (!parent) return;
   svg.style.left = `${dx}px`;
   svg.style.top = `${dy}px`;
   parent.appendChild(svg);
+
+  // Hint button below the board
+  if (trainingStage < 2) {
+    const oldBtn = parent.querySelector(".chessbot-hint-btn");
+    if (oldBtn) oldBtn.remove();
+    const btn = document.createElement("button");
+    btn.className = "chessbot-hint-btn";
+    btn.textContent = "Hint";
+    const btnH = Math.max(24, sqSize * 0.35);
+    const btnW = Math.max(60, sqSize * 0.9);
+    const fontSize = Math.max(11, sqSize * 0.16);
+    btn.style.cssText = `
+      position:absolute;
+      left:${dx + rect.width / 2 - btnW / 2}px;
+      top:${dy + rect.height + 6}px;
+      width:${btnW}px; height:${btnH}px;
+      background:rgba(168,85,247,0.9); color:#fff;
+      border:none; border-radius:4px; cursor:pointer;
+      font-size:${fontSize}px; font-weight:700;
+      font-family:'Inter',sans-serif;
+      z-index:1001; pointer-events:auto;
+      box-shadow:0 2px 6px rgba(0,0,0,0.3);
+    `;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      trainingStage++;
+      drawTrainingHint(uci, bestLine, source);
+    });
+    parent.appendChild(btn);
+  }
 }
 
 /**
