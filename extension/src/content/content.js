@@ -687,7 +687,7 @@ function readAndSend() {
   // Client-side eval timeout: if we've been waiting too long for a response,
   // reset state so we can re-analyze on the next board change
   if (pendingEval && evalSentAt && currentDepth !== 0 && (Date.now() - evalSentAt > EVAL_TIMEOUT_MS)) {
-    console.warn(`[chessbot] eval timeout (${EVAL_TIMEOUT_MS}ms) — resetting state`);
+    console.log(`[chessbot] eval timeout (${EVAL_TIMEOUT_MS}ms) — resetting state`);
     pendingEval = false;
     lastSentFen = "";
   }

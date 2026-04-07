@@ -4,19 +4,59 @@ Real-time chess analysis overlay for **chess.com** and **lichess.org**. A Chrome
 
 ## Features
 
-- **Best-move arrows** — green (your turn), red (opponent), gold (opening book)
+### Board Analysis
+- **Best-move arrows** — green (engine), gold (opening book), blue (Lichess Masters DB)
 - **Multi-PV display** — show multiple candidate lines with eval badges
 - **Eval bar** — real-time evaluation bar alongside the board
-- **Opening book** — Polyglot `.bin` book lookups before falling back to engine
+- **Opponent response arrows** — see the likely opponent reply after the best move
+- **Infinite analysis mode** — set depth to 0 for unlimited depth streaming analysis
+- **Endgame tablebase classification** — Win/Draw/Loss labels on the eval bar when ≤7 pieces remain
+- **Display modes** — arrows, boxes, or both
+
+### Opening Books & Databases
+- **Multiple opening books** — select one or more Polyglot `.bin` books simultaneously with merged weight lookups
+- **Lichess Masters DB** — query the Lichess opening explorer for master-level game moves
+- **ECO classification** — opening names shown in the dashboard
+
+### Training & Puzzles
+- **Training mode** — progressive 3-stage hints (origin square → target file → full move) with accuracy tracking
+- **Puzzle page auto-detection** — automatically activates analysis on chess.com puzzle, lesson, and lichess training pages
+- **Training hotkey** — `Alt+T` to toggle training mode on/off
+
+### Engine & Tablebases
+- **Stockfish + Fairy-Stockfish** — standard and variant chess engine support
 - **Syzygy endgame tablebases** — perfect endgame play when configured
-- **Dashboard panel** — full settings UI at `http://localhost:8080` with:
+- **Variant chess support** — Chess960, Atomic, Crazyhouse, King of the Hill, Three-Check, Antichess, Horde, Racing Kings
+
+### Voice & Accessibility
+- **Text-to-speech move announcements** — hear the best move spoken aloud
+- **Voice speed control** — adjustable speech rate
+- **Eval announcements** — optionally speak the evaluation score
+- **Opening announcements** — optionally speak the detected opening name
+
+### Dashboard Panel
+- Full settings UI at `http://localhost:8080` with:
   - Depth, MultiPV, Threads, Hash, Skill Level controls
   - Engine / book / Syzygy file switching
+  - Multiple opening book selection (multi-select dropdown)
+  - Lichess Masters DB toggle
   - Analyze for Me / Opponent / Both
   - Time (ms) and Nodes search limits
-  - Display toggles (arrows, eval bar, voice)
-- **Hotkeys** — `Alt+A` resume, `Alt+S` stop, `Alt+W` analyze for Me, `Alt+Q` analyze for Opponent
-- **ECO classification** — opening names shown in the dashboard
+  - Display mode (arrows / boxes / both)
+  - Opponent response toggle
+  - Training mode toggle
+  - Voice controls (on/off, speed, eval, opening announcements)
+
+### Connection & Navigation
+- **Auto-reconnect** — resilient WebSocket connection with exponential backoff and automatic position resend
+- **SPA navigation detection** — handles chess.com and lichess page transitions without losing state
+
+### Hotkeys
+- `Alt+A` — resume analysis
+- `Alt+S` — stop analysis
+- `Alt+W` — analyze for Me
+- `Alt+Q` — analyze for Opponent
+- `Alt+T` — toggle training mode
 
 ## Architecture
 
@@ -56,27 +96,29 @@ cd chessbot
 
 ### 2. Download Stockfish
 
-Download a Stockfish binary from [stockfishchess.org/download](https://stockfishchess.org/download) and place it in the `engine/stockfish/` directory:
+Download a Stockfish binary from [stockfishchess.org/download](https://stockfishchess.org/download) and place it in the `engine/stockfish/` directory. For variant chess support, also download [Fairy-Stockfish](https://github.com/fairy-stockfish/Fairy-Stockfish/releases):
 
 ```
 engine/
   stockfish/
-    stockfish-windows-x86-64-avx2.exe   # Windows
-    stockfish                             # Linux / macOS
+    stockfish-windows-x86-64-avx2.exe   # Standard chess
+  fairy-stockfish/
+    fairy-stockfish-largeboard_x86-64-bmi2.exe  # Variant chess
 ```
 
-The server auto-detects the first `.exe` in `engine/`. You can also set `STOCKFISH_PATH` as an environment variable.
+The server auto-detects engines in `engine/`. You can switch between them from the dashboard.
 
-### 3. (Optional) Opening book
+### 3. (Optional) Opening books
 
-Place a Polyglot `.bin` opening book in the `books/` directory:
+Place one or more Polyglot `.bin` opening books in the `books/` directory:
 
 ```
 books/
   Perfect2023.bin
+  Cerebellum.bin
 ```
 
-The server auto-detects the first `.bin` file. Set `OPENING_BOOK_PATH` to override.
+Multiple books can be selected simultaneously from the dashboard. The server auto-detects `.bin` files. Set `OPENING_BOOK_PATH` to override the default.
 
 ### 4. (Optional) Syzygy tablebases
 
