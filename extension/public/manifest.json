@@ -15,6 +15,7 @@
         "https://www.chess.com/play/*",
         "https://www.chess.com/live/*",
         "https://www.chess.com/daily/*",
+        "https://www.chess.com/variants/*",
         "https://lichess.org/*"
       ],
       "js": ["content/content.js"],

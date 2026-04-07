@@ -634,6 +634,22 @@
       <!-- Column 1: Analysis -->
       <div class="settings-col">
         <div class="settings-group">
+          <div class="group-title">Variant</div>
+          <select id="variant-select" class="panel-select">
+            <option value="chess" selected>Standard</option>
+            <option value="chess960">Chess960</option>
+            <option value="atomic">Atomic</option>
+            <option value="crazyhouse">Crazyhouse</option>
+            <option value="kingofthehill">King of the Hill</option>
+            <option value="3check">Three-check</option>
+            <option value="antichess">Antichess</option>
+            <option value="horde">Horde</option>
+            <option value="racingkings">Racing Kings</option>
+          </select>
+          <div id="variant-engine-hint" class="sub-label" style="margin-top:4px;color:var(--accent);display:none"></div>
+        </div>
+
+        <div class="settings-group">
           <div class="group-title">Analysis</div>
           <div class="setting-row">
             <span class="setting-label">Depth</span>
@@ -802,6 +818,7 @@ const STORAGE_KEY = "chessbot_settings";
 
 function saveSettings() {
   const data = {
+    variant: document.getElementById("variant-select").value,
     depth: parseInt(document.getElementById("depth-slider").value),
     multiPV: parseInt(document.getElementById("multipv-slider").value),
     runFor: document.querySelector('input[name="run-for"]:checked')?.value || "me",
@@ -828,6 +845,21 @@ function getSavedSettings() {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
+}
+
+// ── Variant hint ─────────────────────────────────────────
+const FAIRY_VARIANTS = ["atomic","crazyhouse","kingofthehill","3check","antichess","horde","racingkings"];
+function updateVariantHint(variant) {
+  const hint = document.getElementById("variant-engine-hint");
+  if (FAIRY_VARIANTS.includes(variant)) {
+    hint.textContent = "Using Fairy-Stockfish";
+    hint.style.display = "block";
+  } else if (variant === "chess960") {
+    hint.textContent = "UCI_Chess960 enabled";
+    hint.style.display = "block";
+  } else {
+    hint.style.display = "none";
+  }
 }
 
 // ── WebSocket ────────────────────────────────────────────
@@ -862,6 +894,10 @@ function connect() {
     }
     if (msg.type === "settings") {
       applySettings(msg);
+    }
+    if (msg.type === "variant_switched") {
+      document.getElementById("variant-select").value = msg.variant;
+      updateVariantHint(msg.variant);
     }
   };
 }
@@ -1295,6 +1331,12 @@ document.getElementById("engine-select").addEventListener("change", (e) => {
   }
   saveSettings();
 });
+document.getElementById("variant-select").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "switch_variant", variant: e.target.value }));
+  }
+  saveSettings();
+});
 document.getElementById("book-select").addEventListener("change", (e) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "switch_book", name: e.target.value }));
@@ -1346,6 +1388,13 @@ function applySettings(msg) {
   });
 
   if (saved) {
+    // Restore variant
+    if (saved.variant) {
+      document.getElementById("variant-select").value = saved.variant;
+      updateVariantHint(saved.variant);
+      ws.send(JSON.stringify({ type: "switch_variant", variant: saved.variant }));
+    }
+
     // Restore saved settings onto controls
     document.getElementById("depth-slider").value = saved.depth;
     document.getElementById("depth-value").textContent = saved.depth;
@@ -1406,6 +1455,10 @@ function applySettings(msg) {
     broadcastSearchLimits();
   } else {
     // No saved settings — use server defaults
+    if (msg.variant) {
+      document.getElementById("variant-select").value = msg.variant;
+      updateVariantHint(msg.variant);
+    }
     if (msg.defaultDepth) {
       document.getElementById("depth-slider").value = msg.defaultDepth;
       document.getElementById("depth-value").textContent = msg.defaultDepth;

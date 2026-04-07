@@ -29,6 +29,10 @@ module.exports = {
     process.env.STOCKFISH_PATH ||
     path.join(__dirname, "..", "engine", "stockfish", "stockfish-windows-x86-64-avx2.exe"),
 
+  fairyStockfishPath:
+    process.env.FAIRY_STOCKFISH_PATH ||
+    path.join(__dirname, "..", "engine", "fairy-stockfish", "fairy-stockfish_x86-64-bmi2.exe"),
+
   // ── Opening Book (Polyglot .bin) ──────────────────────
   // Auto-detects the first .bin in books/ if OPENING_BOOK_PATH is not set.
   openingBookPath:

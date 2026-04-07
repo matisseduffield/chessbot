@@ -30,6 +30,7 @@ let runEngineFor = "me"; // "me" | "opponent" | "both" — which turns to analyz
 let searchMovetime = null; // null = disabled, else ms
 let searchNodes = null; // null = disabled, else node count
 let wsBackoff = 3000; // WebSocket reconnect backoff (ms), resets on connect
+let detectedVariant = null; // chess variant detected from URL
 
 // ── Log buffer ───────────────────────────────────────────────
 const LOG_BUFFER_MAX = 500;
@@ -56,6 +57,34 @@ function detectSite() {
   return null;
 }
 
+/** Detect chess variant from URL path. Returns key like "atomic", "chess960", etc. or null. */
+function detectVariant() {
+  const path = location.pathname.toLowerCase();
+  if (SITE === "lichess") {
+    // Lichess: /atomic/..., /crazyhouse/..., /chess960/..., /kingOfTheHill/..., /threeCheck/..., /antichess/..., /horde/..., /racingKings/...
+    if (path.includes("/atomic")) return "atomic";
+    if (path.includes("/crazyhouse")) return "crazyhouse";
+    if (path.includes("/chess960")) return "chess960";
+    if (path.includes("/kingofthehill")) return "kingofthehill";
+    if (path.includes("/threecheck") || path.includes("/three-check")) return "3check";
+    if (path.includes("/antichess")) return "antichess";
+    if (path.includes("/horde")) return "horde";
+    if (path.includes("/racingkings") || path.includes("/racing-kings")) return "racingkings";
+  }
+  if (SITE === "chesscom") {
+    // Chess.com: /variants/chess960, /variants/atomic, etc. Also /play/chess960, /live/chess960
+    if (path.includes("chess960") || path.includes("960")) return "chess960";
+    if (path.includes("atomic")) return "atomic";
+    if (path.includes("crazyhouse")) return "crazyhouse";
+    if (path.includes("kingofthehill") || path.includes("king-of-the-hill")) return "kingofthehill";
+    if (path.includes("3check") || path.includes("threecheck") || path.includes("three-check")) return "3check";
+    if (path.includes("antichess")) return "antichess";
+    if (path.includes("horde")) return "horde";
+    if (path.includes("racingkings") || path.includes("racing-kings")) return "racingkings";
+  }
+  return null;
+}
+
 if (!SITE) {
   // Not a supported site — bail out
   console.log("[chessbot] unsupported site, content script inactive");
@@ -68,6 +97,8 @@ if (!SITE) {
 let boardReady = false;
 
 function init() {
+  detectedVariant = detectVariant();
+  if (detectedVariant) console.log(`[chessbot] detected variant: ${detectedVariant}`);
   connectWS();
   findBoard();
 }
@@ -223,6 +254,10 @@ function connectWS() {
         resendCurrentPosition();
         return;
       }
+      if (msg.type === "variant_switched") {
+        console.log(`[chessbot] variant switched to: ${msg.variant} (${msg.label})`);
+        return;
+      }
       if (msg.type === "bestmove") {
         pendingEval = false;
         // Null bestmove = engine timeout / error — just unblock
@@ -272,6 +307,7 @@ function sendFen(fen) {
   const msg = { type: "fen", fen, depth: currentDepth };
   if (searchMovetime) msg.movetime = searchMovetime;
   if (searchNodes) msg.nodes = searchNodes;
+  if (detectedVariant) msg.variant = detectedVariant;
   ws.send(JSON.stringify(msg));
   return true;
 }

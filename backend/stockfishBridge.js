@@ -191,6 +191,7 @@ class StockfishBridge {
       "Threads", "Hash", "MultiPV", "Skill Level",
       "UCI_Chess960", "UCI_ShowWDL", "SyzygyPath",
       "SyzygyProbeDepth", "Syzygy50MoveRule", "SyzygyProbeLimit",
+      "UCI_Variant",
     ];
     if (!allowed.includes(name)) {
       console.warn(`[stockfish] option "${name}" not in whitelist, ignoring`);
