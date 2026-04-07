@@ -24,9 +24,11 @@ let isDragging = false; // true while user is dragging a piece
 let waitingForOpponent = false; // true after our move, until board changes again
 let renderGeneration = 0;
 let dragHandlersAttached = false; // prevent duplicate drag listeners on reconnect // increments on each board change — prevents stale overlays
+let lastKnownTurn = null; // last successfully detected turn — for alternation fallback
 let voiceEnabled = false; // TTS — toggled from popup
 let lastSpokenMove = ""; // prevent repeating the same announcement
 let runEngineFor = "me"; // "me" | "opponent" | "both" — which turns to analyze
+let displayMode = "both"; // "arrow" | "box" | "both" — how to show best moves
 let searchMovetime = null; // null = disabled, else ms
 let searchNodes = null; // null = disabled, else node count
 let wsBackoff = 3000; // WebSocket reconnect backoff (ms), resets on connect
@@ -178,11 +180,15 @@ function findBoard() {
   pendingInitialFen = null;
   waitingForOpponent = false;
   _initialStableAttempts = 0;
+  _variantColorMap = null;
+  _variantColorMapKey = null;
+  lastKnownTurn = null;
+  chesscomBoardToFen._diagLogged = false;
   waitForBoard().then((boardEl) => {
-    console.log("[chessbot] board found, starting observer");
+    const rect = (SITE === "chesscom") ? getVisualBoardRect(boardEl) : boardEl.getBoundingClientRect();
+    console.log(`[chessbot] board found: <${boardEl.tagName}> class="${(boardEl.className || '').toString().substring(0, 60)}" visual=${Math.round(rect.width)}x${Math.round(rect.height)} pieces=${boardEl.querySelectorAll(".piece").length}`);
     boardReady = true;
     observeBoard(boardEl);
-    // Read the board immediately — initialRead handles null/retry internally
     initialRead();
   });
 }
@@ -344,6 +350,13 @@ function connectWS() {
           }
         }
         console.log(`[chessbot] bestmove: ${msg.bestmove} (${msg.source})`);
+        // Handle engine reporting no legal move
+        if (!msg.bestmove || msg.bestmove === "(none)" || msg.bestmove === "0000") {
+          console.log("[chessbot] no legal move available");
+          clearArrow();
+          pendingEval = false;
+          return;
+        }
         // Voice announce
         if (voiceEnabled) speakMove(msg);
         const source = msg.source || "engine";
@@ -393,7 +406,6 @@ function sendFen(fen) {
 function waitForBoard() {
   return new Promise((resolve) => {
     let attempts = 0;
-    let diagDumped = false;
     const check = () => {
       const el = getBoardElement();
       if (el) return resolve(el);
@@ -401,50 +413,11 @@ function waitForBoard() {
       if (attempts % 10 === 0) {
         console.log(`[chessbot] waiting for board element... (attempt ${attempts})`);
       }
-      // One-time DOM diagnostic at attempt 20
-      if (attempts === 20 && !diagDumped) {
-        diagDumped = true;
-        const tags = new Set();
-        document.querySelectorAll("*").forEach(el => tags.add(el.tagName.toLowerCase()));
-        const interesting = [...tags].filter(t => t.includes("board") || t.includes("chess") || t.includes("game")).sort();
-        const iframes = document.querySelectorAll("iframe");
-        const boardClasses = document.querySelectorAll("[class*='board']");
-        const boardIds = document.querySelectorAll("[id*='board']");
-        console.log(`[chessbot] DOM diagnostic — URL: ${location.href}`);
-        console.log(`[chessbot] interesting tags: ${interesting.join(", ") || "(none)"}`);
-        console.log(`[chessbot] elements with 'board' in class: ${boardClasses.length}`, [...boardClasses].map(e => `${e.tagName}.${e.className.toString().substring(0,60)}`).slice(0, 10));
-        console.log(`[chessbot] elements with 'board' in id: ${boardIds.length}`, [...boardIds].map(e => `${e.tagName}#${e.id}`).slice(0, 10));
-        console.log(`[chessbot] iframes: ${iframes.length}`, [...iframes].map(f => f.src || "(no src)").slice(0, 5));
-        // Piece detection diagnostics
+      // One-time DOM diagnostic at attempt 40 (~20s) if board still not found
+      if (attempts === 40) {
         const dotPiece = document.querySelectorAll(".piece");
-        const squareClass = document.querySelectorAll("[class*='square-']");
-        const dataPiece = document.querySelectorAll("[data-piece]");
-        const wbPattern = document.querySelectorAll("[class]");
-        let wbCount = 0;
-        for (const el of wbPattern) {
-          if (/\b[wb][prnbqk]\b/.test(el.className.toString())) wbCount++;
-        }
-        console.log(`[chessbot] piece elements: .piece=${dotPiece.length}, [class*='square-']=${squareClass.length}, [data-piece]=${dataPiece.length}, [wb][prnbqk] pattern=${wbCount}`);
-        if (dotPiece.length > 0) {
-          console.log(`[chessbot] sample .piece:`, dotPiece[0].tagName, dotPiece[0].className.toString().substring(0, 100), `parent: ${dotPiece[0].parentElement?.tagName}.${dotPiece[0].parentElement?.className.toString().substring(0, 60)}`);
-        }
-        // Check for TheBoard or variant-specific board containers
-        const theBoard = document.querySelector("[class*='TheBoard']");
-        if (theBoard) {
-          console.log(`[chessbot] TheBoard element:`, theBoard.tagName, theBoard.className.toString().substring(0, 100));
-          console.log(`[chessbot] TheBoard children:`, [...theBoard.children].map(c => `${c.tagName}.${c.className.toString().substring(0, 40)}`).slice(0, 15));
-          const tbRect = theBoard.getBoundingClientRect();
-          console.log(`[chessbot] TheBoard rect: ${tbRect.width}x${tbRect.height} at (${tbRect.left},${tbRect.top})`);
-        }
-        // Check for shadow roots on custom elements
-        document.querySelectorAll("*").forEach(el => {
-          if (el.shadowRoot) {
-            const shadowBoard = el.shadowRoot.querySelector("wc-chess-board, chess-board, [class*='board']");
-            if (shadowBoard) {
-              console.log(`[chessbot] found board-like element inside shadow root of <${el.tagName.toLowerCase()}>:`, shadowBoard);
-            }
-          }
-        });
+        const boardClasses = document.querySelectorAll("[class*='board']");
+        console.log(`[chessbot] DOM diagnostic: .piece=${dotPiece.length} board-class=${boardClasses.length} iframes=${document.querySelectorAll("iframe").length} URL=${location.href}`);
       }
       setTimeout(check, 500);
     };
@@ -698,6 +671,7 @@ function readAndSend() {
     console.log("[chessbot] new game detected — resetting state");
     waitingForOpponent = false;
     lastSentFen = "";
+    lastKnownTurn = null;
   }
 
   // Determine whose turn it is by diffing board positions
@@ -713,14 +687,20 @@ function readAndSend() {
     if (isStartPos) {
       // Starting position is definitely white's turn
       console.log("[chessbot] starting position — assuming white's turn");
+    } else if (lastKnownTurn) {
+      // All detection methods failed — alternate from last known turn
+      const altTurn = lastKnownTurn === "w" ? "b" : "w";
+      console.log(`[chessbot] turn unknown — alternating from last known ${lastKnownTurn} → ${altTurn}`);
+      lastKnownTurn = altTurn;
     } else {
       console.log("[chessbot] turn unknown — skipping this cycle");
       return;
     }
   }
 
-  // Effective turn: use detected turn, or "w" for starting position
-  const effectiveTurn = turn || "w";
+  // Effective turn: use detected turn, alternation fallback, or "w" for starting position
+  const effectiveTurn = turn || lastKnownTurn || "w";
+  if (turn) lastKnownTurn = turn;
 
   // Only show move suggestions based on runEngineFor setting
   const isMyTurn = effectiveTurn === playerColor;
@@ -756,6 +736,72 @@ function readAndSend() {
 
 // ── Chess.com board reader ───────────────────────────────────
 
+/** On chess.com variant pages, the board wrapper (TheBoard-layers) may have 0x0
+ *  dimensions. The visual rect comes from a child element like TheBoard-boardCenter.
+ *  This helper finds the actual visible board rect. */
+function getVisualBoardRect(board) {
+  let rect = board.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) return rect;
+  // Variant page: try known child elements that carry the real dimensions
+  const sizeChildren = [
+    board.querySelector("[class*='boardCenter'], [class*='BoardCenter']"),
+    board.querySelector("[class*='squares'], [class*='Squares']"),
+    board.querySelector("[class*='pieces'], [class*='Pieces']"),
+  ];
+  for (const child of sizeChildren) {
+    if (!child) continue;
+    const cr = child.getBoundingClientRect();
+    if (cr.width > 0 && cr.height > 0) return cr;
+  }
+  // Last resort: find any child with square-ish non-zero dimensions
+  for (const child of board.children) {
+    const cr = child.getBoundingClientRect();
+    if (cr.width > 50 && cr.height > 50) {
+      const ratio = cr.width / cr.height;
+      if (ratio > 0.8 && ratio < 1.2) return cr;
+    }
+  }
+  return rect; // still 0x0 — caller handles null
+}
+
+// Cache for variant page color mapping (data-color value → 'w'/'b')
+let _variantColorMap = null;
+let _variantColorMapKey = null;
+
+function buildVariantColorMap(pieces, boardRect, flipped) {
+  // Group pieces by data-color and compute average Y position
+  // Only consider pieces whose center is within the board area
+  const groups = {};
+  for (const p of pieces) {
+    const dc = p.getAttribute("data-color");
+    if (!dc) continue;
+    const r = p.getBoundingClientRect();
+    if (r.height === 0) continue;
+    const cx = r.left + r.width / 2 - boardRect.left;
+    const cy = r.top + r.height / 2 - boardRect.top;
+    // Skip pieces outside the board area (bank/captured pieces)
+    if (cx < -5 || cx > boardRect.width + 5 || cy < -5 || cy > boardRect.height + 5) continue;
+    if (!groups[dc]) groups[dc] = { sumY: 0, count: 0 };
+    groups[dc].sumY += cy;
+    groups[dc].count++;
+  }
+  const keys = Object.keys(groups);
+  if (keys.length === 2) {
+    const avg0 = groups[keys[0]].sumY / groups[keys[0]].count;
+    const avg1 = groups[keys[1]].sumY / groups[keys[1]].count;
+    // Higher avg Y = bottom of visual board
+    const bottomKey = avg0 > avg1 ? keys[0] : keys[1];
+    const topKey = avg0 > avg1 ? keys[1] : keys[0];
+    // Non-flipped: bottom = white; flipped: bottom = black
+    const whiteKey = flipped ? topKey : bottomKey;
+    const blackKey = flipped ? bottomKey : topKey;
+    return { white: whiteKey, black: blackKey };
+  }
+  // Fallback: sort numerically, lower = white
+  keys.sort((a, b) => parseInt(a) - parseInt(b));
+  return { white: keys[0], black: keys[1] || keys[0] };
+}
+
 function chesscomBoardToFen() {
   const board = getBoardElement();
   if (!board) return null;
@@ -765,7 +811,7 @@ function chesscomBoardToFen() {
   let pieces = findChesscomPieces(board);
   if (!pieces || !pieces.length) return null;
 
-  const boardRect = board.getBoundingClientRect();
+  const boardRect = getVisualBoardRect(board);
   if (boardRect.width === 0) return null;
   const squareW = boardRect.width / 8;
   const squareH = boardRect.height / 8;
@@ -783,19 +829,37 @@ function chesscomBoardToFen() {
     const opacity = parseFloat(getComputedStyle(piece).opacity);
     if (opacity < 0.5) continue;
 
-    // Get piece type from class like "bb", "wp", "bk", etc.
+    // Get piece type — Method A: class like "bb", "wp", "bk", etc.
+    let fenChar;
     const pieceMatch = classes.match(/\b([wb][prnbqk])\b/);
-    if (!pieceMatch) continue;
-
-    const color = pieceMatch[1][0]; // 'w' or 'b'
-    const type = pieceMatch[1][1]; // p, r, n, b, q, k
-    const fenChar = color === "w" ? type.toUpperCase() : type.toLowerCase();
+    if (pieceMatch) {
+      const color = pieceMatch[1][0]; // 'w' or 'b'
+      const type = pieceMatch[1][1]; // p, r, n, b, q, k
+      fenChar = color === "w" ? type.toUpperCase() : type.toLowerCase();
+    } else {
+      // Method B: data-piece + data-color (variant pages)
+      const dp = piece.getAttribute("data-piece");
+      const dc = piece.getAttribute("data-color");
+      if (!dp || !dc) continue;
+      const type = dp.toLowerCase();
+      if (!/^[prnbqk]$/.test(type)) continue;
+      // Build color map once per call (uses position heuristic)
+      const mapKey = `${boardRect.left},${boardRect.top},${flipped}`;
+      if (!_variantColorMap || _variantColorMapKey !== mapKey) {
+        _variantColorMap = buildVariantColorMap(pieces, boardRect, flipped);
+        _variantColorMapKey = mapKey;
+      }
+      const isWhite = (dc === _variantColorMap.white);
+      fenChar = isWhite ? type.toUpperCase() : type.toLowerCase();
+    }
 
     // Primary: use visual position via getBoundingClientRect (always up-to-date)
     const pieceRect = piece.getBoundingClientRect();
     if (pieceRect.width > 0 && squareW > 0) {
       const cx = pieceRect.left + pieceRect.width / 2 - boardRect.left;
       const cy = pieceRect.top + pieceRect.height / 2 - boardRect.top;
+      // Skip pieces outside the board area (bank/captured/off-board pieces)
+      if (cx < -5 || cx > boardRect.width + 5 || cy < -5 || cy > boardRect.height + 5) continue;
       let visFile = Math.floor(cx / squareW);
       let visRank = Math.floor(cy / squareH);
       visFile = Math.max(0, Math.min(7, visFile));
@@ -819,8 +883,35 @@ function chesscomBoardToFen() {
     }
   }
 
-  if (found < 2) return null;
-  return gridToFenBoard(grid);
+  if (found < 2) {
+    // Diagnostic: if we found pieces but couldn't match types, log full element details
+    if (pieces.length >= 2 && found === 0 && !chesscomBoardToFen._diagLogged) {
+      chesscomBoardToFen._diagLogged = true;
+      for (let i = 0; i < Math.min(4, pieces.length); i++) {
+        const p = pieces[i];
+        const cls = typeof p.className === "string" ? p.className : (p.getAttribute("class") || "");
+        const bg = getComputedStyle(p).backgroundImage || "";
+        const attrs = Array.from(p.attributes).map(a => `${a.name}="${a.value}"`).join(" ");
+        console.log(`[chessbot] piece[${i}]: <${p.tagName} ${attrs}> bg=${bg.substring(0, 120)}`);
+      }
+    }
+    return null;
+  }
+  const fen = gridToFenBoard(grid);
+  // Validate king counts (only in the board portion, before castling rights)
+  const boardPart = fen.split(" ")[0];
+  const whiteKings = (boardPart.match(/K/g) || []).length;
+  const blackKings = (boardPart.match(/k/g) || []).length;
+  // In atomic chess kings can be destroyed, so allow 0; otherwise require exactly 1
+  const isAtomic = detectedVariant === "atomic";
+  const validW = isAtomic ? whiteKings <= 1 : whiteKings === 1;
+  const validB = isAtomic ? blackKings <= 1 : blackKings === 1;
+  if (!validW || !validB) {
+    console.log(`[chessbot] invalid FEN: K=${whiteKings} k=${blackKings} — ${fen.substring(0, 60)}`);
+    _variantColorMap = null; // force re-build of color map
+    return null;
+  }
+  return fen;
 }
 
 function isChesscomFlipped(board) {
@@ -862,7 +953,7 @@ function isChesscomFlipped(board) {
   // This is the most robust fallback — works regardless of DOM structure.
   const pieces = findChesscomPieces(board);
   if (pieces && pieces.length >= 4) {
-    const boardRect = board.getBoundingClientRect();
+    const boardRect = getVisualBoardRect(board);
     if (boardRect.height > 0) {
       let whiteSumY = 0, whiteCount = 0;
       let blackSumY = 0, blackCount = 0;
@@ -884,6 +975,34 @@ function isChesscomFlipped(board) {
         // White avg Y < black avg Y → white is higher on screen → board is flipped
         return whiteAvgY < blackAvgY;
       }
+
+      // Method 6b: data-color grouping for variant pages
+      // When class-based [wb] matching fails, use data-color attribute
+      const dcGroups = {};
+      for (const piece of pieces) {
+        const dc = piece.getAttribute("data-color");
+        if (!dc) continue;
+        const r = piece.getBoundingClientRect();
+        if (r.height === 0) continue;
+        const cy = r.top + r.height / 2 - boardRect.top;
+        // Skip pieces outside the board area
+        const pcx = r.left + r.width / 2 - boardRect.left;
+        if (pcx < -5 || pcx > boardRect.width + 5 || cy < -5 || cy > boardRect.height + 5) continue;
+        if (!dcGroups[dc]) dcGroups[dc] = { sumY: 0, count: 0 };
+        dcGroups[dc].sumY += cy;
+        dcGroups[dc].count++;
+      }
+      const dcKeys = Object.keys(dcGroups);
+      if (dcKeys.length === 2) {
+        const dcAvg0 = dcGroups[dcKeys[0]].sumY / dcGroups[dcKeys[0]].count;
+        const dcAvg1 = dcGroups[dcKeys[1]].sumY / dcGroups[dcKeys[1]].count;
+        // Sort keys numerically; assume lower data-color value = white
+        dcKeys.sort((a, b) => parseInt(a) - parseInt(b));
+        const assumedWhiteAvg = dcGroups[dcKeys[0]].sumY / dcGroups[dcKeys[0]].count;
+        const assumedBlackAvg = dcGroups[dcKeys[1]].sumY / dcGroups[dcKeys[1]].count;
+        // If assumed-white has lower avgY → white at top → flipped
+        return assumedWhiteAvg < assumedBlackAvg;
+      }
     }
   }
 
@@ -902,6 +1021,14 @@ function filterGhostPieces(pieces) {
 
 /** Try every known way to find chess.com piece elements. */
 function findChesscomPieces(board) {
+  // Method 0: variant pages — only pieces inside the actual pieces container
+  // (excludes banks, playerboxes, and other non-board pieces)
+  const piecesContainer = board.querySelector("[class*='TheBoard-pieces'], [class*='Pieces-layer']");
+  if (piecesContainer) {
+    let pieces = piecesContainer.querySelectorAll(".piece");
+    if (pieces.length >= 2) return filterGhostPieces(pieces);
+  }
+
   // Method 1: direct children/descendants with .piece class
   let pieces = board.querySelectorAll(".piece");
   if (pieces.length >= 2) return filterGhostPieces(pieces);
@@ -1382,7 +1509,7 @@ function clearArrow() {
 function getBoardGeometry() {
   const board = getBoardElement();
   if (!board) return null;
-  const rect = board.getBoundingClientRect();
+  const rect = (SITE === "chesscom") ? getVisualBoardRect(board) : board.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return null;
   const sqSize = rect.width / 8;
   const flipped =
@@ -1457,6 +1584,31 @@ function drawArrowOnBoard(svg, fromFile, fromRank, toFile, toRank, sqSize, flipp
   svg.appendChild(polygon);
 }
 
+// ── Square highlight drawing ─────────────────────────────────
+
+/** Draw a coloured square highlight (goes behind pieces via low z-index). */
+function drawSquareHighlight(svg, file, rank, sqSize, flipped, color, style) {
+  const tl = squareTopLeft(file, rank, sqSize, flipped);
+  const inset = 2;
+  const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  rect.setAttribute("x", tl.x + inset);
+  rect.setAttribute("y", tl.y + inset);
+  rect.setAttribute("width", sqSize - inset * 2);
+  rect.setAttribute("height", sqSize - inset * 2);
+  rect.setAttribute("rx", "3");
+  rect.setAttribute("fill", color);
+  if (style === "from") {
+    rect.setAttribute("stroke", "rgba(255,255,255,0.7)");
+    rect.setAttribute("stroke-width", "3");
+  } else {
+    // destination: dashed outline
+    rect.setAttribute("stroke", "rgba(255,255,255,0.8)");
+    rect.setAttribute("stroke-width", "3");
+    rect.setAttribute("stroke-dasharray", `${sqSize * 0.12} ${sqSize * 0.08}`);
+  }
+  svg.appendChild(rect);
+}
+
 // ── Single best move: green squares (our move) + red squares (opponent response) ──
 
 function drawSingleMove(uci, bestLine, source) {
@@ -1475,16 +1627,33 @@ function drawSingleMove(uci, bestLine, source) {
   svg.setAttribute("height", rect.height);
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
-  // Green arrow for our best move (gold for book)
   const moveColor = isBook ? "rgba(212,160,23,0.9)" : "hsla(145,100%,50%,0.85)";
-  drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, moveColor);
+  const boxColorFrom = isBook ? "rgba(212,160,23,0.45)" : "rgba(100,235,137,0.45)";
+  const boxColorTo   = isBook ? "rgba(212,160,23,0.55)" : "rgba(100,235,137,0.55)";
 
-  // Red arrow for opponent's predicted response
+  // Box highlights (drawn first so they sit behind arrows)
+  if (displayMode === "box" || displayMode === "both") {
+    drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, boxColorFrom, "from");
+    drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, boxColorTo, "to");
+  }
+
+  // Arrow
+  if (displayMode === "arrow" || displayMode === "both") {
+    drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, moveColor);
+  }
+
+  // Red opponent response
   if (bestLine && bestLine.pv && bestLine.pv.length >= 2) {
     const response = bestLine.pv[1];
     if (response && response.length >= 4) {
       const resp = uciToSquares(response);
-      drawArrowOnBoard(svg, resp.from.file, resp.from.rank, resp.to.file, resp.to.rank, sqSize, flipped, "hsla(350,100%,50%,0.7)", 0.7);
+      if (displayMode === "box" || displayMode === "both") {
+        drawSquareHighlight(svg, resp.from.file, resp.from.rank, sqSize, flipped, "rgba(231,76,60,0.35)", "from");
+        drawSquareHighlight(svg, resp.to.file, resp.to.rank, sqSize, flipped, "rgba(231,76,60,0.45)", "to");
+      }
+      if (displayMode === "arrow" || displayMode === "both") {
+        drawArrowOnBoard(svg, resp.from.file, resp.from.rank, resp.to.file, resp.to.rank, sqSize, flipped, "hsla(350,100%,50%,0.7)", 0.7);
+      }
     }
   }
 
@@ -1572,7 +1741,7 @@ function drawMultiPV(lines) {
   svg.setAttribute("height", rect.height);
   svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
 
-  // Draw arrows for each PV line (best = most opaque, others fade)
+  // Draw highlights + arrows for each PV line
   const parsed = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -1580,7 +1749,21 @@ function drawMultiPV(lines) {
     const { from, to } = uciToSquares(line.move);
     const color = EVAL_COLORS[i] || EVAL_COLORS[EVAL_COLORS.length - 1];
     const opacity = i === 0 ? 0.9 : 0.6;
-    drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, color, opacity);
+    // Box highlights first (behind arrows)
+    if (displayMode === "box" || displayMode === "both") {
+      const boxAlpha = i === 0 ? 0.45 : 0.3;
+      const boxColor = color.replace(")", `,${boxAlpha})`).replace("rgb(", "rgba(");
+      const hexToRgba = (hex, a) => {
+        const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+        return `rgba(${r},${g},${b},${a})`;
+      };
+      const bc = color.startsWith("#") ? hexToRgba(color, boxAlpha) : boxColor;
+      drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, bc, "from");
+      drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, bc, "to");
+    }
+    if (displayMode === "arrow" || displayMode === "both") {
+      drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, color, opacity);
+    }
     parsed.push({ line, from, to, color, dk: `${to.file},${to.rank}` });
   }
 
@@ -1627,15 +1810,24 @@ function drawMultiPV(lines) {
  *  (cg-board → cg-container → cg-wrap introduces fractional pixel drift). */
 function getOverlayTarget(board) {
   if (SITE === "lichess") {
-    // Inject straight into cg-board — pieces are positioned relative to it
     const pos = getComputedStyle(board).position;
     if (pos === "static") board.style.position = "relative";
     return { target: board, dx: 0, dy: 0 };
   }
   // Chess.com: wc-chess-board is a web component — inject into its shadow root
-  // so the overlay renders on top of the board pieces.
   if (board.shadowRoot) {
     return { target: board.shadowRoot, dx: 0, dy: 0 };
+  }
+  // Chess.com variant pages: board wrapper may be 0x0, inject into the visual child
+  const boardRect = board.getBoundingClientRect();
+  if (boardRect.width === 0) {
+    // Find the visual board child for overlay injection
+    const visualChild = board.querySelector("[class*='boardCenter'], [class*='BoardCenter'], [class*='pieces'], [class*='Pieces']");
+    if (visualChild) {
+      const pos = getComputedStyle(visualChild).position;
+      if (pos === "static") visualChild.style.position = "relative";
+      return { target: visualChild, dx: 0, dy: 0 };
+    }
   }
   // Fallback: use the board element itself with position:relative
   const pos = getComputedStyle(board).position;
@@ -1669,7 +1861,8 @@ function drawEvalBar(bestLine, source) {
   const { target: parent, dx, dy } = getOverlayTarget(board);
   if (!parent) return;
 
-  const rect = board.getBoundingClientRect();
+  const rect = (SITE === "chesscom") ? getVisualBoardRect(board) : board.getBoundingClientRect();
+  if (rect.width <= 0) return;
   const playerColor = getPlayerColor();
   const flipped = (SITE === "chesscom" && board && isChesscomFlipped(board)) ||
                   (SITE === "lichess" && isLichessFlipped());
@@ -1923,6 +2116,15 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         readAndSend();
       }
     }
+    if (msg.type === "set_display_mode") {
+      const val = msg.value;
+      if (["arrow", "box", "both"].includes(val)) {
+        displayMode = val;
+        console.log(`[chessbot] display mode: ${displayMode}`);
+        // Re-draw with current data by re-sending position
+        resendCurrentPosition();
+      }
+    }
     if (msg.type === "set_option") {
       // Relay engine setting to backend
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1995,6 +2197,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         `Last sent FEN: ${lastSentFen || "none"}`,
         `Pending eval: ${pendingEval}`,
         `Run engine for: ${runEngineFor}`,
+        `Display mode: ${displayMode}`,
         `Depth: ${currentDepth}`,
         `Search limits: movetime=${searchMovetime} nodes=${searchNodes}`,
         `Piece count: ${lastPieceCount}`,
@@ -2026,6 +2229,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         `Last sent FEN: ${lastSentFen || "none"}`,
         `Pending eval: ${pendingEval}`,
         `Run engine for: ${runEngineFor}`,
+        `Display mode: ${displayMode}`,
         `Depth: ${currentDepth}`,
         `Search limits: movetime=${searchMovetime} nodes=${searchNodes}`,
         `Piece count: ${lastPieceCount}`,

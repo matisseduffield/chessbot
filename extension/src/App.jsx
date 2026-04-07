@@ -5,6 +5,7 @@ function App() {
   const [enabled, setEnabled] = useState(true)
   const [connected, setConnected] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [displayMode, setDisplayMode] = useState('both')
 
   useEffect(() => {
     let ws
@@ -39,6 +40,17 @@ function App() {
 
   const openPanel = () => {
     chrome.tabs.create({ url: 'http://localhost:8080' })
+  }
+
+  const changeDisplayMode = (mode) => {
+    setDisplayMode(mode)
+    chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]?.id) {
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'set_display_mode', value: mode }, () => {
+          void chrome.runtime.lastError
+        })
+      }
+    })
   }
 
   const copyLogs = () => {
@@ -82,6 +94,45 @@ function App() {
           </svg>
           <span>{enabled ? 'Analysis On' : 'Analysis Off'}</span>
         </button>
+
+        <div className="display-mode">
+          <span className="display-mode-label">Display</span>
+          <div className="display-mode-btns">
+            <button
+              className={`mode-btn ${displayMode === 'arrow' ? 'active' : ''}`}
+              onClick={() => changeDisplayMode('arrow')}
+              title="Show arrows only"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="5" y1="12" x2="19" y2="12" />
+                <polyline points="12 5 19 12 12 19" />
+              </svg>
+              Arrow
+            </button>
+            <button
+              className={`mode-btn ${displayMode === 'box' ? 'active' : ''}`}
+              onClick={() => changeDisplayMode('box')}
+              title="Show square highlights only"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+              </svg>
+              Box
+            </button>
+            <button
+              className={`mode-btn ${displayMode === 'both' ? 'active' : ''}`}
+              onClick={() => changeDisplayMode('both')}
+              title="Show both arrows and square highlights"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <line x1="7" y1="12" x2="17" y2="12" />
+                <polyline points="13 8 17 12 13 16" />
+              </svg>
+              Both
+            </button>
+          </div>
+        </div>
 
         <button className="panel-btn" onClick={openPanel}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
