@@ -1573,6 +1573,7 @@ function clearMoveIndicators() {
     const bg = root.getElementById("chessbot-bg-svg");
     if (bg) bg.remove();
     root.querySelectorAll(".chessbot-eval-badge").forEach((el) => el.remove());
+    root.querySelectorAll(".chessbot-training-feedback").forEach((el) => el.remove());
   }
 }
 
@@ -1792,6 +1793,23 @@ function drawTrainingHint(uci, bestLine, source) {
   label.textContent = "?";
   svg.appendChild(label);
 
+  // "Click for hint" prompt at bottom of board
+  if (trainingStage < 2) {
+    const hintPrompt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    hintPrompt.setAttribute("x", rect.width / 2);
+    hintPrompt.setAttribute("y", rect.height - 6);
+    hintPrompt.setAttribute("text-anchor", "middle");
+    hintPrompt.setAttribute("font-size", Math.max(10, sqSize * 0.16));
+    hintPrompt.setAttribute("font-weight", "600");
+    hintPrompt.setAttribute("fill", "rgba(168,85,247,0.85)");
+    hintPrompt.setAttribute("font-family", "'Inter', sans-serif");
+    hintPrompt.setAttribute("paint-order", "stroke");
+    hintPrompt.setAttribute("stroke", "rgba(0,0,0,0.6)");
+    hintPrompt.setAttribute("stroke-width", "2");
+    hintPrompt.textContent = trainingStage === 0 ? "Click for more help" : "Click to reveal move";
+    svg.appendChild(hintPrompt);
+  }
+
   if (trainingStage >= 1) {
     // Stage 1: Also highlight destination file (column) — fill behind pieces
     for (let r = 0; r < 8; r++) {
@@ -1840,21 +1858,125 @@ function drawTrainingHint(uci, bestLine, source) {
   parent.appendChild(svg);
 }
 
+/**
+ * Apply a UCI move to a FEN and return the resulting board part (piece placement only).
+ * Handles standard moves, captures, castling, en passant, and promotions.
+ */
+function applyUciMove(fen, uci) {
+  if (!fen || !uci || uci.length < 4) return null;
+  const parts = fen.split(" ");
+  const board = parts[0];
+  const rows = board.split("/");
+  // Expand FEN rows into 8x8 grid
+  const grid = rows.map(row => {
+    let expanded = "";
+    for (const ch of row) {
+      if (ch >= "1" && ch <= "8") expanded += ".".repeat(parseInt(ch));
+      else expanded += ch;
+    }
+    return expanded.split("");
+  });
+
+  const fc = uci.charCodeAt(0) - 97; // from col 0-7
+  const fr = 8 - parseInt(uci[1]);    // from row 0-7 (0=rank8)
+  const tc = uci.charCodeAt(2) - 97;
+  const tr = 8 - parseInt(uci[3]);
+  const promo = uci.length > 4 ? uci[4] : null;
+
+  const piece = grid[fr][fc];
+  if (piece === ".") return null;
+
+  // Move the piece
+  grid[fr][fc] = ".";
+  let placed = piece;
+  if (promo) placed = piece === piece.toUpperCase() ? promo.toUpperCase() : promo.toLowerCase();
+  grid[tr][tc] = placed;
+
+  // Castling — move the rook
+  if (piece.toLowerCase() === "k" && Math.abs(fc - tc) === 2) {
+    if (tc > fc) { grid[fr][7] = "."; grid[fr][5] = piece === "K" ? "R" : "r"; } // kingside
+    else { grid[fr][0] = "."; grid[fr][3] = piece === "K" ? "R" : "r"; }         // queenside
+  }
+
+  // En passant — remove captured pawn
+  if (piece.toLowerCase() === "p" && fc !== tc && grid[tr][tc] === placed) {
+    // If the destination was empty before we placed our pawn, it's en passant
+    const epRow = piece === "P" ? tr + 1 : tr - 1;
+    if (epRow >= 0 && epRow < 8) {
+      const captured = grid[epRow][tc];
+      if (captured.toLowerCase() === "p" && captured !== piece) grid[epRow][tc] = ".";
+    }
+  }
+
+  // Compress grid back to FEN board part
+  return grid.map(row => {
+    let s = "", empty = 0;
+    for (const c of row) {
+      if (c === ".") empty++;
+      else { if (empty) { s += empty; empty = 0; } s += c; }
+    }
+    if (empty) s += empty;
+    return s;
+  }).join("/");
+}
+
 /** Check if the user's move matched the engine's suggestion */
 function checkTrainingAccuracy(currentFen) {
   if (!trainingMode || !trainingBestMove || !trainingLastFen) return;
-  // Only check if the position changed from the training hint position
   const currentBoard = currentFen.split(" ")[0];
   const trainingBoard = trainingLastFen.split(" ")[0];
-  if (currentBoard === trainingBoard) return; // same position, no move made
+  if (currentBoard === trainingBoard) return; // same position, no move made yet
 
   trainingTotal++;
-  // We can't directly know what move the user played, but if they played
-  // the best move, the resulting position will match what we'd get from the hint FEN
-  // Instead, just show the score badge — accuracy tracking is approximate
+
+  // Apply the engine's best move to the training FEN and compare
+  const expectedBoard = applyUciMove(trainingLastFen, trainingBestMove);
+  const isCorrect = expectedBoard && currentBoard === expectedBoard;
+  if (isCorrect) trainingCorrect++;
+
+  // Show green/red flash feedback
+  showTrainingFeedback(isCorrect);
+
   trainingBestMove = null;
   trainingLastFen = "";
   trainingStage = 0;
+}
+
+/** Flash a green (correct) or red (wrong) border overlay on the board */
+function showTrainingFeedback(correct) {
+  const geo = getBoardGeometry();
+  if (!geo) return;
+  const { board, rect } = geo;
+  const { target: parent, dx, dy } = getOverlayTarget(board);
+  if (!parent) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "chessbot-training-feedback";
+  overlay.style.cssText = `
+    position:absolute; top:${dy}px; left:${dx}px;
+    width:${rect.width}px; height:${rect.height}px;
+    pointer-events:none; z-index:1001;
+    border: 4px solid ${correct ? "rgba(16,185,129,0.9)" : "rgba(231,76,60,0.9)"};
+    border-radius: 4px;
+    background: ${correct ? "rgba(16,185,129,0.12)" : "rgba(231,76,60,0.12)"};
+    transition: opacity 0.6s ease-out;
+    opacity: 1;
+  `;
+
+  // Emoji icon in center
+  const icon = document.createElement("div");
+  icon.style.cssText = `
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    font-size:${Math.max(32, rect.width * 0.1)}px;
+    opacity:0.9; pointer-events:none;
+  `;
+  icon.textContent = correct ? "\u2714" : "\u2718";
+  overlay.appendChild(icon);
+
+  parent.appendChild(overlay);
+  // Fade out and remove
+  setTimeout(() => { overlay.style.opacity = "0"; }, 800);
+  setTimeout(() => { overlay.remove(); }, 1500);
 }
 
 // ── Single best move: green squares (our move) + red squares (opponent response) ──
