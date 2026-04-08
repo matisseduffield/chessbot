@@ -44,6 +44,12 @@ let trainingBestMove = null; // stored best move for comparison
 let trainingCorrect = 0; // number of correct moves
 let trainingTotal = 0; // total moves played
 let trainingLastFen = ""; // FEN when training hint was shown
+let trainingDifficulty = "medium"; // "easy" | "medium" | "hard"
+let trainingStreak = 0; // consecutive correct moves
+let trainingStrict = false; // only accept top move
+let trainingAutoReveal = false; // auto-reveal correct move after user plays
+let trainingSound = true; // play sound on correct/wrong
+let trainingLines = []; // all PV lines for strict=false checking
 
 // ── Log buffer ───────────────────────────────────────────────
 const LOG_BUFFER_MAX = 500;
@@ -193,13 +199,17 @@ let boardReady = false;
 function init() {
   detectedVariant = detectVariant();
   if (detectedVariant) console.log(`[chessbot] detected variant: ${detectedVariant}`);
-  // Restore persisted training mode
+  // Restore persisted training settings
   if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get("chessbot_trainingMode", (result) => {
-      if (result.chessbot_trainingMode) {
-        trainingMode = true;
-        console.log("[chessbot] training mode restored from storage");
-      }
+    chrome.storage.local.get([
+      "chessbot_trainingMode", "chessbot_trainingDifficulty",
+      "chessbot_trainingStrict", "chessbot_trainingAutoReveal", "chessbot_trainingSound"
+    ], (result) => {
+      if (result.chessbot_trainingMode) { trainingMode = true; console.log("[chessbot] training mode restored from storage"); }
+      if (result.chessbot_trainingDifficulty) trainingDifficulty = result.chessbot_trainingDifficulty;
+      if (result.chessbot_trainingStrict !== undefined) trainingStrict = !!result.chessbot_trainingStrict;
+      if (result.chessbot_trainingAutoReveal !== undefined) trainingAutoReveal = !!result.chessbot_trainingAutoReveal;
+      if (result.chessbot_trainingSound !== undefined) trainingSound = !!result.chessbot_trainingSound;
     });
   }
   connectWS();
@@ -387,6 +397,50 @@ function connectWS() {
         resendCurrentPosition();
         return;
       }
+      if (msg.type === "set_training_difficulty") {
+        if (["easy","medium","hard"].includes(msg.value)) {
+          trainingDifficulty = msg.value;
+          if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+            chrome.storage.local.set({ chessbot_trainingDifficulty: trainingDifficulty });
+          }
+          console.log(`[chessbot] training difficulty: ${trainingDifficulty}`);
+          resendCurrentPosition();
+        }
+        return;
+      }
+      if (msg.type === "set_training_auto_reveal") {
+        trainingAutoReveal = !!msg.value;
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ chessbot_trainingAutoReveal: trainingAutoReveal });
+        }
+        return;
+      }
+      if (msg.type === "set_training_sound") {
+        trainingSound = !!msg.value;
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ chessbot_trainingSound: trainingSound });
+        }
+        return;
+      }
+      if (msg.type === "set_training_strict") {
+        trainingStrict = !!msg.value;
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ chessbot_trainingStrict: trainingStrict });
+        }
+        return;
+      }
+      if (msg.type === "reset_training_stats") {
+        trainingCorrect = 0;
+        trainingTotal = 0;
+        trainingStreak = 0;
+        trainingBestMove = null;
+        trainingLastFen = "";
+        trainingStage = 0;
+        trainingLines = [];
+        console.log("[chessbot] training stats reset");
+        resendCurrentPosition();
+        return;
+      }
       if (msg.type === "set_display_mode") {        if (["arrow", "box", "both"].includes(msg.value)) {
           displayMode = msg.value;
           resendCurrentPosition();
@@ -430,8 +484,16 @@ function connectWS() {
         if (trainingMode && !msg.streaming) {
           // Training mode: store best move, show progressive hint
           trainingBestMove = msg.bestmove;
-          trainingStage = 0;
+          trainingLines = lines.slice(0, 3); // store top 3 for non-strict checking
           trainingLastFen = msg.fen || lastSentFen;
+          // Set initial stage based on difficulty
+          if (trainingDifficulty === "easy") {
+            trainingStage = 1; // skip to zone hint
+          } else if (trainingDifficulty === "hard") {
+            trainingStage = 0; // piece hint but no hint button
+          } else {
+            trainingStage = 0; // medium: piece hint with 1 hint available
+          }
           drawTrainingHint(msg.bestmove, bestLine, source);
           drawEvalBar(bestLine, source, msg.tablebase);
         } else if (lines.length > 1) {
@@ -1754,44 +1816,69 @@ function drawTrainingHint(uci, bestLine, source) {
   const zoneColor = "rgba(168,85,247,0.2)";
   const fromPos = squareTopLeft(from.file, from.rank, sqSize, flipped);
 
-  // Stage 0: Source square highlight (which piece to move)
-  // Fill on background layer (behind piece), border + "?" on foreground
-  const bgFill = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-  bgFill.setAttribute("x", fromPos.x);
-  bgFill.setAttribute("y", fromPos.y);
-  bgFill.setAttribute("width", sqSize);
-  bgFill.setAttribute("height", sqSize);
-  bgFill.setAttribute("fill", hintColor);
-  bgSvg.appendChild(bgFill);
+  if (trainingDifficulty === "hard") {
+    // Hard mode: just a subtle purple border around the entire board, no piece hints
+    const boardBorder = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    boardBorder.setAttribute("x", 2);
+    boardBorder.setAttribute("y", 2);
+    boardBorder.setAttribute("width", rect.width - 4);
+    boardBorder.setAttribute("height", rect.height - 4);
+    boardBorder.setAttribute("rx", "4");
+    boardBorder.setAttribute("fill", "none");
+    boardBorder.setAttribute("stroke", "rgba(168,85,247,0.4)");
+    boardBorder.setAttribute("stroke-width", "3");
+    svg.appendChild(boardBorder);
+    // "Your move" text
+    const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    txt.setAttribute("x", rect.width / 2);
+    txt.setAttribute("y", 18);
+    txt.setAttribute("text-anchor", "middle");
+    txt.setAttribute("font-size", Math.max(10, sqSize * 0.14));
+    txt.setAttribute("font-weight", "600");
+    txt.setAttribute("fill", "rgba(168,85,247,0.7)");
+    txt.setAttribute("font-family", "'Inter', sans-serif");
+    txt.textContent = "Find the best move";
+    svg.appendChild(txt);
+  } else {
+    // Easy/Medium: Source square highlight (which piece to move)
+    // Fill on background layer (behind piece), border + "?" on foreground
+    const bgFill = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bgFill.setAttribute("x", fromPos.x);
+    bgFill.setAttribute("y", fromPos.y);
+    bgFill.setAttribute("width", sqSize);
+    bgFill.setAttribute("height", sqSize);
+    bgFill.setAttribute("fill", hintColor);
+    bgSvg.appendChild(bgFill);
 
-  // Border on foreground (on top of piece)
-  const strokeW = Math.max(3, sqSize * 0.06);
-  const inset = strokeW / 2 + 1;
-  const border = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-  border.setAttribute("x", fromPos.x + inset);
-  border.setAttribute("y", fromPos.y + inset);
-  border.setAttribute("width", sqSize - inset * 2);
-  border.setAttribute("height", sqSize - inset * 2);
-  border.setAttribute("rx", "3");
-  border.setAttribute("fill", "none");
-  border.setAttribute("stroke", borderColor);
-  border.setAttribute("stroke-width", strokeW);
-  svg.appendChild(border);
+    // Border on foreground (on top of piece)
+    const strokeW = Math.max(3, sqSize * 0.06);
+    const inset = strokeW / 2 + 1;
+    const border = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    border.setAttribute("x", fromPos.x + inset);
+    border.setAttribute("y", fromPos.y + inset);
+    border.setAttribute("width", sqSize - inset * 2);
+    border.setAttribute("height", sqSize - inset * 2);
+    border.setAttribute("rx", "3");
+    border.setAttribute("fill", "none");
+    border.setAttribute("stroke", borderColor);
+    border.setAttribute("stroke-width", strokeW);
+    svg.appendChild(border);
 
-  // "?" label on source square (foreground, on top)
-  const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-  label.setAttribute("x", fromPos.x + sqSize / 2);
-  label.setAttribute("y", fromPos.y + sqSize - 4);
-  label.setAttribute("text-anchor", "middle");
-  label.setAttribute("font-size", Math.max(12, sqSize * 0.22));
-  label.setAttribute("font-weight", "900");
-  label.setAttribute("fill", "#fff");
-  label.setAttribute("font-family", "monospace");
-  label.setAttribute("paint-order", "stroke");
-  label.setAttribute("stroke", "rgba(0,0,0,0.5)");
-  label.setAttribute("stroke-width", "3");
-  label.textContent = "?";
-  svg.appendChild(label);
+    // "?" label on source square (foreground, on top)
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", fromPos.x + sqSize / 2);
+    label.setAttribute("y", fromPos.y + sqSize - 4);
+    label.setAttribute("text-anchor", "middle");
+    label.setAttribute("font-size", Math.max(12, sqSize * 0.22));
+    label.setAttribute("font-weight", "900");
+    label.setAttribute("fill", "#fff");
+    label.setAttribute("font-family", "monospace");
+    label.setAttribute("paint-order", "stroke");
+    label.setAttribute("stroke", "rgba(0,0,0,0.5)");
+    label.setAttribute("stroke-width", "3");
+    label.textContent = "?";
+    svg.appendChild(label);
+  } // end easy/medium source square block
 
   // Remove any old hint button
   // (will create a new one below the board after appending the SVG)
@@ -1901,8 +1988,10 @@ function drawTrainingHint(uci, bestLine, source) {
   // Remove old hint button and score badge
   parent.querySelectorAll(".chessbot-hint-btn, .chessbot-score-badge").forEach(el => el.remove());
 
-  // Hint button below the board (square)
-  if (trainingStage < 2) {
+  // Hint button below the board — hidden in hard mode, limited in easy mode
+  // Hard: no hints at all. Easy: starts at stage 1, 1 hint to reveal. Medium: starts at 0, 2 hints.
+  const canHint = trainingDifficulty !== "hard" && trainingStage < 2;
+  if (canHint) {
     const btnSize = Math.max(28, sqSize * 0.42);
     const fontSize = Math.max(11, btnSize * 0.4);
     const btn = document.createElement("button");
@@ -1939,6 +2028,27 @@ function drawTrainingHint(uci, bestLine, source) {
       left:${dx + rect.width / 2 + btnSize / 2 + 8}px;
       top:${dy + rect.height + 6}px;
       height:${btnSize}px;
+      display:flex; align-items:center;
+      font-size:${scoreFontSize}px; font-weight:700;
+      font-family:'Inter',sans-serif;
+      color:rgba(168,85,247,0.9);
+      z-index:1001; pointer-events:none;
+      text-shadow:0 1px 3px rgba(0,0,0,0.4);
+    `;
+    scoreEl.textContent = `${trainingCorrect}/${trainingTotal}`;
+    parent.appendChild(scoreEl);
+  } else if (trainingStage < 2) {
+    // Hard mode: still show score badge (centered below board)
+    const btnSize = Math.max(28, sqSize * 0.42);
+    const scoreEl = document.createElement("span");
+    scoreEl.className = "chessbot-score-badge";
+    const scoreFontSize = Math.max(13, btnSize * 0.45);
+    scoreEl.style.cssText = `
+      position:absolute;
+      left:${dx + rect.width / 2}px;
+      top:${dy + rect.height + 6}px;
+      height:${btnSize}px;
+      transform:translateX(-50%);
       display:flex; align-items:center;
       font-size:${scoreFontSize}px; font-weight:700;
       font-family:'Inter',sans-serif;
@@ -2024,15 +2134,99 @@ function checkTrainingAccuracy(currentFen) {
 
   // Apply the engine's best move to the training FEN and compare
   const expectedBoard = applyUciMove(trainingLastFen, trainingBestMove);
-  const isCorrect = expectedBoard && currentBoard === expectedBoard;
-  if (isCorrect) trainingCorrect++;
+  let isCorrect = expectedBoard && currentBoard === expectedBoard;
 
-  // Show green/red flash feedback
+  // Non-strict mode: also accept any of the top 3 engine moves
+  if (!isCorrect && !trainingStrict && trainingLines.length > 1) {
+    for (let i = 1; i < trainingLines.length && i < 3; i++) {
+      const altMove = trainingLines[i]?.pv?.[0];
+      if (altMove) {
+        const altBoard = applyUciMove(trainingLastFen, altMove);
+        if (altBoard && currentBoard === altBoard) { isCorrect = true; break; }
+      }
+    }
+  }
+
+  if (isCorrect) {
+    trainingCorrect++;
+    trainingStreak++;
+  } else {
+    trainingStreak = 0;
+  }
+
+  // Show visual + audio feedback
   showTrainingFeedback(isCorrect);
+  if (trainingSound) playTrainingSound(isCorrect);
+
+  // Broadcast stats to panel
+  broadcastTrainingStats();
+
+  // Auto-reveal: show the correct move briefly after user plays
+  if (trainingAutoReveal && !isCorrect && trainingBestMove) {
+    const revealMove = trainingBestMove;
+    const revealFen = trainingLastFen;
+    // Delay slightly so user sees the feedback flash first
+    setTimeout(() => {
+      const bestLine = trainingLines[0] || null;
+      drawSingleMove(revealMove, bestLine, "engine");
+      // Clear after 2 seconds
+      setTimeout(() => clearArrow(), 2500);
+    }, 600);
+  }
 
   trainingBestMove = null;
   trainingLastFen = "";
   trainingStage = 0;
+  trainingLines = [];
+}
+
+/** Broadcast training stats to panel via WebSocket */
+function broadcastTrainingStats() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: "broadcast",
+      payload: {
+        type: "training_stats_update",
+        correct: trainingCorrect,
+        total: trainingTotal,
+        streak: trainingStreak,
+      }
+    }));
+  }
+}
+
+/** Play a simple tone for correct/wrong using Web Audio API */
+function playTrainingSound(correct) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.value = 0.15;
+    if (correct) {
+      // Rising pleasant tone
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(523, ctx.currentTime); // C5
+      osc.frequency.setValueAtTime(659, ctx.currentTime + 0.1); // E5
+      osc.frequency.setValueAtTime(784, ctx.currentTime + 0.2); // G5
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.4);
+    } else {
+      // Low buzzy tone
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(200, ctx.currentTime);
+      osc.frequency.setValueAtTime(150, ctx.currentTime + 0.15);
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.3);
+    }
+    // Cleanup
+    osc.onended = () => ctx.close();
+  } catch {}
 }
 
 /** Flash a green (correct) or red (wrong) border overlay on the board */

@@ -737,6 +737,40 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--bg-600); border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--bg-500); }
+
+  /* ── Training Section ── */
+  .training-stats { margin-top: 10px; }
+  .stat-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--text-200);
+  }
+  .stat-label { font-weight: 500; color: var(--text-300); }
+  .stat-value { font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .accuracy-bar-wrap {
+    flex: 1;
+    margin: 0 10px;
+    height: 6px;
+    background: var(--bg-700);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .accuracy-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 0.4s ease;
+  }
+  .streak-fire { color: var(--orange); font-size: 13px; }
+  .training-disabled-overlay {
+    opacity: 0.35;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  .training-enabled { opacity: 1; pointer-events: auto; }
 </style>
 </head>
 <body>
@@ -880,6 +914,69 @@
           </div>
           <button id="btn-clear-hash" class="panel-btn" style="margin-top:8px">Clear Hash</button>
         </div>
+
+        <div class="settings-group">
+          <div class="group-title">Training</div>
+          <label class="toggle-row">
+            <span class="toggle-switch">
+              <input type="checkbox" id="chk-training-mode">
+              <span class="toggle-track"></span>
+            </span>
+            <span class="toggle-label">Training mode</span>
+          </label>
+
+          <div id="training-options" class="training-disabled-overlay">
+            <div class="sub-label" style="margin-top:10px">Difficulty</div>
+            <div class="radio-group">
+              <label><input type="radio" name="training-difficulty" value="easy"><span>Easy</span></label>
+              <label><input type="radio" name="training-difficulty" value="medium" checked><span>Medium</span></label>
+              <label><input type="radio" name="training-difficulty" value="hard"><span>Hard</span></label>
+            </div>
+
+            <div class="sub-label" style="margin-top:12px">Live Stats</div>
+            <div class="training-stats">
+              <div class="stat-row">
+                <span class="stat-label">Accuracy</span>
+                <div class="accuracy-bar-wrap">
+                  <div class="accuracy-bar-fill" id="training-accuracy-bar" style="width:0%"></div>
+                </div>
+                <span class="stat-value" id="training-accuracy-pct">0%</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">Streak</span>
+                <span><span class="streak-fire" id="training-streak-icon" style="display:none">🔥</span> <span class="stat-value" id="training-streak">0</span></span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">Score</span>
+                <span class="stat-value"><span id="training-correct">0</span> / <span id="training-total">0</span></span>
+              </div>
+            </div>
+            <button id="btn-reset-training" class="panel-btn" style="margin-top:6px;font-size:11px">Reset Stats</button>
+
+            <div class="sub-label" style="margin-top:12px">Options</div>
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="chk-training-auto-reveal">
+                <span class="toggle-track"></span>
+              </span>
+              <span class="toggle-label">Auto-reveal after move</span>
+            </label>
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="chk-training-sound" checked>
+                <span class="toggle-track"></span>
+              </span>
+              <span class="toggle-label">Sound effects</span>
+            </label>
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="chk-training-strict">
+                <span class="toggle-track"></span>
+              </span>
+              <span class="toggle-label">Strict (top move only)</span>
+            </label>
+          </div>
+        </div>
       </div>
 
       <!-- Column 3: Display + Resources -->
@@ -936,14 +1033,6 @@
             <label><input type="radio" name="display-mode" value="box"><span>Box</span></label>
             <label><input type="radio" name="display-mode" value="both" checked><span>Both</span></label>
           </div>
-          <div class="sub-label" style="margin-top:10px">Training</div>
-          <label class="toggle-row">
-            <span class="toggle-switch">
-              <input type="checkbox" id="chk-training-mode">
-              <span class="toggle-track"></span>
-            </span>
-            <span class="toggle-label">Training mode</span>
-          </label>
           <div class="sub-label" style="margin-top:10px">Voice Speed</div>
           <div class="slider-row">
             <input type="range" class="panel-slider" id="voice-speed-slider" min="0.5" max="2" step="0.1" value="1.1">
@@ -1028,6 +1117,10 @@ function saveSettings() {
     voiceOpening: document.getElementById("chk-voice-opening").checked,
     voiceSpeed: parseFloat(document.getElementById("voice-speed-slider").value),
     trainingMode: document.getElementById("chk-training-mode").checked,
+    trainingDifficulty: document.querySelector('input[name="training-difficulty"]:checked')?.value || "medium",
+    trainingAutoReveal: document.getElementById("chk-training-auto-reveal").checked,
+    trainingSound: document.getElementById("chk-training-sound").checked,
+    trainingStrict: document.getElementById("chk-training-strict").checked,
     evalbar: document.getElementById("chk-evalbar").checked,
     displayMode: document.querySelector('input[name="display-mode"]:checked')?.value || "both",
     pvs: document.getElementById("chk-pvs").checked,
@@ -1102,6 +1195,17 @@ function connect() {
     if (msg.type === "server_logs" && pendingLogResolve) {
       pendingLogResolve(msg.logs);
       pendingLogResolve = null;
+    }
+    if (msg.type === "training_stats_update") {
+      const s = msg;
+      document.getElementById("training-correct").textContent = s.correct || 0;
+      document.getElementById("training-total").textContent = s.total || 0;
+      document.getElementById("training-streak").textContent = s.streak || 0;
+      const pct = s.total > 0 ? Math.round((s.correct / s.total) * 100) : 0;
+      document.getElementById("training-accuracy-pct").textContent = pct + "%";
+      document.getElementById("training-accuracy-bar").style.width = pct + "%";
+      const fireIcon = document.getElementById("training-streak-icon");
+      fireIcon.style.display = (s.streak >= 3) ? "inline" : "none";
     }
   };
 }
@@ -1514,10 +1618,55 @@ document.getElementById("voice-speed-slider").addEventListener("input", (e) => {
   saveSettings();
 });
 document.getElementById("chk-training-mode").addEventListener("change", (e) => {
+  const opts = document.getElementById("training-options");
+  if (e.target.checked) {
+    opts.classList.remove("training-disabled-overlay");
+    opts.classList.add("training-enabled");
+  } else {
+    opts.classList.remove("training-enabled");
+    opts.classList.add("training-disabled-overlay");
+  }
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_mode", value: e.target.checked } }));
   }
   saveSettings();
+});
+document.querySelectorAll('input[name="training-difficulty"]').forEach(r => {
+  r.addEventListener("change", (e) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_difficulty", value: e.target.value } }));
+    }
+    saveSettings();
+  });
+});
+document.getElementById("chk-training-auto-reveal").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_auto_reveal", value: e.target.checked } }));
+  }
+  saveSettings();
+});
+document.getElementById("chk-training-sound").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_sound", value: e.target.checked } }));
+  }
+  saveSettings();
+});
+document.getElementById("chk-training-strict").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_strict", value: e.target.checked } }));
+  }
+  saveSettings();
+});
+document.getElementById("btn-reset-training").addEventListener("click", () => {
+  document.getElementById("training-accuracy-bar").style.width = "0%";
+  document.getElementById("training-accuracy-pct").textContent = "0%";
+  document.getElementById("training-streak").textContent = "0";
+  document.getElementById("training-streak-icon").style.display = "none";
+  document.getElementById("training-correct").textContent = "0";
+  document.getElementById("training-total").textContent = "0";
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "reset_training_stats" } }));
+  }
 });
 
 // Time limit
@@ -1752,6 +1901,21 @@ function applySettings(msg) {
     }
     if (saved.trainingMode !== undefined) {
       document.getElementById("chk-training-mode").checked = saved.trainingMode;
+      const opts = document.getElementById("training-options");
+      if (saved.trainingMode) { opts.classList.remove("training-disabled-overlay"); opts.classList.add("training-enabled"); }
+    }
+    if (saved.trainingDifficulty) {
+      const r = document.querySelector(`input[name="training-difficulty"][value="${saved.trainingDifficulty}"]`);
+      if (r) r.checked = true;
+    }
+    if (saved.trainingAutoReveal !== undefined) {
+      document.getElementById("chk-training-auto-reveal").checked = saved.trainingAutoReveal;
+    }
+    if (saved.trainingSound !== undefined) {
+      document.getElementById("chk-training-sound").checked = saved.trainingSound;
+    }
+    if (saved.trainingStrict !== undefined) {
+      document.getElementById("chk-training-strict").checked = saved.trainingStrict;
     }
 
     // Book / Syzygy — only restore for standard chess
@@ -1794,6 +1958,10 @@ function applySettings(msg) {
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_opening", value: !!saved.voiceOpening } }));
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_speed", value: saved.voiceSpeed || 1.1 } }));
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_mode", value: !!saved.trainingMode } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_difficulty", value: saved.trainingDifficulty || "medium" } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_auto_reveal", value: !!saved.trainingAutoReveal } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_sound", value: saved.trainingSound !== undefined ? saved.trainingSound : true } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_strict", value: !!saved.trainingStrict } }));
     broadcastSearchLimits();
   } else {
     // No saved settings — use server defaults
