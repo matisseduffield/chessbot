@@ -199,7 +199,13 @@ let boardReady = false;
 function init() {
   detectedVariant = detectVariant();
   if (detectedVariant) console.log(`[chessbot] detected variant: ${detectedVariant}`);
-  // Restore persisted training settings
+
+  function startAfterRestore() {
+    connectWS();
+    findBoard();
+  }
+
+  // Restore persisted training settings before connecting
   if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
     chrome.storage.local.get([
       "chessbot_trainingMode", "chessbot_trainingDifficulty",
@@ -210,10 +216,11 @@ function init() {
       if (result.chessbot_trainingStrict !== undefined) trainingStrict = !!result.chessbot_trainingStrict;
       if (result.chessbot_trainingAutoReveal !== undefined) trainingAutoReveal = !!result.chessbot_trainingAutoReveal;
       if (result.chessbot_trainingSound !== undefined) trainingSound = !!result.chessbot_trainingSound;
+      startAfterRestore();
     });
+  } else {
+    startAfterRestore();
   }
-  connectWS();
-  findBoard();
 }
 
 function findBoard() {
