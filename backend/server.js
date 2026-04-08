@@ -354,7 +354,7 @@ async function main() {
           }
         }
 
-        const depth = msg.depth !== undefined && msg.depth !== null ? Number(msg.depth) : config.defaultDepth;
+        const depth = config.defaultDepth;
         const searchOptions = {};
         if (msg.movetime) searchOptions.movetime = Number(msg.movetime);
         if (msg.nodes) searchOptions.nodes = Number(msg.nodes);
