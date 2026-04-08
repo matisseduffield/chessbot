@@ -1537,7 +1537,12 @@ document.getElementById("depth-slider").addEventListener("input", (e) => {
   document.getElementById("depth-value").textContent = e.target.value === "0" ? "∞" : e.target.value;
 });
 document.getElementById("depth-slider").addEventListener("change", (e) => {
-  sendOpt("depth", parseInt(e.target.value));
+  const depth = parseInt(e.target.value);
+  sendOpt("depth", depth);
+  // Broadcast to content scripts so they use the new depth for future FEN requests
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_depth", value: depth } }));
+  }
   saveSettings();
 });
 
@@ -1938,6 +1943,8 @@ function applySettings(msg) {
 
     // Re-send saved settings to server
     sendOpt("depth", saved.depth);
+    // Broadcast depth to content scripts
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_depth", value: saved.depth } }));
     sendOpt("MultiPV", saved.multiPV);
     sendOpt("Threads", saved.threads);
     sendOpt("Hash", parseInt(saved.hash));

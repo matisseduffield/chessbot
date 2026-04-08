@@ -15,7 +15,12 @@ let observer = null;
 let debounceTimer = null;
 let pendingEval = false; // true while waiting for a bestmove response
 let evalSentAt = 0;     // timestamp when last eval was sent — for client-side timeout
-const EVAL_TIMEOUT_MS = 25000; // 25s client-side timeout for eval responses
+const EVAL_TIMEOUT_BASE_MS = 25000; // base timeout for depth ≤15
+/** Dynamic eval timeout: scales with depth (min 25s, +3s per depth above 15, max 180s) */
+function getEvalTimeout() {
+  if (currentDepth === 0) return Infinity; // infinite analysis — no timeout
+  return Math.min(180000, Math.max(EVAL_TIMEOUT_BASE_MS, EVAL_TIMEOUT_BASE_MS + (currentDepth - 15) * 3000));
+}
 let lastPieceCount = 0;  // to detect animation mid-flight (piece count changes)
 let initialReadDone = false; // guard against duplicate initialRead calls
 let pendingInitialFen = null; // FEN read before WS was ready, to send on connect
@@ -394,6 +399,12 @@ function connectWS() {
       if (msg.type === "set_voice_eval") { voiceEvalEnabled = !!msg.value; return; }
       if (msg.type === "set_voice_opening") { voiceOpeningEnabled = !!msg.value; return; }
       if (msg.type === "set_voice_speed") { voiceSpeed = Number(msg.value) || 1.1; return; }
+      if (msg.type === "set_depth") {
+        currentDepth = Number(msg.value) || 15;
+        console.log(`[chessbot] depth set to ${currentDepth} (from panel)`);
+        resendCurrentPosition();
+        return;
+      }
       if (msg.type === "set_training_mode") {
         trainingMode = !!msg.value;
         trainingStage = 0;
@@ -451,7 +462,8 @@ function connectWS() {
         resendCurrentPosition();
         return;
       }
-      if (msg.type === "set_display_mode") {        if (["arrow", "box", "both"].includes(msg.value)) {
+      if (msg.type === "set_display_mode") {
+        if (["arrow", "box", "both"].includes(msg.value)) {
           displayMode = msg.value;
           resendCurrentPosition();
         }
@@ -774,8 +786,8 @@ function readAndSend() {
 
   // Client-side eval timeout: if we've been waiting too long for a response,
   // reset state so we can re-analyze on the next board change
-  if (pendingEval && evalSentAt && currentDepth !== 0 && (Date.now() - evalSentAt > EVAL_TIMEOUT_MS)) {
-    console.log(`[chessbot] eval timeout (${EVAL_TIMEOUT_MS}ms) — resetting state`);
+  if (pendingEval && evalSentAt && currentDepth !== 0 && (Date.now() - evalSentAt > getEvalTimeout())) {
+    console.log(`[chessbot] eval timeout (${getEvalTimeout()}ms) — resetting state`);
     pendingEval = false;
     lastSentFen = "";
   }

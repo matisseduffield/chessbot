@@ -141,13 +141,14 @@ class StockfishBridge {
       this._isInfinite = isInfinite;
       this._onInfoCallback = options.onInfo || null;
 
-      // Safety-net timeout: if Stockfish doesn't respond within 20s, force resolve
+      // Safety-net timeout: scale with depth (min 20s, +3s per depth above 15, max 180s)
       // Skip for infinite analysis (engine runs until explicitly stopped)
       clearTimeout(this._evalTimeout);
       if (!isInfinite) {
+        const timeoutMs = Math.min(180_000, Math.max(20_000, 20_000 + (depth - 15) * 3_000));
         this._evalTimeout = setTimeout(() => {
         if (this._pendingResolve) {
-          console.warn("[stockfish] evaluation timeout — forcing stop");
+          console.warn(`[stockfish] evaluation timeout (${timeoutMs}ms) — forcing stop`);
           this._send("stop");
           // If stop doesn't produce bestmove within 2s, force-resolve and restart
           this._stopFallback = setTimeout(() => {
@@ -162,7 +163,7 @@ class StockfishBridge {
             }
           }, 2000);
         }
-      }, 20_000);
+      }, timeoutMs);
       }
 
       this._send(`position fen ${fen}`);

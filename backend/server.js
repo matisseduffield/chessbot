@@ -178,6 +178,8 @@ async function main() {
           return { switched: false, error: `Engine binary not found: ${newPath}` };
         }
         console.log(`[server] variant ${variantKey} requires ${needEngine} engine — switching`);
+        // Preserve user settings (Threads, Hash, MultiPV, etc.) across engine switch
+        const savedSettings = engine.getSettings();
         engine.stop();
         const oldPath = config.stockfishPath;
         config.stockfishPath = newPath;
@@ -191,6 +193,12 @@ async function main() {
           engine = new StockfishBridge();
           await engine.start();
           return { switched: false, error: `Failed to start ${needEngine}: ${err.message}` };
+        }
+        // Re-apply preserved settings to new engine
+        for (const [k, v] of Object.entries(savedSettings)) {
+          if (k !== "UCI_Variant" && k !== "UCI_Chess960" && k !== "SyzygyPath") {
+            engine.setOption(k, v);
+          }
         }
         currentEngineType = needEngine;
       }
@@ -303,6 +311,11 @@ async function main() {
   wss.on("connection", (ws, req) => {
     const remote = req.socket.remoteAddress;
     console.log(`[server] client connected (${remote})`);
+
+    // Send current depth setting so newly-connected clients sync immediately
+    if (config.defaultDepth !== undefined) {
+      safeSend(ws, { type: "set_depth", value: config.defaultDepth });
+    }
 
     // Per-client generation counter — prevents cross-client eval interference
     let evalGeneration = 0;
@@ -602,10 +615,18 @@ async function main() {
         }
         console.log(`[server] switching engine to: ${found.name}`);
         try {
+          // Preserve user settings across engine switch
+          const savedSettings = engine.getSettings();
           engine.stop();
           config.stockfishPath = found.path;
           engine = new StockfishBridge();
           await engine.start();
+          // Re-apply preserved settings to new engine
+          for (const [k, v] of Object.entries(savedSettings)) {
+            if (k !== "UCI_Variant" && k !== "UCI_Chess960" && k !== "SyzygyPath") {
+              engine.setOption(k, v);
+            }
+          }
           // Detect engine type from binary name
           currentEngineType = found.name.toLowerCase().includes("fairy") ? "fairy" : "stockfish";
           // Re-apply variant UCI options if using fairy engine
