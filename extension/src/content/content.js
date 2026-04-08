@@ -50,6 +50,7 @@ let trainingStrict = false; // only accept top move
 let trainingAutoReveal = false; // auto-reveal correct move after user plays
 let trainingSound = true; // play sound on correct/wrong
 let trainingLines = []; // all PV lines for strict=false checking
+let trainingRevealActive = false; // true while auto-reveal arrow is showing
 
 // ── Log buffer ───────────────────────────────────────────────
 const LOG_BUFFER_MAX = 500;
@@ -397,6 +398,7 @@ function connectWS() {
         trainingMode = !!msg.value;
         trainingStage = 0;
         trainingBestMove = null;
+        trainingRevealActive = false;
         console.log(`[chessbot] training mode: ${trainingMode}`);
         if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
           chrome.storage.local.set({ chessbot_trainingMode: trainingMode });
@@ -444,6 +446,7 @@ function connectWS() {
         trainingLastFen = "";
         trainingStage = 0;
         trainingLines = [];
+        trainingRevealActive = false;
         console.log("[chessbot] training stats reset");
         resendCurrentPosition();
         return;
@@ -530,6 +533,10 @@ function connectWS() {
 }
 
 function sendFen(fen) {
+  if (trainingRevealActive) {
+    console.log("[chessbot] sendFen skipped — auto-reveal active");
+    return false;
+  }
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     console.log(`[chessbot] sendFen skipped — WS not open (state=${ws ? ws.readyState : "null"})`);
     return false;
@@ -2168,16 +2175,21 @@ function checkTrainingAccuracy(currentFen) {
   // Broadcast stats to panel
   broadcastTrainingStats();
 
-  // Auto-reveal: show the correct move briefly after user plays
+  // Auto-reveal: show the correct move briefly after user plays wrong
   if (trainingAutoReveal && !isCorrect && trainingBestMove) {
     const revealMove = trainingBestMove;
-    const revealFen = trainingLastFen;
+    const revealLines = trainingLines.slice();
+    trainingRevealActive = true;
     // Delay slightly so user sees the feedback flash first
     setTimeout(() => {
-      const bestLine = trainingLines[0] || null;
+      const bestLine = revealLines[0] || null;
       drawSingleMove(revealMove, bestLine, "engine");
-      // Clear after 2 seconds
-      setTimeout(() => clearArrow(), 2500);
+      // Clear after 2.5 seconds and resume analysis
+      setTimeout(() => {
+        trainingRevealActive = false;
+        clearArrow();
+        resendCurrentPosition();
+      }, 2500);
     }, 600);
   }
 
