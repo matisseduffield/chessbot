@@ -194,7 +194,7 @@ class StockfishBridge {
           this._pendingPV = null;
           resolve();
         }
-      }, 500);
+      }, 1500);
     });
   }
 
@@ -232,6 +232,20 @@ class StockfishBridge {
 
   /** Stop the engine process. */
   stop() {
+    // Clear any in-flight timers to prevent them firing on a dead process
+    clearTimeout(this._evalTimeout);
+    clearTimeout(this._stopFallback);
+    clearTimeout(this._abortTimeout);
+    if (this._pendingResolve) {
+      const res = this._pendingResolve;
+      this._pendingResolve = null;
+      this._pendingPV = null;
+      res({ bestmove: null, lines: [] });
+    }
+    if (this._abortResolve) {
+      this._abortResolve();
+      this._abortResolve = null;
+    }
     if (this.process) {
       this._stopping = true;
       this._send("quit");
@@ -253,11 +267,23 @@ class StockfishBridge {
       this.ready = false;
       try {
         await this.start();
-        // Re-apply saved settings
+        // Re-apply saved settings after start() (which already completed UCI handshake)
         for (const [name, value] of Object.entries(this._settings)) {
           this._send(`setoption name ${name} value ${value}`);
         }
-        this._send("isready");
+        // Wait for engine to acknowledge all options before declaring ready
+        await new Promise((resolve) => {
+          this._send("isready");
+          const prev = this._handleLine;
+          this._handleLine = (line) => {
+            if (line === "readyok") {
+              this._handleLine = prev;
+              resolve();
+            } else {
+              prev(line);
+            }
+          };
+        });
         console.log("[stockfish] engine restarted successfully");
       } catch (err) {
         console.error("[stockfish] failed to restart:", err.message);
@@ -279,7 +305,12 @@ class StockfishBridge {
   _defaultLineHandler(line) {
     // Collect info lines with multipv data
     if (line.startsWith("info") && line.includes(" pv ")) {
-      console.log(`[stockfish] ${line}`);
+      // Only log info lines at significant depth intervals to reduce log noise
+      const _depthMatch = line.match(/\bdepth (\d+)/);
+      const _d = _depthMatch ? parseInt(_depthMatch[1], 10) : 0;
+      if (_d <= 4 || _d % 3 === 0 || _d >= (this._pendingTargetDepth || 15) - 1) {
+        console.log(`[stockfish] ${line}`);
+      }
 
       // Parse: info depth D ... multipv N score cp X ... pv MOVE1 MOVE2 ...
       // or:   info depth D ... multipv N score mate M ... pv MOVE1 ...

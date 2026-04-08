@@ -53,6 +53,20 @@ function listBooks() {
   return scanFiles(config.booksDir, [".bin"]);
 }
 
+// ── Cached file listing (avoids repeated fs walks on every WS request) ──
+const _fileCache = { engines: null, books: null, syzygy: null, ts: 0 };
+const FILE_CACHE_TTL = 10_000; // 10 seconds
+
+function getCachedFiles() {
+  const now = Date.now();
+  if (_fileCache.ts && now - _fileCache.ts < FILE_CACHE_TTL) return _fileCache;
+  _fileCache.engines = listEngines();
+  _fileCache.books = listBooks();
+  _fileCache.syzygy = listSyzygyDirs();
+  _fileCache.ts = now;
+  return _fileCache;
+}
+
 function listSyzygyDirs() {
   // Return directories that contain .rtbw or .rtbz files
   const results = [];
@@ -219,7 +233,6 @@ async function main() {
       return lines.map((line) => ({ ...line, san: line.pv || [], eco: null }));
     }
     try {
-      const game = new Chess(fen);
       return lines.map((line) => {
         const g = new Chess(fen);
         const san = [];
@@ -511,9 +524,9 @@ async function main() {
           activeBook: book.enabled ? path.basename(book.bookPath) : null,
           activeSyzygy: config.syzygyPath || null,
           lichessBook: lichessBookEnabled,
-          engines: listEngines().map((e) => e.name),
-          books: listBooks().map((b) => b.name),
-          syzygy: listSyzygyDirs().map((s) => s.name),
+          engines: getCachedFiles().engines.map((e) => e.name),
+          books: getCachedFiles().books.map((b) => b.name),
+          syzygy: getCachedFiles().syzygy.map((s) => s.name),
           variant: currentVariant,
           variants: Object.entries(VARIANTS).map(([key, v]) => ({ key, label: v.label })),
         });
@@ -552,9 +565,10 @@ async function main() {
 
       // ── File listing ───────────────────────────────────
       if (msg.type === "list_files") {
-        const engines = listEngines().map((e) => e.name);
-        const books = listBooks().map((b) => b.name);
-        const syzygy = listSyzygyDirs().map((s) => s.name);
+        const cached = getCachedFiles();
+        const engines = cached.engines.map((e) => e.name);
+        const books = cached.books.map((b) => b.name);
+        const syzygy = cached.syzygy.map((s) => s.name);
         safeSend(ws, {
           type: "files",
           engines,
@@ -573,7 +587,7 @@ async function main() {
           safeSend(ws, { type: "engine_switched", name: path.basename(config.stockfishPath) });
           return;
         }
-        const found = listEngines().find((e) => e.name === msg.name);
+        const found = getCachedFiles().engines.find((e) => e.name === msg.name);
         if (!found) {
           safeSend(ws, { type: "error", message: `Engine not found: ${msg.name}` });
           return;
@@ -620,7 +634,7 @@ async function main() {
             console.log("[server] opening book disabled");
             safeSend(ws, { type: "book_switched", name: null });
           } else {
-            const allBooks = listBooks();
+            const allBooks = getCachedFiles().books;
             const paths = [];
             const resolvedNames = [];
             for (const name of validNames) {
@@ -654,7 +668,7 @@ async function main() {
           console.log("[server] Syzygy tablebases disabled");
           safeSend(ws, { type: "syzygy_switched", name: null });
         } else {
-          const found = listSyzygyDirs().find((s) => s.name === msg.name);
+          const found = getCachedFiles().syzygy.find((s) => s.name === msg.name);
           if (!found) {
             safeSend(ws, { type: "error", message: `Syzygy dir not found: ${msg.name}` });
             return;

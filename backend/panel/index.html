@@ -1520,7 +1520,7 @@ function speak(msg) {
     .replace(/^O-O-O$/i, "queen side castle").replace(/^O-O$/i, "king side castle");
 
   const utt = new SpeechSynthesisUtterance(text);
-  utt.rate = 1.1;
+  utt.rate = voiceEnabled ? (parseFloat(document.getElementById("voice-speed-slider").value) || 1.1) : 1.1;
   utt.pitch = 1.0;
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utt);
@@ -1841,7 +1841,10 @@ function applySettings(msg) {
       updateVariantHint(saved.variant);
       // Re-filter engine dropdown for the restored variant
       filterEnginesByVariant(msg.activeEngine);
-      ws.send(JSON.stringify({ type: "switch_variant", variant: saved.variant }));
+      // Only send switch_variant if it differs from the server's current variant
+      if (saved.variant !== msg.variant) {
+        ws.send(JSON.stringify({ type: "switch_variant", variant: saved.variant }));
+      }
     }
 
     // Restore saved settings onto controls
