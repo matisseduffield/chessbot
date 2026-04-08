@@ -206,6 +206,18 @@
   }
   .pv-source.engine { background: var(--accent); color: #fff; }
   .pv-source.book { background: var(--orange); color: #fff; }
+  .pv-depth {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 4px;
+    letter-spacing: 0.04em;
+    background: var(--bg-600);
+    color: var(--text-300);
+    font-family: 'JetBrains Mono', monospace;
+  }
   .empty-state {
     color: var(--text-500);
     font-size: 13px;
@@ -1492,7 +1504,7 @@ function renderPVs() {
 
     card.innerHTML = `
       <div class="pv-header">
-        <span class="pv-rank">PV ${i + 1} <span class="pv-source engine">${currentData.source === "book" ? "BOOK" : "ENGINE"}</span></span>
+        <span class="pv-rank">PV ${i + 1} <span class="pv-source engine">${currentData.source === "book" ? "BOOK" : "ENGINE"}</span>${line.depth ? `<span class="pv-depth">D${line.depth}</span>` : ""}</span>
         <span class="pv-score" style="color:${scoreColor}">${scoreText}</span>
       </div>
       <div class="pv-eco" title="${eco}">${eco}</div>
