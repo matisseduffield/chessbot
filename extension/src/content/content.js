@@ -1837,8 +1837,11 @@ function getOrCreateArrowSvg(board, rect) {
     svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.id = "chessbot-arrow-svg";
     svg.style.cssText = `position:absolute;top:${dy}px;left:${dx}px;pointer-events:none;z-index:1000;`;
-    target.appendChild(svg);
   }
+  // Always (re-)append so the SVG is the last child — ensures it renders
+  // on top of chess.com's own overlays (highlights, animations) that may
+  // have been inserted after our SVG since the last draw cycle.
+  target.appendChild(svg);
   svg.setAttribute("width", rect.width);
   svg.setAttribute("height", rect.height);
   svg.style.width = `${rect.width}px`;
