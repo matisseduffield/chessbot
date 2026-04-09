@@ -1023,6 +1023,45 @@
             </label>
           </div>
         </div>
+
+        <div class="settings-group">
+          <div class="group-title">Auto-Move</div>
+          <label class="toggle-row">
+            <span class="toggle-switch">
+              <input type="checkbox" id="chk-auto-move">
+              <span class="toggle-track"></span>
+            </span>
+            <span class="toggle-label">Enable auto-move (Alt+M)</span>
+          </label>
+
+          <div id="auto-move-options" class="training-disabled-overlay">
+            <div class="sub-label" style="margin-top:10px">Delay Range (ms)</div>
+            <div class="setting-row">
+              <span class="setting-label">Min</span>
+              <input type="range" id="auto-move-delay-min" min="0" max="5000" step="100" value="500">
+              <span class="range-value" id="auto-move-delay-min-value">500</span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Max</span>
+              <input type="range" id="auto-move-delay-max" min="0" max="10000" step="100" value="2000">
+              <span class="range-value" id="auto-move-delay-max-value">2000</span>
+            </div>
+
+            <div class="sub-label" style="margin-top:12px">Humanization</div>
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="chk-auto-move-humanize" checked>
+                <span class="toggle-track"></span>
+              </span>
+              <span class="toggle-label">Occasional suboptimal move</span>
+            </label>
+            <div class="setting-row">
+              <span class="setting-label">Chance</span>
+              <input type="range" id="auto-move-humanize-chance" min="0" max="0.5" step="0.05" value="0.1">
+              <span class="range-value" id="auto-move-humanize-chance-value">10%</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Column 3: Display + Resources -->
@@ -1173,6 +1212,11 @@ function saveSettings() {
     trainingAutoReveal: document.getElementById("chk-training-auto-reveal").checked,
     trainingSound: document.getElementById("chk-training-sound").checked,
     trainingStrict: document.getElementById("chk-training-strict").checked,
+    autoMove: document.getElementById("chk-auto-move").checked,
+    autoMoveDelayMin: parseInt(document.getElementById("auto-move-delay-min").value),
+    autoMoveDelayMax: parseInt(document.getElementById("auto-move-delay-max").value),
+    autoMoveHumanize: document.getElementById("chk-auto-move-humanize").checked,
+    autoMoveHumanizeChance: parseFloat(document.getElementById("auto-move-humanize-chance").value),
     evalbar: document.getElementById("chk-evalbar").checked,
     pvs: document.getElementById("chk-pvs").checked,
     opponentResponse: document.getElementById("chk-opponent-response").checked,
@@ -1791,6 +1835,70 @@ document.getElementById("btn-reset-training").addEventListener("click", () => {
   }
 });
 
+// ── Auto-move controls ──
+document.getElementById("chk-auto-move").addEventListener("change", (e) => {
+  const opts = document.getElementById("auto-move-options");
+  if (e.target.checked) opts.classList.add("training-enabled");
+  else opts.classList.remove("training-enabled");
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move", value: e.target.checked } }));
+  }
+  saveSettings();
+});
+document.getElementById("auto-move-delay-min").addEventListener("input", (e) => {
+  document.getElementById("auto-move-delay-min-value").textContent = e.target.value;
+});
+document.getElementById("auto-move-delay-min").addEventListener("change", (e) => {
+  const max = document.getElementById("auto-move-delay-max");
+  if (parseInt(e.target.value) > parseInt(max.value)) {
+    max.value = e.target.value;
+    document.getElementById("auto-move-delay-max-value").textContent = max.value;
+  }
+  broadcastAutoMoveDelay();
+  saveSettings();
+});
+document.getElementById("auto-move-delay-max").addEventListener("input", (e) => {
+  document.getElementById("auto-move-delay-max-value").textContent = e.target.value;
+});
+document.getElementById("auto-move-delay-max").addEventListener("change", (e) => {
+  const min = document.getElementById("auto-move-delay-min");
+  if (parseInt(e.target.value) < parseInt(min.value)) {
+    min.value = e.target.value;
+    document.getElementById("auto-move-delay-min-value").textContent = min.value;
+  }
+  broadcastAutoMoveDelay();
+  saveSettings();
+});
+document.getElementById("chk-auto-move-humanize").addEventListener("change", (e) => {
+  broadcastAutoMoveHumanize();
+  saveSettings();
+});
+document.getElementById("auto-move-humanize-chance").addEventListener("input", (e) => {
+  document.getElementById("auto-move-humanize-chance-value").textContent = Math.round(parseFloat(e.target.value) * 100) + "%";
+});
+document.getElementById("auto-move-humanize-chance").addEventListener("change", () => {
+  broadcastAutoMoveHumanize();
+  saveSettings();
+});
+function broadcastAutoMoveDelay() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: {
+      type: "set_auto_move_delay",
+      min: parseInt(document.getElementById("auto-move-delay-min").value),
+      max: parseInt(document.getElementById("auto-move-delay-max").value),
+    }}));
+  }
+}
+function broadcastAutoMoveHumanize() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: {
+      type: "set_auto_move_humanize",
+      value: document.getElementById("chk-auto-move-humanize").checked,
+      chance: parseFloat(document.getElementById("auto-move-humanize-chance").value),
+    }}));
+  }
+}
+
 // Time limit
 document.getElementById("chk-time-limit").addEventListener("change", (e) => {
   const slider = document.getElementById("time-slider");
@@ -2043,6 +2151,28 @@ function applySettings(msg) {
       document.getElementById("chk-training-strict").checked = saved.trainingStrict;
     }
 
+    // Auto-move settings
+    if (saved.autoMove !== undefined) {
+      document.getElementById("chk-auto-move").checked = saved.autoMove;
+      const amOpts = document.getElementById("auto-move-options");
+      if (saved.autoMove) { amOpts.classList.remove("training-disabled-overlay"); amOpts.classList.add("training-enabled"); }
+    }
+    if (saved.autoMoveDelayMin !== undefined) {
+      document.getElementById("auto-move-delay-min").value = saved.autoMoveDelayMin;
+      document.getElementById("auto-move-delay-min-value").textContent = saved.autoMoveDelayMin;
+    }
+    if (saved.autoMoveDelayMax !== undefined) {
+      document.getElementById("auto-move-delay-max").value = saved.autoMoveDelayMax;
+      document.getElementById("auto-move-delay-max-value").textContent = saved.autoMoveDelayMax;
+    }
+    if (saved.autoMoveHumanize !== undefined) {
+      document.getElementById("chk-auto-move-humanize").checked = saved.autoMoveHumanize;
+    }
+    if (saved.autoMoveHumanizeChance !== undefined) {
+      document.getElementById("auto-move-humanize-chance").value = saved.autoMoveHumanizeChance;
+      document.getElementById("auto-move-humanize-chance-value").textContent = Math.round(saved.autoMoveHumanizeChance * 100) + "%";
+    }
+
     // Book / Syzygy — only restore for standard chess
     const restoredVariant = saved.variant || "chess";
     const variantIsStandard = !FAIRY_VARIANTS.includes(restoredVariant);
@@ -2090,6 +2220,9 @@ function applySettings(msg) {
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_auto_reveal", value: !!saved.trainingAutoReveal } }));
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_sound", value: saved.trainingSound !== undefined ? saved.trainingSound : true } }));
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_strict", value: !!saved.trainingStrict } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move", value: !!saved.autoMove } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move_delay", min: saved.autoMoveDelayMin || 500, max: saved.autoMoveDelayMax || 2000 } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move_humanize", value: saved.autoMoveHumanize !== undefined ? saved.autoMoveHumanize : true, chance: saved.autoMoveHumanizeChance || 0.1 } }));
     broadcastSearchLimits();
   } else {
     // No saved settings — use server defaults

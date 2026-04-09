@@ -58,6 +58,14 @@ let trainingSound = true; // play sound on correct/wrong
 let trainingLines = []; // all PV lines for strict=false checking
 let trainingRevealActive = false; // true while auto-reveal arrow is showing
 
+// ── Auto-move / bot mode state ───────────────────────────────
+let autoMoveEnabled = false; // toggle from panel or Alt+M
+let autoMoveDelayMin = 500;  // minimum delay before executing move (ms)
+let autoMoveDelayMax = 2000; // maximum delay before executing move (ms)
+let autoMoveHumanize = true; // occasionally pick 2nd/3rd best move
+let autoMoveHumanizeChance = 0.1; // probability (0–1) of picking suboptimal move
+let autoMoveTimer = null;    // pending auto-move timeout
+
 // ── Log buffer ───────────────────────────────────────────────
 const LOG_BUFFER_MAX = 500;
 const logBuffer = [];
@@ -409,6 +417,24 @@ function connectWS() {
       if (msg.type === "set_voice_eval") { voiceEvalEnabled = !!msg.value; return; }
       if (msg.type === "set_voice_opening") { voiceOpeningEnabled = !!msg.value; return; }
       if (msg.type === "set_voice_speed") { voiceSpeed = Number(msg.value) || 1.1; return; }
+      if (msg.type === "set_auto_move") {
+        autoMoveEnabled = !!msg.value;
+        console.log(`[chessbot] auto-move: ${autoMoveEnabled} (from panel)`);
+        if (!autoMoveEnabled) cancelAutoMove();
+        return;
+      }
+      if (msg.type === "set_auto_move_delay") {
+        autoMoveDelayMin = Math.max(0, Number(msg.min) || 500);
+        autoMoveDelayMax = Math.max(autoMoveDelayMin, Number(msg.max) || 2000);
+        console.log(`[chessbot] auto-move delay: ${autoMoveDelayMin}–${autoMoveDelayMax}ms`);
+        return;
+      }
+      if (msg.type === "set_auto_move_humanize") {
+        autoMoveHumanize = !!msg.value;
+        if (msg.chance !== undefined) autoMoveHumanizeChance = Math.max(0, Math.min(1, Number(msg.chance)));
+        console.log(`[chessbot] auto-move humanize: ${autoMoveHumanize} (chance: ${autoMoveHumanizeChance})`);
+        return;
+      }
       if (msg.type === "set_depth") {
         currentDepth = Number(msg.value) || 15;
         console.log(`[chessbot] depth set to ${currentDepth} (from panel)`);
@@ -543,6 +569,11 @@ function connectWS() {
         } else {
           drawSingleMove(msg.bestmove, bestLine, source);
           drawEvalBar(bestLine, source, msg.tablebase);
+        }
+
+        // Auto-move: schedule the move after drawing overlays (non-streaming only)
+        if (autoMoveEnabled && !msg.streaming && msg.bestmove && msg.bestmove !== "(none)") {
+          scheduleAutoMove(msg.bestmove, lines, msg.fen || lastSentFen);
         }
       }
     } catch {
@@ -3036,6 +3067,297 @@ function resendCurrentPosition() {
   sendFen(lastSentFen);
 }
 
+// ── Auto-move / bot mode ─────────────────────────────────────
+
+/** Fire a synthetic mouse event on an element at page-relative coordinates. */
+function fireMouse(target, type, clientX, clientY, opts = {}) {
+  const ev = new MouseEvent(type, {
+    bubbles: true, cancelable: true, view: window,
+    clientX, clientY,
+    button: 0, buttons: type === "mouseup" ? 0 : 1,
+    ...opts,
+  });
+  target.dispatchEvent(ev);
+}
+
+/** Fire a synthetic pointer event (needed by some modern boards). */
+function firePointer(target, type, clientX, clientY, opts = {}) {
+  if (typeof PointerEvent === "undefined") return;
+  const ev = new PointerEvent(type, {
+    bubbles: true, cancelable: true, view: window,
+    clientX, clientY,
+    button: 0, buttons: type === "pointerup" ? 0 : 1,
+    pointerId: 1, pointerType: "mouse",
+    isPrimary: true,
+    ...opts,
+  });
+  target.dispatchEvent(ev);
+}
+
+/** Get the DOM element at a board-relative position for a given site.
+ *  Returns { target, clientX, clientY }. */
+function getSquareTarget(file, rank) {
+  const geo = getBoardGeometry();
+  if (!geo) return null;
+  const { board, rect, sqSize, flipped } = geo;
+  const center = squareCenter(file, rank, sqSize, flipped);
+  const clientX = rect.left + center.x;
+  const clientY = rect.top + center.y;
+
+  // Determine the actual event target element
+  let target;
+  if (SITE === "chesscom") {
+    // chess.com: events go to the shadow root's internal board or the element itself
+    const sr = board.shadowRoot;
+    if (sr) {
+      target = sr.elementFromPoint ? sr.elementFromPoint(clientX, clientY) : board;
+    } else {
+      target = document.elementFromPoint(clientX, clientY) || board;
+    }
+  } else {
+    target = document.elementFromPoint(clientX, clientY) || board;
+  }
+  return { target, clientX, clientY };
+}
+
+/** Execute a UCI move on the board by simulating click events.
+ *  uci = "e2e4", "e7e8q" (with optional promotion char). */
+function executeMove(uci) {
+  if (!uci || uci.length < 4) return false;
+  const squares = uciToSquares(uci);
+  if (!squares) return false;
+  const { from, to } = squares;
+  const promo = uci.length === 5 ? uci[4] : null;
+
+  console.log(`[chessbot][auto-move] executing ${uci} on ${SITE}`);
+
+  if (SITE === "chesscom") {
+    return executeMoveChessCom(from, to, promo);
+  } else if (IS_CHESSGROUND) {
+    return executeMoveChessground(from, to, promo);
+  } else if (SITE === "chesstempo") {
+    return executeMoveChesstempo(from, to, promo);
+  }
+  return false;
+}
+
+/** Chess.com: click source square, then click target square.
+ *  For promotions, chess.com shows a popup — click the correct piece. */
+function executeMoveChessCom(from, to, promo) {
+  const src = getSquareTarget(from.file, from.rank);
+  if (!src) return false;
+
+  // Click source square
+  firePointer(src.target, "pointerdown", src.clientX, src.clientY);
+  fireMouse(src.target, "mousedown", src.clientX, src.clientY);
+
+  setTimeout(() => {
+    firePointer(src.target, "pointerup", src.clientX, src.clientY);
+    fireMouse(src.target, "mouseup", src.clientX, src.clientY);
+    fireMouse(src.target, "click", src.clientX, src.clientY);
+
+    // Short delay then click destination
+    setTimeout(() => {
+      const dst = getSquareTarget(to.file, to.rank);
+      if (!dst) return;
+      firePointer(dst.target, "pointerdown", dst.clientX, dst.clientY);
+      fireMouse(dst.target, "mousedown", dst.clientX, dst.clientY);
+
+      setTimeout(() => {
+        firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
+        fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
+        fireMouse(dst.target, "click", dst.clientX, dst.clientY);
+
+        // Handle promotion popup if needed
+        if (promo) {
+          setTimeout(() => selectPromotionChessCom(promo), 200);
+        }
+      }, 30);
+    }, 50);
+  }, 30);
+
+  return true;
+}
+
+/** Chess.com promotion: find and click the promotion piece in the popup. */
+function selectPromotionChessCom(promoChar) {
+  // Map promotion letter to class pattern used by chess.com
+  const map = { q: "queen", r: "rook", b: "bishop", n: "knight" };
+  const pieceName = map[promoChar.toLowerCase()] || "queen";
+
+  // Look in document and shadow root
+  const roots = [document];
+  const board = getBoardElement();
+  if (board && board.shadowRoot) roots.push(board.shadowRoot);
+
+  for (const root of roots) {
+    // chess.com uses .promotion-piece with data-piece or class containing piece name
+    const promoEls = root.querySelectorAll("[class*='promotion'] [class*='piece'], .promotion-piece");
+    for (const el of promoEls) {
+      const cls = el.className.toLowerCase();
+      if (cls.includes(pieceName) || cls.includes(promoChar.toLowerCase())) {
+        el.click();
+        console.log(`[chessbot][auto-move] selected promotion: ${pieceName}`);
+        return;
+      }
+    }
+  }
+  console.warn(`[chessbot][auto-move] promotion popup not found for ${promoChar}`);
+}
+
+/** Lichess / PlayStrategy (Chessground): mousedown on source, mouseup on target. */
+function executeMoveChessground(from, to, promo) {
+  const src = getSquareTarget(from.file, from.rank);
+  if (!src) return false;
+
+  // Mousedown on source
+  firePointer(src.target, "pointerdown", src.clientX, src.clientY);
+  fireMouse(src.target, "mousedown", src.clientX, src.clientY);
+
+  setTimeout(() => {
+    const dst = getSquareTarget(to.file, to.rank);
+    if (!dst) return;
+
+    // Mouseup on target (drag-and-drop style)
+    firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
+    fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
+
+    // Handle promotion popup
+    if (promo) {
+      setTimeout(() => selectPromotionChessground(promo), 200);
+    }
+  }, 80);
+
+  return true;
+}
+
+/** Lichess / PlayStrategy promotion: click the correct piece in the promotion dialog. */
+function selectPromotionChessground(promoChar) {
+  const roleMap = { q: "queen", r: "rook", b: "bishop", n: "knight" };
+  const role = roleMap[promoChar.toLowerCase()] || "queen";
+
+  // Chessground shows a promotion picker with piece elements
+  const promoSquares = document.querySelectorAll("cg-container piece, .cg-wrap piece, square[data-promotion]");
+  for (const el of promoSquares) {
+    const cls = el.className.toLowerCase();
+    if (cls.includes(role)) {
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      firePointer(el, "pointerdown", cx, cy);
+      fireMouse(el, "mousedown", cx, cy);
+      setTimeout(() => {
+        firePointer(el, "pointerup", cx, cy);
+        fireMouse(el, "mouseup", cx, cy);
+        fireMouse(el, "click", cx, cy);
+      }, 30);
+      console.log(`[chessbot][auto-move] selected promotion: ${role}`);
+      return;
+    }
+  }
+  console.warn(`[chessbot][auto-move] promotion popup not found for ${promoChar}`);
+}
+
+/** ChessTempo: click source, then click target. */
+function executeMoveChesstempo(from, to, promo) {
+  const src = getSquareTarget(from.file, from.rank);
+  if (!src) return false;
+
+  // Click source
+  fireMouse(src.target, "mousedown", src.clientX, src.clientY);
+  fireMouse(src.target, "mouseup", src.clientX, src.clientY);
+  fireMouse(src.target, "click", src.clientX, src.clientY);
+
+  setTimeout(() => {
+    const dst = getSquareTarget(to.file, to.rank);
+    if (!dst) return;
+
+    fireMouse(dst.target, "mousedown", dst.clientX, dst.clientY);
+    fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
+    fireMouse(dst.target, "click", dst.clientX, dst.clientY);
+
+    if (promo) {
+      setTimeout(() => {
+        // ChessTempo shows a promotion dialog with clickable pieces
+        const promoMap = { q: "queen", r: "rook", b: "bishop", n: "knight" };
+        const pieceName = promoMap[promo.toLowerCase()] || "queen";
+        const btns = document.querySelectorAll("[class*='promotion'] button, [class*='promote'] [class*='piece']");
+        for (const btn of btns) {
+          if (btn.textContent.toLowerCase().includes(pieceName) || btn.className.toLowerCase().includes(pieceName)) {
+            btn.click();
+            return;
+          }
+        }
+      }, 200);
+    }
+  }, 80);
+
+  return true;
+}
+
+/** Cancel any pending auto-move. */
+function cancelAutoMove() {
+  if (autoMoveTimer) {
+    clearTimeout(autoMoveTimer);
+    autoMoveTimer = null;
+  }
+}
+
+/** Schedule an auto-move after a humanized delay.
+ *  moveUci: the UCI move to play.
+ *  lines: all PV lines (for humanization — occasionally pick 2nd/3rd best).
+ *  fen: the FEN this move is for (to check staleness). */
+function scheduleAutoMove(moveUci, lines, fen) {
+  cancelAutoMove();
+
+  // Don't auto-move in training mode
+  if (trainingMode) return;
+
+  // Determine which move to actually play
+  let finalMove = moveUci;
+  if (autoMoveHumanize && lines && lines.length > 1 && Math.random() < autoMoveHumanizeChance) {
+    // Pick a random move from the top 3 (weighted toward better moves)
+    const candidates = lines.slice(0, Math.min(3, lines.length));
+    // Only pick suboptimal if it's not a blunder (within 100cp of best, no mate difference)
+    const best = candidates[0];
+    const filtered = candidates.filter((c, i) => {
+      if (i === 0) return true;
+      // Don't pick a move that loses mate or drops >100cp
+      if (best.mate !== undefined && c.mate === undefined) return false;
+      if (best.mate !== undefined && c.mate !== undefined) return Math.sign(best.mate) === Math.sign(c.mate);
+      if (c.score !== undefined && best.score !== undefined) return Math.abs(best.score - c.score) <= 100;
+      return false;
+    });
+    if (filtered.length > 1) {
+      const pick = filtered[1 + Math.floor(Math.random() * (filtered.length - 1))];
+      finalMove = pick.move;
+      console.log(`[chessbot][auto-move] humanized: playing ${finalMove} instead of ${moveUci}`);
+    }
+  }
+
+  // Random delay within configured range
+  const delay = autoMoveDelayMin + Math.random() * (autoMoveDelayMax - autoMoveDelayMin);
+  const scheduledFen = fen;
+
+  console.log(`[chessbot][auto-move] scheduled ${finalMove} in ${Math.round(delay)}ms`);
+
+  autoMoveTimer = setTimeout(() => {
+    autoMoveTimer = null;
+
+    // Verify position hasn't changed since we scheduled
+    if (lastSentFen && scheduledFen) {
+      const currentBoard = lastSentFen.split(" ")[0];
+      const scheduledBoard = scheduledFen.split(" ")[0];
+      if (currentBoard !== scheduledBoard) {
+        console.log("[chessbot][auto-move] position changed, skipping stale move");
+        return;
+      }
+    }
+
+    executeMove(finalMove);
+  }, delay);
+}
+
 // ── Hotkeys ──────────────────────────────────────────────────
 // Alt+A = resume analysis, Alt+S = stop analysis
 // Alt+W = set side to white, Alt+Q = set side to black
@@ -3082,6 +3404,11 @@ document.addEventListener("keydown", (e) => {
       chrome.storage.local.set({ chessbot_trainingMode: trainingMode });
     }
     resendCurrentPosition();
+  } else if (key === "m") {
+    e.preventDefault();
+    autoMoveEnabled = !autoMoveEnabled;
+    console.log(`[chessbot] auto-move: ${autoMoveEnabled} (Alt+M)`);
+    if (!autoMoveEnabled) cancelAutoMove();
   }
 });
 
@@ -3230,6 +3557,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         `Dragging: ${isDragging}`,
         `Waiting for opponent: ${waitingForOpponent}`,
         `Voice: ${voiceEnabled}`,
+        `Auto-move: ${autoMoveEnabled} (delay: ${autoMoveDelayMin}–${autoMoveDelayMax}ms, humanize: ${autoMoveHumanize})`,
         "=== CONTENT SCRIPT LOGS ===",
       ].join("\n");
       sendResponse({ logs: header + "\n" + logBuffer.join("\n") });
@@ -3262,6 +3590,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         `Dragging: ${isDragging}`,
         `Waiting for opponent: ${waitingForOpponent}`,
         `Voice: ${voiceEnabled}`,
+        `Auto-move: ${autoMoveEnabled} (delay: ${autoMoveDelayMin}–${autoMoveDelayMax}ms, humanize: ${autoMoveHumanize})`,
         "=== CONTENT SCRIPT LOGS ===",
       ].join("\n");
       const csLogs = csHeader + "\n" + logBuffer.join("\n");

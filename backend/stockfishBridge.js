@@ -361,8 +361,8 @@ class StockfishBridge {
           if (!prev || d >= prev.depth) {
             this._pendingPV[idx] = entry;
           }
-          // For infinite analysis, emit intermediate results when all PVs updated
-          if (this._isInfinite && this._onInfoCallback) {
+          // Emit intermediate results when all PVs updated at this depth
+          if (this._onInfoCallback) {
             const mpv = this._pendingMultiPV || 1;
             const filledCount = Object.keys(this._pendingPV).length;
             if (filledCount >= mpv) {

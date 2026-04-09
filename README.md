@@ -1,6 +1,15 @@
 # Chess Analysis Helper
 
-Real-time chess analysis overlay for **chess.com** and **lichess.org**. A Chrome extension reads the board from the page, sends positions to a local Stockfish backend, and draws best-move arrows directly on the board.
+Real-time chess analysis overlay for online chess sites. A Chrome extension reads the board from the page, sends positions to a local Stockfish backend, and draws best-move arrows directly on the board.
+
+## Supported Sites
+
+| Site | Live Games | Puzzles | Variants |
+|------|:----------:|:-------:|:--------:|
+| [chess.com](https://www.chess.com) | ✅ | ✅ | ✅ |
+| [lichess.org](https://lichess.org) | ✅ | ✅ | ✅ |
+| [playstrategy.org](https://playstrategy.org) | ✅ | — | ✅ |
+| [chesstempo.com](https://chesstempo.com) | ✅ | ✅ | — |
 
 ## Features
 
@@ -13,6 +22,12 @@ Real-time chess analysis overlay for **chess.com** and **lichess.org**. A Chrome
 - **Infinite analysis mode** — set depth to 0 for unlimited depth streaming analysis
 - **Endgame tablebase classification** — Win/Draw/Loss labels on the eval bar when ≤7 pieces remain
 - **Display modes** — arrows, boxes, or both
+
+### Auto-Move (Bot Mode)
+- **Automatic move execution** — the bot plays the engine's best move on the board for you
+- **Humanization** — configurable random delays (min/max), occasional selection of 2nd/3rd best move, and premove-style timing to mimic human play
+- **Per-site support** — works on chess.com, lichess.org, playstrategy.org, and chesstempo.com
+- **Dashboard controls** — toggle auto-move on/off, adjust delay range and humanization settings from the panel
 
 ### Opening Books & Databases
 - **Multiple opening books** — select one or more Polyglot `.bin` books simultaneously with merged weight lookups
@@ -30,6 +45,7 @@ Real-time chess analysis overlay for **chess.com** and **lichess.org**. A Chrome
 - **Syzygy endgame tablebases** — perfect endgame play when configured
 - **Variant chess support** — Chess960, Atomic, Crazyhouse, King of the Hill, Three-Check, Antichess, Horde, Racing Kings
 - **Depth control** — panel depth setting is authoritative; scales eval timeout dynamically (up to 3 minutes for deep searches)
+- **Search limits** — optional time (ms) and node limits; if a time limit cuts search short, the best move found at the reached depth is shown
 
 ### Voice & Accessibility
 - **Text-to-speech move announcements** — hear the best move spoken aloud
@@ -49,6 +65,7 @@ Real-time chess analysis overlay for **chess.com** and **lichess.org**. A Chrome
   - Time (ms) and Nodes search limits
   - Display mode (arrows / boxes / both)
   - Opponent response toggle
+  - Auto-move toggle with humanization settings
   - Training mode toggle
   - Voice controls (on/off, speed, eval, opening announcements)
 
@@ -62,6 +79,7 @@ Real-time chess analysis overlay for **chess.com** and **lichess.org**. A Chrome
 - `Alt+W` — analyze for Me
 - `Alt+Q` — analyze for Opponent
 - `Alt+T` — toggle training mode
+- `Alt+M` — toggle auto-move
 
 ## Architecture
 
@@ -163,7 +181,7 @@ The server starts on `http://localhost:8080`. Open this URL in a browser tab to 
 ## Usage
 
 1. Start the backend server
-2. Open a game on chess.com or lichess.org
+2. Open a game on any supported site (chess.com, lichess.org, playstrategy.org, chesstempo.com)
 3. The extension automatically connects and shows best-move arrows
 4. Click the extension popup icon to toggle analysis on/off
 5. Open `http://localhost:8080` to adjust engine settings
