@@ -158,6 +158,15 @@
     border-color: var(--accent);
     background: linear-gradient(135deg, var(--accent-muted), transparent);
   }
+  .pv-card.pv-losing {
+    border-color: var(--red);
+    background: linear-gradient(135deg, var(--red-muted), transparent);
+  }
+  .pv-card.pv-losing .pv-rank { color: var(--red); }
+  .pv-card.pv-winning {
+    border-color: var(--green);
+    background: linear-gradient(135deg, var(--green-muted), transparent);
+  }
   .pv-header {
     display: flex;
     justify-content: space-between;
@@ -1298,7 +1307,9 @@ function renderEvalBar() {
 }
 
 function formatScore(line) {
-  if (line.mate !== undefined && line.mate !== null) return `M${Math.abs(line.mate)}`;
+  if (line.mate !== undefined && line.mate !== null) {
+    return (line.mate >= 0 ? "+" : "−") + "M" + Math.abs(line.mate);
+  }
   if (line.score !== undefined && line.score !== null) {
     const v = line.score / 100;
     return (v >= 0 ? "+" : "") + v.toFixed(1);
@@ -1498,7 +1509,15 @@ function renderPVs() {
     card.onclick = () => { selectedPV = i + 1; renderAll(); };
 
     const scoreText = formatScore(line);
-    const scoreColor = (line.score !== undefined && line.score >= 0) || (line.mate !== undefined && line.mate > 0) ? "var(--green)" : "var(--red)";
+    // Score is from side-to-move perspective: positive = good for them
+    const isGood = (line.mate !== undefined && line.mate !== null) ? line.mate > 0
+      : (line.score !== undefined && line.score !== null) ? line.score >= 0 : true;
+    const isBad = (line.mate !== undefined && line.mate !== null) ? line.mate < 0
+      : (line.score !== undefined && line.score !== null) ? line.score < -50 : false;
+    const scoreColor = isGood ? "var(--green)" : "var(--red)";
+    // Highlight losing PVs (negative score or getting mated) with red tint
+    if (isBad) card.classList.add("pv-losing");
+    else if (isGood && i === 0) card.classList.add("pv-winning");
     const sanMoves = line.san || line.pv || [];
     const eco = line.eco || "";
 
