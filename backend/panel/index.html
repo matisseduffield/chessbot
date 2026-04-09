@@ -339,6 +339,8 @@
     flex-direction: column;
     padding: 0;
     border-right: 1px solid var(--bg-750);
+    overflow-y: auto;
+    min-height: 0;
   }
   .settings-col:last-child { border-right: none; }
 
@@ -1023,7 +1025,10 @@
             </label>
           </div>
         </div>
+      </div>
 
+      <!-- Column 3: Display + Auto-Move + Resources -->
+      <div class="settings-col">
         <div class="settings-group">
           <div class="group-title">Auto-Move</div>
           <label class="toggle-row">
@@ -1062,10 +1067,7 @@
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Column 3: Display + Resources -->
-      <div class="settings-col">
         <div class="settings-group">
           <div class="group-title">Display</div>
           <div class="toggle-grid">
