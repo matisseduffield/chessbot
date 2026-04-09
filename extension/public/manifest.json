@@ -6,7 +6,9 @@
   "permissions": ["storage"],
   "host_permissions": [
     "https://www.chess.com/*",
-    "https://lichess.org/*"
+    "https://lichess.org/*",
+    "https://playstrategy.org/*",
+    "https://chesstempo.com/*"
   ],
   "content_scripts": [
     {
@@ -19,7 +21,9 @@
         "https://www.chess.com/puzzles/*",
         "https://www.chess.com/puzzle/*",
         "https://www.chess.com/lessons/*",
-        "https://lichess.org/*"
+        "https://lichess.org/*",
+        "https://playstrategy.org/*",
+        "https://chesstempo.com/*"
       ],
       "js": ["content/content.js"],
       "css": ["content/content.css"],

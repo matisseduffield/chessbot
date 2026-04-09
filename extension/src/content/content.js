@@ -1,7 +1,8 @@
 /* ─────────────────────────────────────────────────────────────
    Chess Analysis Helper — Content Script
-   Reads the board from chess.com / lichess.org, sends FEN to
-   the local Stockfish backend, and draws best-move arrows.
+   Reads the board from chess.com / lichess.org / playstrategy.org /
+   chesstempo.com, sends FEN to the local Stockfish backend,
+   and draws best-move arrows.
    ───────────────────────────────────────────────────────────── */
 
 const WS_URL = "ws://localhost:8080";
@@ -74,27 +75,33 @@ console.error = function(...args) { bufferLog("ERR", args); _origErr.apply(conso
 
 // ── Site detection ───────────────────────────────────────────
 const SITE = detectSite();
+/** True for any site using the Chessground board library (lichess, playstrategy, etc.) */
+const IS_CHESSGROUND = SITE === "lichess" || SITE === "playstrategy";
 
 function detectSite() {
   const host = location.hostname;
   if (host.includes("chess.com")) return "chesscom";
   if (host.includes("lichess")) return "lichess";
+  if (host.includes("playstrategy")) return "playstrategy";
+  if (host.includes("chesstempo")) return "chesstempo";
   return null;
 }
 
 /** Detect chess variant from URL path. Returns key like "atomic", "chess960", etc. or null. */
 function detectVariant() {
   const path = location.pathname.toLowerCase();
-  if (SITE === "lichess") {
-    // Lichess: /atomic/..., /crazyhouse/..., /chess960/..., /kingOfTheHill/..., /threeCheck/..., /antichess/..., /horde/..., /racingKings/...
+  if (IS_CHESSGROUND) {
+    // Lichess / PlayStrategy: /atomic/..., /crazyhouse/..., /chess960/..., etc.
     if (path.includes("/atomic")) return "atomic";
     if (path.includes("/crazyhouse")) return "crazyhouse";
     if (path.includes("/chess960")) return "chess960";
     if (path.includes("/kingofthehill")) return "kingofthehill";
     if (path.includes("/threecheck") || path.includes("/three-check")) return "3check";
+    if (path.includes("/fivecheck") || path.includes("/five-check")) return "3check"; // PlayStrategy five-check
     if (path.includes("/antichess")) return "antichess";
     if (path.includes("/horde")) return "horde";
     if (path.includes("/racingkings") || path.includes("/racing-kings")) return "racingkings";
+    if (path.includes("/nocastling") || path.includes("/no-castling")) return null; // standard rules, no special engine
   }
   if (SITE === "chesscom") {
     // Chess.com: /variants/chess960, /variants/atomic, etc. Also /play/chess960, /live/chess960
@@ -116,8 +123,11 @@ function isPuzzlePage() {
   if (SITE === "chesscom") {
     return path.includes("/puzzles") || path.includes("/puzzle") || path.includes("/lessons");
   }
-  if (SITE === "lichess") {
+  if (IS_CHESSGROUND) {
     return path.startsWith("/training") || path.startsWith("/streak") || path.startsWith("/storm");
+  }
+  if (SITE === "chesstempo") {
+    return path.includes("/chess-tactics") || path.includes("/chess-endgames") || path.includes("/guess-the-move");
   }
   return false;
 }
@@ -241,7 +251,7 @@ function findBoard() {
   chesscomBoardToFen._diagLogged = false;
   waitForBoard().then((boardEl) => {
     const rect = (SITE === "chesscom") ? getVisualBoardRect(boardEl) : boardEl.getBoundingClientRect();
-    console.log(`[chessbot] board found: <${boardEl.tagName}> class="${(boardEl.className || '').toString().substring(0, 60)}" visual=${Math.round(rect.width)}x${Math.round(rect.height)} pieces=${boardEl.querySelectorAll(".piece").length}`);
+    console.log(`[chessbot] board found on ${SITE}: <${boardEl.tagName}> class="${(boardEl.className || '').toString().substring(0, 60)}" visual=${Math.round(rect.width)}x${Math.round(rect.height)} pieces=${boardEl.querySelectorAll(".piece").length}`);
     boardReady = true;
     observeBoard(boardEl);
     initialRead();
@@ -623,8 +633,17 @@ function getBoardElement() {
     }
     return null;
   }
-  if (SITE === "lichess") {
+  if (IS_CHESSGROUND) {
     return document.querySelector("cg-board");
+  }
+  if (SITE === "chesstempo") {
+    // ChessTempo uses a <chess-board> custom element (no shadow root)
+    // Return the inner board holder for correct geometry
+    const ct = document.querySelector("chess-board");
+    if (ct) {
+      return ct.querySelector(".ct-board-inner-holder") || ct.querySelector(".ct-board-holder") || ct;
+    }
+    return null;
   }
   return null;
 }
@@ -792,10 +811,10 @@ function hasPremoveElements() {
     }
     return false;
   }
-  if (SITE === "lichess") {
+  if (IS_CHESSGROUND) {
     const board = document.querySelector("cg-board");
     if (!board) return false;
-    // Lichess marks premoved squares and ghost pieces
+    // Lichess/PlayStrategy marks premoved squares and ghost pieces
     if (board.querySelector("piece.ghost, square.premove, .premove")) return true;
     return false;
   }
@@ -1323,15 +1342,141 @@ function lichessBoardToFen() {
 }
 
 function isLichessFlipped() {
-  // Method 1: orientation class on cg-wrap
+  // Method 1: orientation class on cg-wrap (lichess + PlayStrategy)
   const cgWrap = document.querySelector(".cg-wrap");
   if (cgWrap) {
-    if (cgWrap.classList.contains("orientation-black")) return true;
-    if (cgWrap.classList.contains("orientation-white")) return false;
+    if (cgWrap.classList.contains("orientation-black") || cgWrap.classList.contains("orientation-p2")) return true;
+    if (cgWrap.classList.contains("orientation-white") || cgWrap.classList.contains("orientation-p1")) return false;
   }
   // Method 2: check coordinate labels — if rank 1 is at top, board is flipped
   const ranks = document.querySelector("coords.ranks coord:first-child");
   if (ranks && ranks.textContent.trim() === "1") return true;
+  return false;
+}
+
+// ── PlayStrategy board reader ────────────────────────────────
+
+function playstrategyBoardToFen() {
+  const board = document.querySelector("cg-board");
+  if (!board) return null;
+
+  const pieces = board.querySelectorAll("piece");
+  if (!pieces.length) return null;
+
+  const flipped = isLichessFlipped();
+
+  const boardRect = board.getBoundingClientRect();
+  const squareW = boardRect.width / 8;
+  const squareH = boardRect.height / 8;
+
+  const grid = Array.from({ length: 8 }, () => Array(8).fill(null));
+
+  for (const piece of pieces) {
+    if (piece.classList.contains("ghost")) continue;
+    const transform = piece.style.transform;
+    const match = transform && transform.match(/translate\((\d+(?:\.\d+)?)px\s*,\s*(\d+(?:\.\d+)?)px\)/);
+    if (!match) continue;
+
+    const px = parseFloat(match[1]);
+    const py = parseFloat(match[2]);
+
+    let file = Math.round(px / squareW);
+    let rank = Math.round(py / squareH);
+
+    if (flipped) {
+      file = 7 - file;
+      rank = 7 - rank;
+    }
+
+    // PlayStrategy classes: "p1 r-piece ally", "p2 n-piece enemy", etc.
+    const cl = piece.className;
+    const color = cl.includes("p1") ? "w" : "b";
+    const typeMap = { "p-piece": "p", "r-piece": "r", "n-piece": "n", "b-piece": "b", "q-piece": "q", "k-piece": "k" };
+    let type = null;
+    for (const [name, ch] of Object.entries(typeMap)) {
+      if (cl.includes(name)) { type = ch; break; }
+    }
+    if (!type) continue;
+
+    const fenChar = color === "w" ? type.toUpperCase() : type.toLowerCase();
+    if (rank >= 0 && rank < 8 && file >= 0 && file < 8) {
+      grid[rank][file] = fenChar;
+    }
+  }
+
+  return gridToFenBoard(grid);
+}
+
+// ── ChessTempo board reader ──────────────────────────────────
+
+function chesstempoBoardToFen() {
+  // Method 1: read FEN from accessibility description (most reliable)
+  const fenHeadings = document.querySelectorAll("chess-board h2");
+  for (const h of fenHeadings) {
+    const text = h.textContent.trim();
+    const fenMatch = text.match(/^FEN:\s*(.+)$/);
+    if (fenMatch) return fenMatch[1].trim();
+  }
+
+  // Method 2: parse piece elements from DOM
+  const ctBoard = document.querySelector("chess-board");
+  if (!ctBoard) return null;
+
+  const pieces = ctBoard.querySelectorAll(".ct-pieceClass");
+  if (!pieces.length) return null;
+
+  const flipped = isChesstempFlipped();
+
+  const grid = Array.from({ length: 8 }, () => Array(8).fill(null));
+
+  for (const piece of pieces) {
+    const cl = piece.className;
+    // Classes: "ct-pieceClass ct-piece-whiterook"
+    const typeMatch = cl.match(/ct-piece-(white|black)(pawn|rook|knight|bishop|queen|king)/);
+    if (!typeMatch) continue;
+
+    const color = typeMatch[1] === "white" ? "w" : "b";
+    const typeMap = { pawn: "p", rook: "r", knight: "n", bishop: "b", queen: "q", king: "k" };
+    const type = typeMap[typeMatch[2]];
+    if (!type) continue;
+
+    // Position via percentage left/top — each square is 12.5%
+    const left = parseFloat(piece.style.left);
+    const top = parseFloat(piece.style.top);
+    if (isNaN(left) || isNaN(top)) continue;
+
+    let file = Math.round(left / 12.5);
+    let rank = Math.round(top / 12.5);
+
+    if (flipped) {
+      file = 7 - file;
+      rank = 7 - rank;
+    }
+
+    const fenChar = color === "w" ? type.toUpperCase() : type.toLowerCase();
+    if (rank >= 0 && rank < 8 && file >= 0 && file < 8) {
+      grid[rank][file] = fenChar;
+    }
+  }
+
+  return gridToFenBoard(grid);
+}
+
+function isChesstempFlipped() {
+  // Check coordinate labels — if file 'h' is first (leftmost), board is flipped
+  const fileCoords = document.querySelectorAll("chess-board .ct-board-inner-holder .ct-file-coord, chess-board coords coord");
+  if (fileCoords.length > 0) {
+    const first = fileCoords[0].textContent.trim().toLowerCase();
+    if (first === "h") return true;
+    if (first === "a") return false;
+  }
+  // Alternative: check rank labels — if rank 1 is at top, board is flipped
+  const rankCoords = document.querySelectorAll("chess-board .ct-rank-coord");
+  if (rankCoords.length > 0) {
+    const first = rankCoords[0].textContent.trim();
+    if (first === "1") return true;
+    if (first === "8") return false;
+  }
   return false;
 }
 
@@ -1412,8 +1557,8 @@ function detectTurnFromMoveList() {
     }
   }
 
-  if (SITE === "lichess") {
-    // Lichess: moves are in <move> or <m2> elements, or .moves kwdb elements
+  if (IS_CHESSGROUND) {
+    // Lichess / PlayStrategy: moves are in <move> or <m2> elements, or .moves kwdb elements
     const moves = document.querySelectorAll("move, m2, .moves kwdb");
     if (moves.length > 0) {
       const lastPly = moves.length;
@@ -1464,8 +1609,8 @@ function detectTurnFromHighlights() {
     }
   }
 
-  if (SITE === "lichess") {
-    // Lichess: last-move squares have class "last-move"
+  if (IS_CHESSGROUND) {
+    // Lichess / PlayStrategy: last-move squares have class "last-move"
     const lastMove = document.querySelectorAll("square.last-move, .last-move");
     if (lastMove.length >= 2) {
       // The destination square has a piece — check its color
@@ -1580,7 +1725,7 @@ function fenBoardToGrid(boardFen) {
 }
 
 function detectTurnFromClocks() {
-  if (SITE === "lichess") {
+  if (IS_CHESSGROUND) {
     const clocks = document.querySelectorAll(".rclock");
     for (const clock of clocks) {
       if (clock.classList.contains("rclock-running")) {
@@ -1623,11 +1768,13 @@ function getPlayerColor() {
   // Chess.com flips the board AFTER rendering the start position,
   // so caching during transitions produces stale values.
   let color = "w";
-  if (SITE === "lichess") {
+  if (IS_CHESSGROUND) {
     color = isLichessFlipped() ? "b" : "w";
   } else if (SITE === "chesscom") {
     const board = getBoardElement();
     color = board && isChesscomFlipped(board) ? "b" : "w";
+  } else if (SITE === "chesstempo") {
+    color = isChesstempFlipped() ? "b" : "w";
   }
   return color;
 }
@@ -1668,6 +1815,8 @@ function gridToFenBoard(grid) {
 function boardToFen() {
   if (SITE === "chesscom") return chesscomBoardToFen();
   if (SITE === "lichess") return lichessBoardToFen();
+  if (SITE === "playstrategy") return playstrategyBoardToFen();
+  if (SITE === "chesstempo") return chesstempoBoardToFen();
   return null;
 }
 
@@ -1735,7 +1884,8 @@ function getBoardGeometry() {
   const sqSize = rect.width / 8;
   const flipped =
     (SITE === "chesscom" && isChesscomFlipped(board)) ||
-    (SITE === "lichess" && isLichessFlipped());
+    (IS_CHESSGROUND && isLichessFlipped()) ||
+    (SITE === "chesstempo" && isChesstempFlipped());
   _geoCache = { board, rect, sqSize, flipped };
   _geoCacheKey = key;
   return _geoCache;
@@ -2588,7 +2738,13 @@ function drawMultiPV(lines) {
  *  On lichess we inject directly into cg-board to avoid offset issues
  *  (cg-board → cg-container → cg-wrap introduces fractional pixel drift). */
 function getOverlayTarget(board) {
-  if (SITE === "lichess") {
+  if (IS_CHESSGROUND) {
+    const pos = getComputedStyle(board).position;
+    if (pos === "static") board.style.position = "relative";
+    return { target: board, dx: 0, dy: 0 };
+  }
+  if (SITE === "chesstempo") {
+    // ChessTempo: board element is already the inner holder (no shadow root)
     const pos = getComputedStyle(board).position;
     if (pos === "static") board.style.position = "relative";
     return { target: board, dx: 0, dy: 0 };
@@ -2644,7 +2800,8 @@ function drawEvalBar(bestLine, source, tablebase) {
   if (rect.width <= 0) return;
   const playerColor = getPlayerColor();
   const flipped = (SITE === "chesscom" && board && isChesscomFlipped(board)) ||
-                  (SITE === "lichess" && isLichessFlipped());
+                  (IS_CHESSGROUND && isLichessFlipped()) ||
+                  (SITE === "chesstempo" && isChesstempFlipped());
 
   // Build the eval bar container
   const container = document.createElement("div");
@@ -2816,10 +2973,10 @@ function drawEvalBar(bestLine, source, tablebase) {
     }
   }
 
-  // On lichess, we inject into cg-board directly. Both cg-board and its
+  // On chessground sites, we inject into cg-board directly. Both cg-board and its
   // ancestor cg-wrap may clip overflow. Override so the eval bar (left:-28px)
   // and WDL bar (bottom:-22px) are visible.
-  if (SITE === "lichess") {
+  if (IS_CHESSGROUND) {
     parent.style.overflow = "visible";
     const cgWrap = parent.closest(".cg-wrap");
     if (cgWrap) cgWrap.style.overflow = "visible";
