@@ -86,6 +86,30 @@ function listSyzygyDirs() {
   }
   return results;
 }
+
+// ── Evaluation cache ─────────────────────────────────────
+const _evalCache = new Map();
+const EVAL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const EVAL_CACHE_MAX = 500;
+
+function getCachedEval(fen, variant, depth) {
+  const key = `${fen}:${variant}:${depth}`;
+  const entry = _evalCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > EVAL_CACHE_TTL) { _evalCache.delete(key); return null; }
+  return entry.result;
+}
+
+function setCachedEval(fen, variant, depth, result) {
+  const key = `${fen}:${variant}:${depth}`;
+  if (_evalCache.size >= EVAL_CACHE_MAX) {
+    // Evict oldest entry
+    const oldest = _evalCache.keys().next().value;
+    _evalCache.delete(oldest);
+  }
+  _evalCache.set(key, { result, ts: Date.now() });
+}
+
 async function main() {
   // ── 0. Load ECO opening database ──────────────────────
   eco.loadEco(path.join(__dirname, "eco"));
@@ -106,6 +130,19 @@ async function main() {
   let currentEngineType = "stockfish"; // "stockfish" | "fairy"
   const originalStockfishPath = config.stockfishPath; // preserve for switching back
 
+  // Global variant generation — incremented on each variant switch to invalidate all pending evals
+  let globalVariantGen = 0;
+
+  // Global evaluation mutex — ensures only one eval accesses the engine at a time.
+  // Per-client queues still exist for ordering, but this prevents cross-client interleave.
+  let globalEvalLock = Promise.resolve();
+  function acquireEvalLock() {
+    let release;
+    const prev = globalEvalLock;
+    globalEvalLock = new Promise(r => { release = r; });
+    return prev.then(() => release);
+  }
+
   // ── 1. Start the Stockfish engine ──────────────────────
   let engine = new StockfishBridge();
   try {
@@ -119,14 +156,18 @@ async function main() {
   let book = new OpeningBook(config.openingBookPath);
   await book.init();
   let lichessBookEnabled = false; // Lichess opening explorer API
+  let lichessInFlight = 0;       // concurrent request limiter
+  const LICHESS_MAX_CONCURRENT = 2;
 
   /** Query Lichess opening explorer for a FEN.
    *  Returns best UCI move string or null. */
   async function lichessLookup(fen) {
     if (!lichessBookEnabled) return null;
+    if (lichessInFlight >= LICHESS_MAX_CONCURRENT) return null; // rate limit
+    lichessInFlight++;
     try {
       const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}&topGames=0&recentGames=0`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
       if (!res.ok) return null;
       let data;
       try {
@@ -145,6 +186,8 @@ async function main() {
     } catch (err) {
       console.warn(`[lichess-book] lookup failed: ${err.message}`);
       return null;
+    } finally {
+      lichessInFlight--;
     }
   }
 
@@ -158,6 +201,9 @@ async function main() {
   async function switchVariant(variantKey) {
     const def = VARIANTS[variantKey];
     if (!def) return { switched: false, error: `Unknown variant: ${variantKey}` };
+
+    // Invalidate all pending evals from all clients before switching
+    globalVariantGen++;
 
     // Set variant immediately so concurrent switch_engine messages see the new variant
     const previousVariant = currentVariant;
@@ -369,12 +415,14 @@ async function main() {
         if (config.searchMovetime) searchOptions.movetime = Number(config.searchMovetime);
         else if (config.searchNodes) searchOptions.nodes = Number(config.searchNodes);
         const gen = ++evalGeneration;
+        const variantGen = globalVariantGen; // snapshot for staleness check
         console.log(`[server] ← FEN (gen ${gen}): ${fen} [variant: ${currentVariant}]`);
 
         // Abort any in-progress evaluation so Stockfish responds immediately
         const abortDone = engine.abort();
 
-        // Queue the evaluation so requests are processed one at a time
+        // Queue the evaluation so requests are processed one at a time.
+        // acquireEvalLock() serializes access to the shared engine across all clients.
         evaluationQueue = evaluationQueue
           .then(() => abortDone) // wait for abort to fully complete
           .then(async () => {
@@ -388,9 +436,9 @@ async function main() {
               await engineSwitchPromise;
             }
 
-            // If a newer FEN arrived since we queued, skip this one
-            if (gen !== evalGeneration) {
-              console.log(`[server] skipping stale eval gen ${gen} (current: ${evalGeneration})`);
+            // If a newer FEN arrived or variant switched since we queued, skip this one
+            if (gen !== evalGeneration || variantGen !== globalVariantGen) {
+              console.log(`[server] skipping stale eval gen ${gen} (current: ${evalGeneration}, variantGen: ${variantGen}→${globalVariantGen})`);
               return;
             }
 
@@ -398,8 +446,9 @@ async function main() {
             const isStandard = currentVariant === "chess" || currentVariant === "chess960";
             const posEco = isStandard ? getEco(fen) : null;
 
-            // Try opening book first (standard chess only)
-            if (isStandard) {
+            // Try opening book first (standard chess only, skip for deep positions)
+            const moveNumber = parseInt(fen.split(" ")[5]) || 1;
+            if (isStandard && moveNumber <= 15) {
               const bookMove = await book.lookup(fen);
               if (bookMove) {
                 if (gen !== evalGeneration) return;
@@ -438,70 +487,128 @@ async function main() {
               }
             }
 
-            // Fall back to Stockfish
-            // For infinite analysis (depth=0), stream intermediate results
-            if (depth === 0) {
-              searchOptions.infinite = true;
-              searchOptions.onInfo = (info) => {
-                if (gen !== evalGeneration) return;
-                if (ws.readyState !== ws.OPEN) return;
-                const enrichedLines = enrichLines(info.lines || [], fen);
-                const infoMsg = {
+            // Fall back to Stockfish — check eval cache first (skip for infinite analysis)
+            if (depth > 0) {
+              const cached = getCachedEval(fen, currentVariant, depth);
+              if (cached) {
+                console.log(`[server] → bestmove (cache): ${cached.bestmove}`);
+                const cacheMsg = {
                   type: "bestmove",
-                  bestmove: info.bestmove,
-                  lines: enrichedLines,
+                  bestmove: cached.bestmove,
+                  lines: cached.lines,
                   source: "engine",
-                  depth: info.depth,
                   fen,
                   variant: currentVariant,
                   eco: posEco ? posEco.name : null,
                   ecoCode: posEco ? posEco.code : null,
-                  streaming: true,
+                  tablebase: cached.tablebase,
+                  cached: true,
                 };
-                safeSend(ws, infoMsg);
-                broadcast(ws, infoMsg);
-              };
-            }
-            const result = await engine.evaluate(fen, depth, searchOptions);
-            // Check again after eval finishes — a newer FEN may have arrived
-            if (gen !== evalGeneration) {
-              console.log(`[server] discarding stale result gen ${gen}`);
-              return;
-            }
-            const enrichedLines = enrichLines(result.lines || [], fen);
-            console.log(`[server] → bestmove (engine): ${result.bestmove}`);
-
-            // Endgame tablebase classification
-            let tbResult = null;
-            if (config.syzygyPath && isStandard) {
-              const pieceCount = fen.split(" ")[0].replace(/[^a-zA-Z]/g, "").length;
-              if (pieceCount <= 7 && result.lines && result.lines[0]) {
-                const line = result.lines[0];
-                const score = line.score;
-                const mate = line.mate;
-                if (mate !== undefined && mate !== null) {
-                  tbResult = mate > 0 ? "win" : "loss";
-                } else if (score !== undefined && score !== null) {
-                  if (Math.abs(score) >= 9000) tbResult = score > 0 ? "win" : "loss";
-                  else if (Math.abs(score) <= 5) tbResult = "draw";
-                  else tbResult = score > 0 ? "win" : "loss";
-                }
+                safeSend(ws, cacheMsg);
+                broadcast(ws, cacheMsg);
+                return;
               }
             }
 
-            const engineMsg = {
-              type: "bestmove",
-              bestmove: result.bestmove,
-              lines: enrichedLines,
-              source: "engine",
-              fen,
-              variant: currentVariant,
-              eco: posEco ? posEco.name : null,
-              ecoCode: posEco ? posEco.code : null,
-              tablebase: tbResult,
-            };
-            safeSend(ws, engineMsg);
-            broadcast(ws, engineMsg);
+            // Acquire global lock to prevent cross-client interleave
+            const releaseEval = await acquireEvalLock();
+            try {
+              if (gen !== evalGeneration || ws.readyState !== ws.OPEN) return;
+
+              // Send engine progress updates to panel
+              let _lastProgressDepth = 0;
+              searchOptions.onInfo = (info) => {
+                if (gen !== evalGeneration || ws.readyState !== ws.OPEN) return;
+                const d = info.depth || 0;
+                // For infinite analysis, send full intermediate results
+                if (depth === 0) {
+                  const enrichedLines = enrichLines(info.lines || [], fen);
+                  const infoMsg = {
+                    type: "bestmove",
+                    bestmove: info.bestmove,
+                    lines: enrichedLines,
+                    source: "engine",
+                    depth: d,
+                    fen,
+                    variant: currentVariant,
+                    eco: posEco ? posEco.name : null,
+                    ecoCode: posEco ? posEco.code : null,
+                    streaming: true,
+                  };
+                  safeSend(ws, infoMsg);
+                  broadcast(ws, infoMsg);
+                } else if (d > _lastProgressDepth) {
+                  // For fixed-depth analysis, send lightweight progress
+                  _lastProgressDepth = d;
+                  const first = (info.lines && info.lines[0]) || {};
+                  const progressMsg = {
+                    type: "eval_progress",
+                    depth: d,
+                    targetDepth: depth,
+                    nodes: first.nodes || null,
+                    nps: first.nps || null,
+                    fen,
+                  };
+                  safeSend(ws, progressMsg);
+                  broadcast(ws, progressMsg);
+                }
+              };
+
+              // For infinite analysis (depth=0), stream intermediate results
+              if (depth === 0) {
+                searchOptions.infinite = true;
+              }
+              const result = await engine.evaluate(fen, depth, searchOptions);
+              // Check again after eval finishes — a newer FEN may have arrived
+              if (gen !== evalGeneration) {
+                console.log(`[server] discarding stale result gen ${gen}`);
+                return;
+              }
+              const enrichedLines = enrichLines(result.lines || [], fen);
+              console.log(`[server] → bestmove (engine): ${result.bestmove}`);
+
+              // Endgame tablebase classification
+              let tbResult = null;
+              if (config.syzygyPath && isStandard) {
+                const pieceCount = fen.split(" ")[0].replace(/[^a-zA-Z]/g, "").length;
+                if (pieceCount <= 7 && result.lines && result.lines[0]) {
+                  const line = result.lines[0];
+                  const score = line.score;
+                  const mate = line.mate;
+                  if (mate !== undefined && mate !== null) {
+                    tbResult = mate > 0 ? "win" : "loss";
+                  } else if (score !== undefined && score !== null) {
+                    if (Math.abs(score) >= 9000) tbResult = score > 0 ? "win" : "loss";
+                    else if (Math.abs(score) <= 5) tbResult = "draw";
+                    else tbResult = score > 0 ? "win" : "loss";
+                  }
+                }
+              }
+
+              const engineMsg = {
+                type: "bestmove",
+                bestmove: result.bestmove,
+                lines: enrichedLines,
+                source: "engine",
+                fen,
+                variant: currentVariant,
+                eco: posEco ? posEco.name : null,
+                ecoCode: posEco ? posEco.code : null,
+                tablebase: tbResult,
+              };
+              // Cache the result for future lookups (skip infinite analysis)
+              if (depth > 0 && result.bestmove) {
+                setCachedEval(fen, currentVariant, depth, {
+                  bestmove: result.bestmove,
+                  lines: enrichedLines,
+                  tablebase: tbResult,
+                });
+              }
+              safeSend(ws, engineMsg);
+              broadcast(ws, engineMsg);
+            } finally {
+              releaseEval();
+            }
           })
           .catch((err) => {
             console.error("[server] evaluation error:", err.message);

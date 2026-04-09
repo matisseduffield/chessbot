@@ -195,7 +195,7 @@ class StockfishBridge {
           this._pendingPV = null;
           resolve();
         }
-      }, 1500);
+      }, 3000);
     });
   }
 
@@ -308,11 +308,16 @@ class StockfishBridge {
   _defaultLineHandler(line) {
     // Collect info lines with multipv data
     if (line.startsWith("info") && line.includes(" pv ")) {
-      // Only log info lines at significant depth intervals to reduce log noise
+      // Only log at key depth milestones to reduce noise
       const _depthMatch = line.match(/\bdepth (\d+)/);
       const _d = _depthMatch ? parseInt(_depthMatch[1], 10) : 0;
-      if (_d <= 4 || _d % 3 === 0 || _d >= (this._pendingTargetDepth || 15) - 1) {
-        console.log(`[stockfish] ${line}`);
+      if (_d <= 2 || _d >= (this._pendingTargetDepth || 15) - 1) {
+        const _cpMatch = line.match(/\bscore cp (-?\d+)/);
+        const _mateMatch = line.match(/\bscore mate (-?\d+)/);
+        const _nodesMatch = line.match(/\bnodes (\d+)/);
+        const score = _mateMatch ? `M${_mateMatch[1]}` : (_cpMatch ? `cp ${_cpMatch[1]}` : "?");
+        const nodes = _nodesMatch ? _nodesMatch[1] : "?";
+        console.log(`[stockfish] depth ${_d}, ${score}, nodes ${nodes}`);
       }
 
       // Parse: info depth D ... multipv N score cp X ... pv MOVE1 MOVE2 ...
@@ -331,6 +336,14 @@ class StockfishBridge {
 
         if (cpMatch) entry.score = parseInt(cpMatch[1], 10);
         if (mateMatch) entry.mate = parseInt(mateMatch[1], 10);
+
+        // Parse nodes and nps for confidence metrics
+        const nodesMatch = line.match(/\bnodes (\d+)/);
+        const npsMatch = line.match(/\bnps (\d+)/);
+        const timeMatch = line.match(/\btime (\d+)/);
+        if (nodesMatch) entry.nodes = parseInt(nodesMatch[1], 10);
+        if (npsMatch) entry.nps = parseInt(npsMatch[1], 10);
+        if (timeMatch) entry.timeMs = parseInt(timeMatch[1], 10);
 
         // Parse WDL if present: "wdl 553 367 80"
         const wdlMatch = line.match(/\bwdl (\d+) (\d+) (\d+)/);

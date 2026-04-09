@@ -106,6 +106,17 @@
     font-family: 'JetBrains Mono', monospace;
     z-index: 2;
   }
+  #wdl-bar {
+    display: flex;
+    width: 100%;
+    height: 6px;
+    border-radius: 0 0 4px 4px;
+    overflow: hidden;
+    margin-top: -1px;
+  }
+  #wdl-win { background: #2ecc71; height: 100%; transition: width 0.4s; }
+  #wdl-draw { background: #95a5a6; height: 100%; transition: width 0.4s; }
+  #wdl-loss { background: #e74c3c; height: 100%; transition: width 0.4s; }
   #board-col {
     display: flex;
     flex-direction: column;
@@ -218,6 +229,22 @@
     color: var(--text-300);
     font-family: 'JetBrains Mono', monospace;
   }
+  .pv-metrics {
+    display: flex;
+    gap: 8px;
+    font-size: 9px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-500);
+    margin-top: 3px;
+  }
+  #eval-progress {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--accent);
+    padding: 4px 8px;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
   .empty-state {
     color: var(--text-500);
     font-size: 13px;
@@ -728,7 +755,8 @@
     font-family: 'JetBrains Mono', monospace;
     font-size: 10px;
     color: var(--text-400);
-    word-break: break-all;
+    white-space: nowrap;
+    overflow-x: auto;
     padding: 6px 8px;
     background: var(--bg-800);
     border-radius: var(--radius-sm);
@@ -796,6 +824,11 @@
           <div id="eval-bar-bot"></div>
         </div>
         <div id="eval-bar-score" style="bottom:4px;color:#333;">0.0</div>
+        <div id="wdl-bar" style="display:none">
+          <div id="wdl-win"></div>
+          <div id="wdl-draw"></div>
+          <div id="wdl-loss"></div>
+        </div>
       </div>
       <div id="board-col">
         <div id="eco-label"></div>
@@ -804,6 +837,7 @@
         </div>
       </div>
     </div>
+    <div id="eval-progress" style="display:none"></div>
     <div id="pvs">
       <div class="empty-state">Waiting for analysis…</div>
     </div>
@@ -1046,9 +1080,9 @@
             <label><input type="radio" name="display-mode" value="both" checked><span>Both</span></label>
           </div>
           <div class="sub-label" style="margin-top:10px">Voice Speed</div>
-          <div class="slider-row">
-            <input type="range" class="panel-slider" id="voice-speed-slider" min="0.5" max="2" step="0.1" value="1.1">
-            <span class="slider-value" id="voice-speed-value">1.1</span>
+          <div class="setting-row">
+            <input type="range" id="voice-speed-slider" min="0.5" max="2" step="0.1" value="1.1">
+            <span class="range-value" id="voice-speed-value">1.1</span>
           </div>
         </div>
 
@@ -1077,12 +1111,18 @@
 <script>
 // ── State ────────────────────────────────────────────────
 let ws = null;
+let wsBackoff = 1000;
 let selectedPV = 1;
 let currentData = null; // last bestmove response
 let voiceEnabled = false;
 let lastSpoken = "";
 let searchMovetime = null; // null = disabled
 let searchNodes = null;    // null = disabled
+
+function escHtml(s) {
+  if (!s) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 
 // ── SVG Piece Paths (cburnett style) ─────────────────────
 const PIECE_SVG = {
@@ -1171,6 +1211,7 @@ function connect() {
   ws = new WebSocket(`${proto}//${location.host}`);
 
   ws.onopen = () => {
+    wsBackoff = 1000; // reset backoff on successful connection
     document.getElementById("status-dot").className = "status-dot connected";
     document.getElementById("status-text").textContent = "Connected";
     // Request current settings
@@ -1180,7 +1221,9 @@ function connect() {
   ws.onclose = () => {
     document.getElementById("status-dot").className = "status-dot disconnected";
     document.getElementById("status-text").textContent = "Disconnected";
-    setTimeout(connect, 3000);
+    wsBackoff = Math.min(wsBackoff * 1.5, 30000);
+    const jitter = Math.random() * 1000;
+    setTimeout(connect, wsBackoff + jitter);
   };
 
   ws.onerror = () => {};
@@ -1190,10 +1233,23 @@ function connect() {
     try { msg = JSON.parse(evt.data); } catch { return; }
 
     if (msg.type === "bestmove") {
+      if (!msg.fen || typeof msg.fen !== "string") return;
+      if (msg.lines && !Array.isArray(msg.lines)) return;
       currentData = msg;
       selectedPV = 1;
+      // Clear progress indicator on final result
+      const progEl = document.getElementById("eval-progress");
+      if (progEl && !msg.streaming) progEl.style.display = "none";
       renderAll();
       if (voiceEnabled) speak(msg);
+    }
+    if (msg.type === "eval_progress") {
+      const progEl = document.getElementById("eval-progress");
+      if (progEl) {
+        const nps = msg.nps ? (msg.nps >= 1e6 ? `${(msg.nps / 1e6).toFixed(1)}M nps` : `${Math.round(msg.nps / 1e3)}K nps`) : "";
+        progEl.textContent = `Depth ${msg.depth}/${msg.targetDepth}${nps ? " · " + nps : ""}`;
+        progEl.style.display = "block";
+      }
     }
     if (msg.type === "settings") {
       applySettings(msg);
@@ -1294,6 +1350,26 @@ function renderEvalBar() {
   } else {
     scoreEl.style.top = "4px"; scoreEl.style.bottom = "auto";
     scoreEl.style.color = "#ccc";
+  }
+
+  // WDL bar — show win/draw/loss percentages if available
+  const wdlBar = document.getElementById("wdl-bar");
+  if (best.wdl) {
+    const total = best.wdl.win + best.wdl.draw + best.wdl.loss;
+    if (total > 0) {
+      const turn = currentData.fen ? currentData.fen.split(" ")[1] : "w";
+      // WDL is from side-to-move; show from white's perspective
+      const w = turn === "w" ? best.wdl.win : best.wdl.loss;
+      const d = best.wdl.draw;
+      const l = turn === "w" ? best.wdl.loss : best.wdl.win;
+      document.getElementById("wdl-win").style.width = `${(w / total * 100).toFixed(1)}%`;
+      document.getElementById("wdl-draw").style.width = `${(d / total * 100).toFixed(1)}%`;
+      document.getElementById("wdl-loss").style.width = `${(l / total * 100).toFixed(1)}%`;
+      wdlBar.title = `W: ${(w / 10).toFixed(1)}%  D: ${(d / 10).toFixed(1)}%  L: ${(l / 10).toFixed(1)}%`;
+      wdlBar.style.display = "flex";
+    }
+  } else {
+    wdlBar.style.display = "none";
   }
 }
 
@@ -1480,8 +1556,8 @@ function renderPVs() {
         <span class="pv-rank">Book Move</span>
         <span class="pv-source book">BOOK</span>
       </div>
-      <div class="pv-eco">${currentData.eco || ""}</div>
-      <div style="font-size:18px;font-weight:800;font-family:monospace;color:var(--orange)">${currentData.bestmove || ""}</div>
+      <div class="pv-eco">${escHtml(currentData.eco)}</div>
+      <div style="font-size:18px;font-weight:800;font-family:monospace;color:var(--orange)">${escHtml(currentData.bestmove)}</div>
     </div>`;
     return;
   }
@@ -1509,13 +1585,29 @@ function renderPVs() {
     const sanMoves = line.san || line.pv || [];
     const eco = line.eco || "";
 
+    // Build confidence metrics string
+    const metrics = [];
+    if (line.nodes) {
+      const n = line.nodes;
+      metrics.push(n >= 1e6 ? `${(n / 1e6).toFixed(1)}M nodes` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}K nodes` : `${n} nodes`);
+    }
+    if (line.timeMs) {
+      metrics.push(line.timeMs >= 1000 ? `${(line.timeMs / 1000).toFixed(1)}s` : `${line.timeMs}ms`);
+    }
+    if (line.nps) {
+      const nps = line.nps;
+      metrics.push(nps >= 1e6 ? `${(nps / 1e6).toFixed(1)}M nps` : `${(nps / 1e3).toFixed(0)}K nps`);
+    }
+    const metricsHtml = metrics.length ? `<div class="pv-metrics">${metrics.map(m => `<span>${escHtml(m)}</span>`).join("")}</div>` : "";
+
     card.innerHTML = `
       <div class="pv-header">
-        <span class="pv-rank">PV ${i + 1} <span class="pv-source engine">${currentData.source === "book" ? "BOOK" : "ENGINE"}</span>${line.depth ? `<span class="pv-depth">D${line.depth}</span>` : ""}</span>
-        <span class="pv-score" style="color:${scoreColor}">${scoreText}</span>
+        <span class="pv-rank">PV ${i + 1} <span class="pv-source engine">${currentData.source === "book" ? "BOOK" : "ENGINE"}</span>${line.depth ? `<span class="pv-depth">D${escHtml(line.depth)}</span>` : ""}</span>
+        <span class="pv-score" style="color:${scoreColor}">${escHtml(scoreText)}</span>
       </div>
-      <div class="pv-eco" title="${eco}">${eco}</div>
-      <div class="pv-moves">${sanMoves.slice(0, 16).map((m, j) => `<span>${m}</span>`).join("")}</div>
+      <div class="pv-eco" title="${escHtml(eco)}">${escHtml(eco)}</div>
+      <div class="pv-moves">${sanMoves.slice(0, 16).map((m, j) => `<span>${escHtml(m)}</span>`).join("")}</div>
+      ${metricsHtml}
     `;
     container.appendChild(card);
   }
@@ -1635,10 +1727,17 @@ document.getElementById("chk-voice-opening").addEventListener("change", (e) => {
 });
 document.getElementById("voice-speed-slider").addEventListener("input", (e) => {
   document.getElementById("voice-speed-value").textContent = e.target.value;
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_speed", value: parseFloat(e.target.value) } }));
-  }
-  saveSettings();
+});
+// Debounce the WS broadcast for voice speed so we don't flood on every drag pixel
+let _voiceSpeedTimer = null;
+document.getElementById("voice-speed-slider").addEventListener("change", (e) => {
+  clearTimeout(_voiceSpeedTimer);
+  _voiceSpeedTimer = setTimeout(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_speed", value: parseFloat(e.target.value) } }));
+    }
+    saveSettings();
+  }, 150);
 });
 document.getElementById("chk-training-mode").addEventListener("change", (e) => {
   const opts = document.getElementById("training-options");
@@ -1954,6 +2053,7 @@ function applySettings(msg) {
         for (const opt of bookSel.options) {
           opt.selected = savedBooks.includes(opt.value);
         }
+        if (bookSel._syncCustomUI) bookSel._syncCustomUI();
       }
       if (saved.syzygy !== undefined && [...szSel.options].some(o => o.value === saved.syzygy)) {
         szSel.value = saved.syzygy;
@@ -2157,12 +2257,24 @@ function initCustomSelects() {
         },
         configurable: true,
       });
+    } else {
+      // For multi-selects: programmatic opt.selected changes don't fire events,
+      // so expose a syncUI() helper and also listen for change events
+      sel._syncCustomUI = () => { buildOptions(); syncTrigger(); };
+      sel.addEventListener("change", () => { buildOptions(); syncTrigger(); });
     }
   });
 
   // Close all dropdowns when clicking outside
   document.addEventListener("click", () => {
     document.querySelectorAll(".custom-select.open").forEach((el) => el.classList.remove("open"));
+  });
+
+  // Close dropdowns on Escape key
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      document.querySelectorAll(".custom-select.open").forEach((el) => el.classList.remove("open"));
+    }
   });
 }
 

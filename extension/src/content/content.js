@@ -670,6 +670,7 @@ function findVariantBoardContainer() {
  *  Chess.com uses a web-component (<wc-chess-board>) whose shadow-DOM
  *  mutations may not bubble to an external observer, so we also poll. */
 let pollTimer = null;
+let lastMutationTime = 0; // timestamp of last real board mutation
 
 function observeBoard(boardEl) {
   if (observer) observer.disconnect();
@@ -688,6 +689,7 @@ function observeBoard(boardEl) {
       return false;
     });
     if (dominated) return;
+    lastMutationTime = Date.now();
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(readAndSend, 400);
   });
@@ -727,9 +729,11 @@ function observeBoard(boardEl) {
     }, true);
   }
 
-  // Polling fallback — check every 800ms regardless of observer
+  // Polling fallback — skip if mutations are actively firing, use longer interval
   pollTimer = setInterval(() => {
     if (!enabled || !boardReady) return;
+    // Skip poll if a recent mutation already triggered readAndSend
+    if (Date.now() - lastMutationTime < 1500) return;
     try {
       // Verify the board element is still in the DOM (SPA navigation)
       const currentBoard = getBoardElement();
@@ -1672,10 +1676,11 @@ function clearMoveIndicators() {
   const board = getBoardElement();
   if (board && board.shadowRoot) roots.push(board.shadowRoot);
   for (const root of roots) {
+    // Clear SVG children instead of removing containers (persist-svg optimisation)
     const existing = root.getElementById("chessbot-arrow-svg");
-    if (existing) existing.remove();
+    if (existing) existing.innerHTML = "";
     const bg = root.getElementById("chessbot-bg-svg");
-    if (bg) bg.remove();
+    if (bg) bg.innerHTML = "";
     root.querySelectorAll(".chessbot-eval-badge").forEach((el) => el.remove());
     root.querySelectorAll(".chessbot-training-feedback").forEach((el) => el.remove());
     root.querySelectorAll(".chessbot-hint-btn").forEach((el) => el.remove());
@@ -1697,16 +1702,25 @@ function clearArrow() {
 
 // ── Board geometry helpers ───────────────────────────────────
 
+// Cache for getBoardGeometry — invalidated by board resize
+let _geoCache = null;
+let _geoCacheKey = "";
+
 function getBoardGeometry() {
   const board = getBoardElement();
-  if (!board) return null;
+  if (!board) { _geoCache = null; return null; }
   const rect = (SITE === "chesscom") ? getVisualBoardRect(board) : board.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) return null;
+  if (rect.width <= 0 || rect.height <= 0) { _geoCache = null; return null; }
+  // Cache key: board identity + dimensions (changes on resize or board swap)
+  const key = `${board.id || ""}:${Math.round(rect.width)}:${Math.round(rect.height)}`;
+  if (_geoCache && _geoCacheKey === key) return _geoCache;
   const sqSize = rect.width / 8;
   const flipped =
     (SITE === "chesscom" && isChesscomFlipped(board)) ||
     (SITE === "lichess" && isLichessFlipped());
-  return { board, rect, sqSize, flipped };
+  _geoCache = { board, rect, sqSize, flipped };
+  _geoCacheKey = key;
+  return _geoCache;
 }
 
 function squareTopLeft(file, rank, sqSize, flipped) {
@@ -1797,6 +1811,24 @@ function getOrCreateBgSvg(board, rect) {
   return bg;
 }
 
+/** Create or retrieve the foreground arrow SVG layer (sits on top of pieces). */
+function getOrCreateArrowSvg(board, rect) {
+  const { target, dx, dy } = getOverlayTarget(board);
+  let svg = target.querySelector ? target.querySelector("#chessbot-arrow-svg") : null;
+  if (!svg) {
+    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.id = "chessbot-arrow-svg";
+    svg.style.cssText = `position:absolute;top:${dy}px;left:${dx}px;pointer-events:none;z-index:1000;`;
+    target.appendChild(svg);
+  }
+  svg.setAttribute("width", rect.width);
+  svg.setAttribute("height", rect.height);
+  svg.style.width = `${rect.width}px`;
+  svg.style.height = `${rect.height}px`;
+  svg.innerHTML = "";
+  return svg;
+}
+
 /** Draw a coloured square highlight: fill on background SVG (behind pieces), border on foreground SVG (on top). */
 function drawSquareHighlight(svg, file, rank, sqSize, flipped, color, style, bgSvg) {
   const tl = squareTopLeft(file, rank, sqSize, flipped);
@@ -1846,14 +1878,9 @@ function drawTrainingHint(uci, bestLine, source) {
   if (!squares) return;
   const { from, to } = squares;
 
-  // Background SVG for fills (behind pieces)
   const bgSvg = getOrCreateBgSvg(board, rect);
 
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.id = "chessbot-arrow-svg";
-  svg.setAttribute("width", rect.width);
-  svg.setAttribute("height", rect.height);
-  svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
+  const svg = getOrCreateArrowSvg(board, rect);
 
   const hintColor = "rgba(168,85,247,0.5)"; // purple
   const borderColor = "rgba(168,85,247,0.9)";
@@ -2332,11 +2359,7 @@ function drawSingleMove(uci, bestLine, source) {
   const { from, to } = squares;
   const isBook = source === "book" || source === "lichess";
 
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.id = "chessbot-arrow-svg";
-  svg.setAttribute("width", rect.width);
-  svg.setAttribute("height", rect.height);
-  svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
+  const svg = getOrCreateArrowSvg(board, rect);
 
   const moveColor = source === "lichess" ? "rgba(66,133,244,0.95)" : isBook ? "rgba(212,160,23,0.9)" : "rgba(16,185,129,0.9)";
   const boxColorFrom = source === "lichess" ? "rgba(66,133,244,0.4)" : isBook ? "rgba(212,160,23,0.4)" : "rgba(16,185,129,0.4)";
@@ -2430,8 +2453,6 @@ function drawSingleMove(uci, bestLine, source) {
     text.textContent = scoreText;
     svg.appendChild(text);
   }
-
-  injectOverlay(board, svg);
 }
 
 // ── Multi-PV: colored eval badges on destination squares ─────
@@ -2468,12 +2489,8 @@ function drawMultiPV(lines) {
   if (!geo) return;
   const { board, rect, sqSize, flipped } = geo;
 
-  // Create an SVG layer for arrows
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.id = "chessbot-arrow-svg";
-  svg.setAttribute("width", rect.width);
-  svg.setAttribute("height", rect.height);
-  svg.style.cssText = `position:absolute;top:0;left:0;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:1000;`;
+  // Create or reuse SVG layer for arrows
+  const svg = getOrCreateArrowSvg(board, rect);
 
   // Background SVG for fills (behind pieces)
   const bgSvg = (displayMode === "box" || displayMode === "both") ? getOrCreateBgSvg(board, rect) : null;
@@ -2542,8 +2559,6 @@ function drawMultiPV(lines) {
     text.textContent = badgeText;
     svg.appendChild(text);
   }
-
-  injectOverlay(board, svg);
 }
 
 // ── Inject SVG overlay into board container ──────────────────
