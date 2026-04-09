@@ -316,6 +316,10 @@ async function main() {
     if (config.defaultDepth !== undefined) {
       safeSend(ws, { type: "set_depth", value: config.defaultDepth });
     }
+    // Send current search limits
+    if (config.searchMovetime || config.searchNodes) {
+      safeSend(ws, { type: "set_search_limits", movetime: config.searchMovetime, nodes: config.searchNodes });
+    }
 
     // Per-client generation counter — prevents cross-client eval interference
     let evalGeneration = 0;
@@ -356,8 +360,8 @@ async function main() {
 
         const depth = config.defaultDepth;
         const searchOptions = {};
-        if (msg.movetime) searchOptions.movetime = Number(msg.movetime);
-        if (msg.nodes) searchOptions.nodes = Number(msg.nodes);
+        if (config.searchMovetime) searchOptions.movetime = Number(config.searchMovetime);
+        else if (config.searchNodes) searchOptions.nodes = Number(config.searchNodes);
         const gen = ++evalGeneration;
         console.log(`[server] ← FEN (gen ${gen}): ${fen} [variant: ${currentVariant}]`);
 
@@ -519,6 +523,12 @@ async function main() {
 
       // ── Broadcast — relay a message from panel to all other clients ──
       if (msg.type === "broadcast" && msg.payload) {
+        // Store search limits server-side so they're authoritative
+        if (msg.payload.type === "set_search_limits") {
+          config.searchMovetime = msg.payload.movetime || null;
+          config.searchNodes = msg.payload.nodes || null;
+          console.log(`[server] search limits: movetime=${config.searchMovetime} nodes=${config.searchNodes}`);
+        }
         broadcast(ws, msg.payload);
       }
 

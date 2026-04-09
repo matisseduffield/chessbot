@@ -49,4 +49,6 @@ module.exports = {
 
   // ── Analysis defaults ─────────────────────────────────
   defaultDepth: 15,
+  searchMovetime: null,  // ms — set from panel
+  searchNodes: null,     // node count — set from panel
 };

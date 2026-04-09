@@ -158,15 +158,6 @@
     border-color: var(--accent);
     background: linear-gradient(135deg, var(--accent-muted), transparent);
   }
-  .pv-card.pv-losing {
-    border-color: var(--red);
-    background: linear-gradient(135deg, var(--red-muted), transparent);
-  }
-  .pv-card.pv-losing .pv-rank { color: var(--red); }
-  .pv-card.pv-winning {
-    border-color: var(--green);
-    background: linear-gradient(135deg, var(--green-muted), transparent);
-  }
   .pv-header {
     display: flex;
     justify-content: space-between;
@@ -1515,9 +1506,6 @@ function renderPVs() {
     const isBad = (line.mate !== undefined && line.mate !== null) ? line.mate < 0
       : (line.score !== undefined && line.score !== null) ? line.score < -50 : false;
     const scoreColor = isGood ? "var(--green)" : "var(--red)";
-    // Highlight losing PVs (negative score or getting mated) with red tint
-    if (isBad) card.classList.add("pv-losing");
-    else if (isGood && i === 0) card.classList.add("pv-winning");
     const sanMoves = line.san || line.pv || [];
     const eco = line.eco || "";
 
