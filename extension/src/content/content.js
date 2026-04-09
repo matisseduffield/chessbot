@@ -27,8 +27,8 @@ let pendingInitialFen = null; // FEN read before WS was ready, to send on connec
 let currentDepth = 15; // analysis depth, updated from popup settings
 let isDragging = false; // true while user is dragging a piece
 let waitingForOpponent = false; // true after our move, until board changes again
-let renderGeneration = 0;
-let dragHandlersAttached = false; // prevent duplicate drag listeners on reconnect // increments on each board change — prevents stale overlays
+let renderGeneration = 0; // increments on each board change — prevents stale overlays
+let documentDragHandlersAttached = false; // document-level handlers added only once
 let lastKnownTurn = null; // last successfully detected turn — for alternation fallback
 let voiceEnabled = false; // TTS — toggled from popup
 let voiceEvalEnabled = false; // announce eval score changes
@@ -189,7 +189,6 @@ function onPossibleNavigation() {
   lastPieceCount = 0;
   pendingEval = false;
   waitingForOpponent = false;
-  dragHandlersAttached = false; // re-attach drag listeners to new board element
   renderGeneration++;
   clearArrow();
 
@@ -723,26 +722,29 @@ function observeBoard(boardEl) {
   }
 
   // Drag detection — suppress board reads while user is holding a piece
-  // Re-attach when board element changes (SPA navigation replaces the board)
-  if (!dragHandlersAttached || !boardEl.dataset.chessbotDragBound) {
-    dragHandlersAttached = true;
+  // Document-level handlers (mouseup/touchend) are added only once;
+  // board-specific handlers (mousedown/touchstart) re-attach on new board.
+  if (!documentDragHandlersAttached) {
+    documentDragHandlersAttached = true;
+    document.addEventListener("mouseup", (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      setTimeout(() => { if (enabled && boardReady) readAndSend(); }, 150);
+    }, true);
+    document.addEventListener("touchend", () => {
+      if (!isDragging) return;
+      isDragging = false;
+      setTimeout(() => { if (enabled && boardReady) readAndSend(); }, 150);
+    }, true);
+  }
+  if (!boardEl.dataset.chessbotDragBound) {
     boardEl.dataset.chessbotDragBound = "1";
     const dragTarget = boardEl.shadowRoot || boardEl;
     dragTarget.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
       isDragging = true;
     }, true);
-    document.addEventListener("mouseup", (e) => {
-      if (!isDragging) return;
-      isDragging = false;
-      setTimeout(() => { if (enabled && boardReady) readAndSend(); }, 150);
-    }, true);
     dragTarget.addEventListener("touchstart", () => { isDragging = true; }, true);
-    document.addEventListener("touchend", () => {
-      if (!isDragging) return;
-      isDragging = false;
-      setTimeout(() => { if (enabled && boardReady) readAndSend(); }, 150);
-    }, true);
   }
 
   // Polling fallback — skip if mutations are actively firing, use longer interval

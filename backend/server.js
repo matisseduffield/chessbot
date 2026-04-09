@@ -92,16 +92,16 @@ const _evalCache = new Map();
 const EVAL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const EVAL_CACHE_MAX = 500;
 
-function getCachedEval(fen, variant, depth) {
-  const key = `${fen}:${variant}:${depth}`;
+function getCachedEval(fen, variant, depth, multiPV) {
+  const key = `${fen}:${variant}:${depth}:${multiPV}`;
   const entry = _evalCache.get(key);
   if (!entry) return null;
   if (Date.now() - entry.ts > EVAL_CACHE_TTL) { _evalCache.delete(key); return null; }
   return entry.result;
 }
 
-function setCachedEval(fen, variant, depth, result) {
-  const key = `${fen}:${variant}:${depth}`;
+function setCachedEval(fen, variant, depth, multiPV, result) {
+  const key = `${fen}:${variant}:${depth}:${multiPV}`;
   if (_evalCache.size >= EVAL_CACHE_MAX) {
     // Evict oldest entry
     const oldest = _evalCache.keys().next().value;
@@ -488,8 +488,9 @@ async function main() {
             }
 
             // Fall back to Stockfish — check eval cache first (skip for infinite analysis)
+            const multiPV = Number(engine.getSettings().MultiPV) || 1;
             if (depth > 0) {
-              const cached = getCachedEval(fen, currentVariant, depth);
+              const cached = getCachedEval(fen, currentVariant, depth, multiPV);
               if (cached) {
                 console.log(`[server] → bestmove (cache): ${cached.bestmove}`);
                 const cacheMsg = {
@@ -598,7 +599,7 @@ async function main() {
               };
               // Cache the result for future lookups (skip infinite analysis)
               if (depth > 0 && result.bestmove) {
-                setCachedEval(fen, currentVariant, depth, {
+                setCachedEval(fen, currentVariant, depth, multiPV, {
                   bestmove: result.bestmove,
                   lines: enrichedLines,
                   tablebase: tbResult,
@@ -625,6 +626,11 @@ async function main() {
           config.defaultDepth = d === 0 ? 0 : Math.min(50, Math.max(1, d || 15));
         } else {
           engine.setOption(msg.name, msg.value);
+        }
+        // Clear eval cache when settings that affect results change
+        if (["depth", "MultiPV", "Skill Level"].includes(msg.name)) {
+          _evalCache.clear();
+          console.log(`[server] eval cache cleared (${msg.name} changed)`);
         }
         safeSend(ws, { type: "option_set", name: msg.name, value: msg.value });
       }
