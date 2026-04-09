@@ -483,11 +483,14 @@ function connectWS() {
           return;
         }
         // Discard stale responses if the position has changed since we sent the eval.
-        // Compare the full FEN (including turn) so a result for white's turn
-        // is never applied when it's now black's turn (and vice versa).
+        // Compare board position + turn so a result for white's turn is never applied
+        // when it's now black's turn (and vice versa). Don't compare castling/en passant/
+        // counters since those fields may differ between reads of the same position.
         const genAtReceive = renderGeneration;
         if (msg.fen && lastSentFen) {
-          if (msg.fen !== lastSentFen) {
+          const rParts = msg.fen.split(" ");
+          const sParts = lastSentFen.split(" ");
+          if (rParts[0] !== sParts[0] || rParts[1] !== sParts[1]) {
             console.log("[chessbot] ignoring stale bestmove (position/turn changed)");
             return;
           }
@@ -686,12 +689,22 @@ function observeBoard(boardEl) {
       if (t.id && t.id.startsWith("chessbot-")) return true;
       if (t.classList && t.classList.contains("chessbot-eval-badge")) return true;
       if (t.closest && t.closest("#chessbot-arrow-svg, #chessbot-bg-svg, #chessbot-eval-bar, .chessbot-eval-badge")) return true;
+      // Also check addedNodes/removedNodes — appending/removing our badges
+      // triggers childList mutations whose target is the parent (board), not
+      // the badge itself, so the checks above miss them.
+      if (m.type === "childList") {
+        const allOwn = [...m.addedNodes, ...m.removedNodes].every(
+          n => n.nodeType !== 1 || (n.id && n.id.startsWith("chessbot-")) ||
+               (n.classList && (n.classList.contains("chessbot-eval-badge") ||
+                n.classList.contains("chessbot-score-badge") ||
+                n.classList.contains("chessbot-hint-btn") ||
+                n.classList.contains("chessbot-training-feedback")))
+        );
+        if (allOwn && m.addedNodes.length + m.removedNodes.length > 0) return true;
+      }
       return false;
     });
     if (dominated) return;
-    // Clear stale move arrows immediately so the user doesn't see
-    // the previous suggestion while we wait for the debounce to fire.
-    clearMoveIndicators();
     lastMutationTime = Date.now();
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(readAndSend, 400);
