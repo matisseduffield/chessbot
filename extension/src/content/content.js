@@ -2382,12 +2382,15 @@ function drawSingleMove(uci, bestLine, source) {
     svg.appendChild(text);
   } else if (bestLine) {
     const scoreText = formatScore(bestLine);
+    const losing = isLineLosing(bestLine);
+    const badgeBg = losing ? "rgba(231,76,60,0.85)" : "rgba(0,0,0,0.6)";
+    const textColor = losing ? "#fff" : "#fff";
     const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     bg.setAttribute("x", dst.x);
     bg.setAttribute("y", dst.y + sqSize - badgeH);
     bg.setAttribute("width", sqSize);
     bg.setAttribute("height", badgeH);
-    bg.setAttribute("fill", "rgba(0,0,0,0.6)");
+    bg.setAttribute("fill", badgeBg);
     bg.setAttribute("rx", "2");
     svg.appendChild(bg);
 
@@ -2398,7 +2401,7 @@ function drawSingleMove(uci, bestLine, source) {
     text.setAttribute("font-size", fontSize);
     text.setAttribute("font-weight", "800");
     text.setAttribute("font-family", "monospace");
-    text.setAttribute("fill", "#fff");
+    text.setAttribute("fill", textColor);
     text.textContent = scoreText;
     svg.appendChild(text);
   }
@@ -2418,13 +2421,20 @@ const EVAL_COLORS = [
 
 function formatScore(line) {
   if (line.mate !== undefined && line.mate !== null) {
-    return `M${Math.abs(line.mate)}`;
+    return (line.mate >= 0 ? "+" : "\u2212") + "M" + Math.abs(line.mate);
   }
   if (line.score !== undefined && line.score !== null) {
     const val = line.score / 100;
     return (val >= 0 ? "+" : "") + val.toFixed(1);
   }
   return "?";
+}
+
+/** Is this line losing for the side to move? */
+function isLineLosing(line) {
+  if (line.mate !== undefined && line.mate !== null) return line.mate < 0;
+  if (line.score !== undefined && line.score !== null) return line.score < -50;
+  return false;
 }
 
 function drawMultiPV(lines) {
@@ -2449,7 +2459,9 @@ function drawMultiPV(lines) {
     const line = lines[i];
     if (!line.move || line.move.length < 4) continue;
     const { from, to } = uciToSquares(line.move);
-    const color = EVAL_COLORS[i] || EVAL_COLORS[EVAL_COLORS.length - 1];
+    // Use red for losing lines, otherwise position-based color
+    const losing = isLineLosing(line);
+    const color = losing ? "#e74c3c" : (EVAL_COLORS[i] || EVAL_COLORS[EVAL_COLORS.length - 1]);
     const opacity = i === 0 ? 0.9 : 0.6;
     // Box highlights first (behind arrows)
     if (displayMode === "box" || displayMode === "both") {
@@ -2480,12 +2492,15 @@ function drawMultiPV(lines) {
     const slot = dstSlots[dk]++;
     const fontSize = Math.max(10, sqSize * 0.20);
 
+    const badgeLosing = isLineLosing(line);
+    const badgeBgColor = badgeLosing ? "#e74c3c" : color;
+
     const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     bg.setAttribute("x", dst.x);
     bg.setAttribute("y", dst.y + slot * badgeH);
     bg.setAttribute("width", sqSize);
     bg.setAttribute("height", badgeH);
-    bg.setAttribute("fill", color);
+    bg.setAttribute("fill", badgeBgColor);
     bg.setAttribute("rx", "3");
     svg.appendChild(bg);
 
