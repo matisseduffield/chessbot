@@ -27,6 +27,7 @@ function loadEco(dir) {
 
 /** Look up an EPD string (FEN without move counters) and return { code, name } or null. */
 function lookup(epd) {
+  if (!epd || typeof epd !== "string") return null;
   return openings.get(epd) || null;
 }
 

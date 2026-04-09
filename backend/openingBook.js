@@ -17,6 +17,8 @@ class OpeningBook {
 
   /** Open all book files. Silently skips files that don't exist. */
   async init() {
+    // Close any previously opened book handles to prevent resource leaks
+    if (this.books.length > 0) await this.close();
     this.books = [];
     for (const p of this.bookPaths) {
       if (!p || !fs.existsSync(p)) {

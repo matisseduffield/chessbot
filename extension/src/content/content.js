@@ -189,6 +189,7 @@ function onPossibleNavigation() {
   lastPieceCount = 0;
   pendingEval = false;
   waitingForOpponent = false;
+  dragHandlersAttached = false; // re-attach drag listeners to new board element
   renderGeneration++;
   clearArrow();
 
@@ -481,7 +482,8 @@ function connectWS() {
           console.log("[chessbot] received null bestmove (engine timeout?)");
           return;
         }
-        // Ignore stale responses for positions we didn't request
+        // Discard stale responses if the board has changed since we sent the eval
+        const genAtReceive = renderGeneration;
         if (msg.fen && lastSentFen) {
           const responseBoardPart = msg.fen.split(" ")[0];
           const sentBoardPart = lastSentFen.split(" ")[0];
@@ -503,6 +505,11 @@ function connectWS() {
         const source = msg.source || "engine";
         const lines = msg.lines || [];
         const bestLine = lines[0] || null;
+        // Guard: if the board changed while we were processing, don't draw stale overlays
+        if (genAtReceive !== renderGeneration) {
+          console.log("[chessbot] board changed during bestmove processing — skipping draw");
+          return;
+        }
         if (trainingMode && !msg.streaming) {
           // Training mode: store best move, show progressive hint
           trainingBestMove = msg.bestmove;
@@ -698,9 +705,10 @@ function observeBoard(boardEl) {
   }
 
   // Drag detection — suppress board reads while user is holding a piece
-  // Only attach once to avoid duplicate listeners on SPA reconnect
-  if (!dragHandlersAttached) {
+  // Re-attach when board element changes (SPA navigation replaces the board)
+  if (!dragHandlersAttached || !boardEl.dataset.chessbotDragBound) {
     dragHandlersAttached = true;
+    boardEl.dataset.chessbotDragBound = "1";
     const dragTarget = boardEl.shadowRoot || boardEl;
     dragTarget.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
@@ -839,6 +847,8 @@ function readAndSend() {
     waitingForOpponent = false;
     lastSentFen = "";
     lastKnownTurn = null;
+    lastSpokenMove = "";
+    lastSpokenOpening = "";
   }
 
   // Determine whose turn it is by diffing board positions
@@ -1642,10 +1652,16 @@ function boardToFen() {
 // ── Arrow overlay ────────────────────────────────────────────
 
 function uciToSquares(uci) {
+  if (!uci || uci.length < 4) return null;
   // e.g. "e2e4" → { from: {file:4, rank:1}, to: {file:4, rank:3} }
+  const ff = uci.charCodeAt(0) - 97;
+  const fr = parseInt(uci[1], 10) - 1;
+  const tf = uci.charCodeAt(2) - 97;
+  const tr = parseInt(uci[3], 10) - 1;
+  if (ff < 0 || ff > 7 || fr < 0 || fr > 7 || tf < 0 || tf > 7 || tr < 0 || tr > 7) return null;
   return {
-    from: { file: uci.charCodeAt(0) - 97, rank: parseInt(uci[1], 10) - 1 },
-    to:   { file: uci.charCodeAt(2) - 97, rank: parseInt(uci[3], 10) - 1 },
+    from: { file: ff, rank: fr },
+    to:   { file: tf, rank: tr },
   };
 }
 
@@ -1826,7 +1842,9 @@ function drawTrainingHint(uci, bestLine, source) {
   const geo = getBoardGeometry();
   if (!geo) return;
   const { board, rect, sqSize, flipped } = geo;
-  const { from, to } = uciToSquares(uci);
+  const squares = uciToSquares(uci);
+  if (!squares) return;
+  const { from, to } = squares;
 
   // Background SVG for fills (behind pieces)
   const bgSvg = getOrCreateBgSvg(board, rect);
@@ -2115,6 +2133,9 @@ function applyUciMove(fen, uci) {
   const piece = grid[fr][fc];
   if (piece === ".") return null;
 
+  // Check if destination square was empty before moving (needed for en passant detection)
+  const destWasEmpty = grid[tr][tc] === ".";
+
   // Move the piece
   grid[fr][fc] = ".";
   let placed = piece;
@@ -2128,8 +2149,8 @@ function applyUciMove(fen, uci) {
   }
 
   // En passant — remove captured pawn
-  if (piece.toLowerCase() === "p" && fc !== tc && grid[tr][tc] === placed) {
-    // If the destination was empty before we placed our pawn, it's en passant
+  // A pawn moving diagonally to an empty square must be en passant
+  if (piece.toLowerCase() === "p" && fc !== tc && destWasEmpty) {
     const epRow = piece === "P" ? tr + 1 : tr - 1;
     if (epRow >= 0 && epRow < 8) {
       const captured = grid[epRow][tc];
@@ -2306,7 +2327,9 @@ function drawSingleMove(uci, bestLine, source) {
   if (!geo) { console.log("[chessbot] drawSingleMove: no board geometry"); return; }
   const { board, rect, sqSize, flipped } = geo;
   console.log(`[chessbot] drawing move ${uci} on board ${rect.width}x${rect.height} sq=${sqSize} flipped=${flipped}`);
-  const { from, to } = uciToSquares(uci);
+  const squares = uciToSquares(uci);
+  if (!squares) { console.log("[chessbot] drawSingleMove: invalid UCI move"); return; }
+  const { from, to } = squares;
   const isBook = source === "book" || source === "lichess";
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -2338,6 +2361,7 @@ function drawSingleMove(uci, bestLine, source) {
     const response = bestLine.pv[1];
     if (response && response.length >= 4) {
       const resp = uciToSquares(response);
+      if (resp) {
       if (displayMode === "box" || displayMode === "both") {
         // Skip highlight if square overlaps with best-move squares to avoid muddy blending
         const sameAsFrom = (sq) => sq.file === from.file && sq.rank === from.rank;
@@ -2351,6 +2375,7 @@ function drawSingleMove(uci, bestLine, source) {
       }
       if (displayMode === "arrow" || displayMode === "both") {
         drawArrowOnBoard(svg, resp.from.file, resp.from.rank, resp.to.file, resp.to.rank, sqSize, flipped, "hsla(350,100%,50%,0.7)", 0.7);
+      }
       }
     }
   }
@@ -2458,7 +2483,9 @@ function drawMultiPV(lines) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line.move || line.move.length < 4) continue;
-    const { from, to } = uciToSquares(line.move);
+    const lineSquares = uciToSquares(line.move);
+    if (!lineSquares) continue;
+    const { from, to } = lineSquares;
     // Use red for losing lines, otherwise position-based color
     const losing = isLineLosing(line);
     const color = losing ? "#e74c3c" : (EVAL_COLORS[i] || EVAL_COLORS[EVAL_COLORS.length - 1]);

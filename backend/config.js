@@ -6,8 +6,8 @@ function findFirstBook(dir) {
   try {
     const files = fs.readdirSync(dir);
     const bin = files.find((f) => f.toLowerCase().endsWith(".bin"));
-    return bin ? path.join(dir, bin) : "";
-  } catch { return ""; }
+    return bin ? path.join(dir, bin) : null;
+  } catch { return null; }
 }
 
 const booksDir = process.env.BOOKS_DIR || path.join(__dirname, "..", "books");

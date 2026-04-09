@@ -213,9 +213,11 @@ class StockfishBridge {
       console.warn(`[stockfish] option "${name}" not in whitelist, ignoring`);
       return;
     }
-    this._send(`setoption name ${name} value ${value}`);
-    this._settings[name] = value;
-    console.log(`[stockfish] option ${name} = ${value}`);
+    // Sanitize value to prevent UCI command injection via newlines
+    const safeValue = String(value).replace(/[\r\n]/g, "");
+    this._send(`setoption name ${name} value ${safeValue}`);
+    this._settings[name] = safeValue;
+    console.log(`[stockfish] option ${name} = ${safeValue}`);
   }
 
   /** Get current settings (for syncing to UI). */

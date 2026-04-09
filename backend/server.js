@@ -128,7 +128,13 @@ async function main() {
       const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}&topGames=0&recentGames=0`;
       const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
       if (!res.ok) return null;
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        console.warn("[lichess-book] invalid JSON response");
+        return null;
+      }
       if (!data.moves || data.moves.length === 0) return null;
       // Pick the move with the most total games
       const best = data.moves.reduce((a, b) =>
@@ -293,7 +299,7 @@ async function main() {
   /** Broadcast a message to all OTHER connected clients (for panel sync). */
   function broadcast(senderWs, message) {
     const data = typeof message === "string" ? message : JSON.stringify(message);
-    for (const client of wss.clients) {
+    for (const client of Array.from(wss.clients)) {
       if (client !== senderWs && client.readyState === 1 /* OPEN */) {
         client.send(data);
       }
@@ -507,7 +513,9 @@ async function main() {
       if (msg.type === "set_option" && msg.name && msg.value !== undefined) {
         console.log(`[server] ← set_option: ${msg.name} = ${msg.value}`);
         if (msg.name === "depth") {
-          config.defaultDepth = Number(msg.value) || 15;
+          const d = Number(msg.value);
+          // Depth 0 = infinite analysis, otherwise clamp 1–50
+          config.defaultDepth = d === 0 ? 0 : Math.min(50, Math.max(1, d || 15));
         } else {
           engine.setOption(msg.name, msg.value);
         }
@@ -525,8 +533,10 @@ async function main() {
       if (msg.type === "broadcast" && msg.payload) {
         // Store search limits server-side so they're authoritative
         if (msg.payload.type === "set_search_limits") {
-          config.searchMovetime = msg.payload.movetime || null;
-          config.searchNodes = msg.payload.nodes || null;
+          const mt = Number(msg.payload.movetime);
+          const nd = Number(msg.payload.nodes);
+          config.searchMovetime = (mt > 0 && isFinite(mt)) ? mt : null;
+          config.searchNodes = (nd > 0 && isFinite(nd)) ? nd : null;
           console.log(`[server] search limits: movetime=${config.searchMovetime} nodes=${config.searchNodes}`);
         }
         broadcast(ws, msg.payload);
