@@ -6,8 +6,9 @@ Real-time chess analysis overlay for **chess.com** and **lichess.org**. A Chrome
 
 ### Board Analysis
 - **Best-move arrows** — green (engine), gold (opening book), blue (Lichess Masters DB)
-- **Multi-PV display** — show multiple candidate lines with eval badges
-- **Eval bar** — real-time evaluation bar alongside the board
+- **Multi-PV display** — colored candidate lines with eval badges; **red arrows and badges** for losing lines so bad moves are instantly obvious
+- **Score formatting** — `+M2` (you deliver mate) vs `−M2` (you're getting mated) with green/red coloring
+- **Eval bar** — real-time evaluation bar alongside the board with WDL (win/draw/loss) percentages
 - **Opponent response arrows** — see the likely opponent reply after the best move
 - **Infinite analysis mode** — set depth to 0 for unlimited depth streaming analysis
 - **Endgame tablebase classification** — Win/Draw/Loss labels on the eval bar when ≤7 pieces remain
@@ -25,8 +26,10 @@ Real-time chess analysis overlay for **chess.com** and **lichess.org**. A Chrome
 
 ### Engine & Tablebases
 - **Stockfish + Fairy-Stockfish** — standard and variant chess engine support
+- **Settings preserved across engine switches** — Threads, Hash, MultiPV persist when switching between engines
 - **Syzygy endgame tablebases** — perfect endgame play when configured
 - **Variant chess support** — Chess960, Atomic, Crazyhouse, King of the Hill, Three-Check, Antichess, Horde, Racing Kings
+- **Depth control** — panel depth setting is authoritative; scales eval timeout dynamically (up to 3 minutes for deep searches)
 
 ### Voice & Accessibility
 - **Text-to-speech move announcements** — hear the best move spoken aloud
@@ -37,6 +40,8 @@ Real-time chess analysis overlay for **chess.com** and **lichess.org**. A Chrome
 ### Dashboard Panel
 - Full settings UI at `http://localhost:8080` with:
   - Depth, MultiPV, Threads, Hash, Skill Level controls
+  - **Search depth badge** on each PV card (e.g. D25) so you know how deep the engine searched
+  - **Winning/losing PV card styling** — green tint for winning, red tint + border for losing lines
   - Engine / book / Syzygy file switching
   - Multiple opening book selection (multi-select dropdown)
   - Lichess Masters DB toggle
