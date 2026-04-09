@@ -482,13 +482,13 @@ function connectWS() {
           console.log("[chessbot] received null bestmove (engine timeout?)");
           return;
         }
-        // Discard stale responses if the board has changed since we sent the eval
+        // Discard stale responses if the position has changed since we sent the eval.
+        // Compare the full FEN (including turn) so a result for white's turn
+        // is never applied when it's now black's turn (and vice versa).
         const genAtReceive = renderGeneration;
         if (msg.fen && lastSentFen) {
-          const responseBoardPart = msg.fen.split(" ")[0];
-          const sentBoardPart = lastSentFen.split(" ")[0];
-          if (responseBoardPart !== sentBoardPart) {
-            console.log("[chessbot] ignoring stale bestmove (board changed)");
+          if (msg.fen !== lastSentFen) {
+            console.log("[chessbot] ignoring stale bestmove (position/turn changed)");
             return;
           }
         }
@@ -689,6 +689,9 @@ function observeBoard(boardEl) {
       return false;
     });
     if (dominated) return;
+    // Clear stale move arrows immediately so the user doesn't see
+    // the previous suggestion while we wait for the debounce to fire.
+    clearMoveIndicators();
     lastMutationTime = Date.now();
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(readAndSend, 400);
@@ -733,7 +736,7 @@ function observeBoard(boardEl) {
   pollTimer = setInterval(() => {
     if (!enabled || !boardReady) return;
     // Skip poll if a recent mutation already triggered readAndSend
-    if (Date.now() - lastMutationTime < 1500) return;
+    if (Date.now() - lastMutationTime < 300) return;
     try {
       // Verify the board element is still in the DOM (SPA navigation)
       const currentBoard = getBoardElement();
