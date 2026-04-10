@@ -921,7 +921,9 @@ function readAndSend() {
   // Detect new game: standard starting position, OR piece count jumped
   // significantly upward (board reset). Works for variants with non-standard
   // starting piece counts (Horde, Racing Kings, etc.)
-  const isStartPos = boardPart === "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+  // Strip pocket notation [...] before comparing (Crazyhouse appends e.g. "[]")
+  const boardPartNoPocket = boardPart.replace(/\[.*?\]$/, "");
+  const isStartPos = boardPartNoPocket === "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
   const prevPieceCount = prevBoard ? countPieces(prevBoard) : 0;
   const pieceCountJump = prevPieceCount > 0 && pieceCount - prevPieceCount >= 10;
   if (isStartPos || pieceCountJump) {
@@ -931,6 +933,8 @@ function readAndSend() {
     lastKnownTurn = null;
     lastSpokenMove = "";
     lastSpokenOpening = "";
+    _variantColorMap = null;
+    _variantColorMapKey = null;
   }
 
   // Determine whose turn it is by diffing board positions
@@ -1059,8 +1063,23 @@ function buildVariantColorMap(pieces, boardRect, flipped) {
     const blackKey = flipped ? bottomKey : topKey;
     return { white: whiteKey, black: blackKey };
   }
-  // Fallback: sort numerically, lower = white
-  keys.sort((a, b) => parseInt(a) - parseInt(b));
+  // Fallback: try literal color names, then sort numerically, lower = white
+  const keysLower = keys.map(k => k.toLowerCase());
+  if (keysLower.includes("white") || keysLower.includes("w")) {
+    const wk = keys[keysLower.indexOf("white")] || keys[keysLower.indexOf("w")];
+    const bk = keys.find(k => k !== wk) || keys[0];
+    return { white: wk, black: bk };
+  }
+  if (keysLower.includes("black") || keysLower.includes("b")) {
+    const bk = keys[keysLower.indexOf("black")] || keys[keysLower.indexOf("b")];
+    const wk = keys.find(k => k !== bk) || keys[0];
+    return { white: wk, black: bk };
+  }
+  keys.sort((a, b) => {
+    const na = parseInt(a), nb = parseInt(b);
+    if (isNaN(na) || isNaN(nb)) return a < b ? -1 : a > b ? 1 : 0;
+    return na - nb;
+  });
   return { white: keys[0], black: keys[1] || keys[0] };
 }
 
@@ -1262,17 +1281,53 @@ function isChesscomFlipped(board) {
     if (inner) return true;
   }
 
+  // Method 4b: Ancestor elements with flip indicator
+  // On variant pages the board container may not carry the "flipped" class,
+  // but a wrapper higher in the DOM might.
+  let ancestor = board.parentElement;
+  for (let i = 0; i < 5 && ancestor && ancestor !== document.body; i++) {
+    const acls = typeof ancestor.className === "string" ? ancestor.className : (ancestor.getAttribute("class") || "");
+    if (/\bflipped\b/i.test(acls) || ancestor.getAttribute("flipped") !== null) return true;
+    ancestor = ancestor.parentElement;
+  }
+
   // Method 5: Coordinate labels — both in regular DOM and shadow DOM
   const searchRoots = [document];
   if (root) searchRoots.push(root);
   for (const sr of searchRoots) {
     const coords = sr.querySelectorAll(
-      ".coordinates-row, .coords-row, .coords-files, coords-files, [class*='coord']"
+      ".coordinates-row, .coords-row, .coords-files, coords-files, [class*='coord'], [class*='Coord'], [class*='notation'], [class*='files'], [class*='ranks']"
     );
     for (const c of coords) {
       const txt = c.textContent.trim();
       if (txt.startsWith("h")) return true;
       if (txt.startsWith("a")) return false;
+    }
+  }
+
+  // Method 5b: Scan individual text/label elements near the board for file letters
+  const boardRect5 = getVisualBoardRect(board);
+  if (boardRect5.width > 0) {
+    const labelRoots = [board.parentElement, board];
+    if (root) labelRoots.push(root);
+    for (const lr of labelRoots) {
+      if (!lr) continue;
+      const labels = lr.querySelectorAll("text, span, div");
+      for (const el of labels) {
+        if (el.children.length > 0) continue; // only leaf nodes
+        const txt = el.textContent.trim();
+        if (txt !== "a" && txt !== "h") continue;
+        const elRect = el.getBoundingClientRect();
+        if (elRect.width === 0) continue;
+        const relX = elRect.left + elRect.width / 2 - boardRect5.left;
+        // Only trust labels near the left or right edge of the board
+        if (relX < boardRect5.width * 0.15) {
+          return txt === "h"; // h on left = flipped
+        }
+        if (relX > boardRect5.width * 0.85) {
+          return txt === "a"; // a on right = flipped
+        }
+      }
     }
   }
 
@@ -1323,14 +1378,36 @@ function isChesscomFlipped(board) {
       }
       const dcKeys = Object.keys(dcGroups);
       if (dcKeys.length === 2) {
-        const dcAvg0 = dcGroups[dcKeys[0]].sumY / dcGroups[dcKeys[0]].count;
-        const dcAvg1 = dcGroups[dcKeys[1]].sumY / dcGroups[dcKeys[1]].count;
-        // Sort keys numerically; assume lower data-color value = white
-        dcKeys.sort((a, b) => parseInt(a) - parseInt(b));
-        const assumedWhiteAvg = dcGroups[dcKeys[0]].sumY / dcGroups[dcKeys[0]].count;
-        const assumedBlackAvg = dcGroups[dcKeys[1]].sumY / dcGroups[dcKeys[1]].count;
-        // If assumed-white has lower avgY → white at top → flipped
-        return assumedWhiteAvg < assumedBlackAvg;
+        // Determine which data-color = white.
+        // First check if data-color values are literal color names.
+        const dcLower = dcKeys.map(k => k.toLowerCase());
+        let whiteKey, blackKey;
+        if (dcLower.includes("white")) {
+          whiteKey = dcKeys[dcLower.indexOf("white")];
+          blackKey = dcKeys.find(k => k !== whiteKey);
+        } else if (dcLower.includes("black")) {
+          blackKey = dcKeys[dcLower.indexOf("black")];
+          whiteKey = dcKeys.find(k => k !== blackKey);
+        } else if (dcLower.includes("w")) {
+          whiteKey = dcKeys[dcLower.indexOf("w")];
+          blackKey = dcKeys.find(k => k !== whiteKey);
+        } else if (dcLower.includes("b")) {
+          blackKey = dcKeys[dcLower.indexOf("b")];
+          whiteKey = dcKeys.find(k => k !== blackKey);
+        } else {
+          // Numeric or opaque values — sort numerically, lower = white (convention)
+          const sorted = [...dcKeys].sort((a, b) => {
+            const na = parseInt(a), nb = parseInt(b);
+            if (isNaN(na) || isNaN(nb)) return a < b ? -1 : a > b ? 1 : 0;
+            return na - nb;
+          });
+          whiteKey = sorted[0];
+          blackKey = sorted[1];
+        }
+        const whiteAvgDC = dcGroups[whiteKey].sumY / dcGroups[whiteKey].count;
+        const blackAvgDC = dcGroups[blackKey].sumY / dcGroups[blackKey].count;
+        // If white has lower avgY → white at top → flipped
+        return whiteAvgDC < blackAvgDC;
       }
     }
   }
