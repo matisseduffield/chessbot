@@ -2323,14 +2323,16 @@ function getBoardGeometry() {
   if (!board) { _geoCache = null; return null; }
   const rect = (SITE === "chesscom") ? getVisualBoardRect(board) : board.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) { _geoCache = null; return null; }
-  // Cache key: board identity + dimensions (changes on resize or board swap)
-  const key = `${board.id || ""}:${Math.round(rect.width)}:${Math.round(rect.height)}`;
-  if (_geoCache && _geoCacheKey === key) return _geoCache;
   const sqSize = rect.width / 8;
+  // Always recompute flip state — it can change between games without
+  // the board element or dimensions changing (e.g. white→black in Crazyhouse)
   const flipped =
     (SITE === "chesscom" && isChesscomFlipped(board)) ||
     (IS_CHESSGROUND && isLichessFlipped()) ||
     (SITE === "chesstempo" && isChesstempFlipped());
+  // Cache by board identity + dimensions + flip state
+  const key = `${board.id || ""}:${Math.round(rect.width)}:${Math.round(rect.height)}:${flipped}`;
+  if (_geoCache && _geoCacheKey === key) return _geoCache;
   _geoCache = { board, rect, sqSize, flipped };
   _geoCacheKey = key;
   return _geoCache;
