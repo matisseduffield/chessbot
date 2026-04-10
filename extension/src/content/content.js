@@ -7,6 +7,12 @@
 
 const WS_URL = "ws://localhost:8080";
 
+// Variants that support piece drops (captured pieces placed back on the board)
+const DROP_VARIANTS = new Set([
+  "crazyhouse", "bughouse", "chessgi", "shouse", "loop", "pocketknight",
+  "shogun", "grandhouse", "placement",
+]);
+
 // ── State ────────────────────────────────────────────────────
 let ws = null;
 let lastBoardFen = ""; // piece-placement part only (before first space)
@@ -1153,9 +1159,10 @@ function chesscomBoardToFen() {
     }
     return null;
   }
-  const fen = gridToFenBoard(grid);
+  const fen = gridToFenBoard(grid, readPocket());
   // Validate king counts (only in the board portion, before castling rights)
-  const boardPart = fen.split(" ")[0];
+  // Strip pocket notation [xxx] before checking
+  const boardPart = fen.split(" ")[0].replace(/\[.*?\]/, "");
   const whiteKings = (boardPart.match(/K/g) || []).length;
   const blackKings = (boardPart.match(/k/g) || []).length;
   // In variants, king counts can differ from standard chess:
@@ -1375,7 +1382,7 @@ function lichessBoardToFen() {
     }
   }
 
-  return gridToFenBoard(grid);
+  return gridToFenBoard(grid, readPocket());
 }
 
 function isLichessFlipped() {
@@ -1441,7 +1448,7 @@ function playstrategyBoardToFen() {
     }
   }
 
-  return gridToFenBoard(grid);
+  return gridToFenBoard(grid, readPocket());
 }
 
 // ── ChessTempo board reader ──────────────────────────────────
@@ -1496,7 +1503,7 @@ function chesstempoBoardToFen() {
     }
   }
 
-  return gridToFenBoard(grid);
+  return gridToFenBoard(grid, readPocket());
 }
 
 function isChesstempFlipped() {
@@ -1830,7 +1837,91 @@ function getPlayerColor() {
 
 // ── FEN helpers ──────────────────────────────────────────────
 
-function gridToFenBoard(grid) {
+/** Read pocket/hand pieces for drop variants (Crazyhouse, etc.) from the DOM.
+ *  Returns Fairy-Stockfish pocket notation like "[QNPppp]" or "" if not a drop variant. */
+function readPocket() {
+  if (!detectedVariant || !DROP_VARIANTS.has(detectedVariant)) return "";
+
+  if (IS_CHESSGROUND) return readPocketChessground();
+  if (SITE === "chesscom") return readPocketChessCom();
+  // Default: empty pocket so engine knows this is a drop variant
+  return "[]";
+}
+
+/** Read pocket pieces from Lichess/PlayStrategy Chessground pockets. */
+function readPocketChessground() {
+  let whitePocket = "";
+  let blackPocket = "";
+  // Lichess uses <pocket> elements, or .pocket containers, or crazyhouse-specific elements
+  const pockets = document.querySelectorAll("pocket, .pocket, .crazyhouse-pocket, [class*='pocket']");
+  if (!pockets.length) return "[]";
+
+  const typeMap = { pawn: "p", rook: "r", knight: "n", bishop: "b", queen: "q", king: "k" };
+
+  for (const pocket of pockets) {
+    const pieces = pocket.querySelectorAll("piece");
+    for (const piece of pieces) {
+      const cl = piece.className || "";
+      const color = cl.includes("white") || cl.includes("p1") ? "w" : "b";
+
+      let type = null;
+      // Try class-based role detection
+      for (const [name, ch] of Object.entries(typeMap)) {
+        if (cl.includes(name)) { type = ch; break; }
+      }
+      // Try data-role attribute (some lichess versions)
+      if (!type) {
+        const role = piece.getAttribute("data-role") || "";
+        if (typeMap[role]) type = typeMap[role];
+      }
+      if (!type) continue;
+
+      // Get count: data-nb attribute or just 1
+      const nb = parseInt(piece.getAttribute("data-nb") || "1", 10);
+      if (nb <= 0) continue;
+
+      const ch = color === "w" ? type.toUpperCase() : type.toLowerCase();
+      for (let i = 0; i < nb; i++) {
+        if (color === "w") whitePocket += ch;
+        else blackPocket += ch;
+      }
+    }
+  }
+  return "[" + whitePocket + blackPocket + "]";
+}
+
+/** Read pocket pieces from Chess.com spare/bank areas. */
+function readPocketChessCom() {
+  let whitePocket = "";
+  let blackPocket = "";
+  const board = getBoardElement();
+  const roots = [document];
+  if (board && board.shadowRoot) roots.push(board.shadowRoot);
+
+  for (const root of roots) {
+    const candidates = root.querySelectorAll(
+      "[class*='spare'] [class*='piece'], [class*='pocket'] [class*='piece'], [class*='bank'] [class*='piece'], [class*='Spare'] [class*='piece']"
+    );
+    for (const el of candidates) {
+      const cls = typeof el.className === "string" ? el.className : (el.getAttribute("class") || "");
+      const m = cls.match(/\b([wb])([prnbqk])\b/);
+      if (!m) continue;
+      const color = m[1];
+      const type = m[2];
+      const ch = color === "w" ? type.toUpperCase() : type.toLowerCase();
+      // Count: data-count, data-nb, or textContent number
+      const countAttr = el.getAttribute("data-count") || el.getAttribute("data-nb") || el.textContent.trim();
+      const count = parseInt(countAttr) || 1;
+      for (let i = 0; i < count; i++) {
+        if (color === "w") whitePocket += ch;
+        else blackPocket += ch;
+      }
+    }
+  }
+  return "[" + whitePocket + blackPocket + "]";
+}
+
+function gridToFenBoard(grid, pocket) {
   const rows = [];
   const numRanks = grid.length;
   for (let r = 0; r < numRanks; r++) {
@@ -1862,7 +1953,9 @@ function gridToFenBoard(grid) {
     }
   }
   if (!castling) castling = "-";
-  return rows.join("/") + " w " + castling + " - 0 1";
+  // Append pocket notation for drop variants (Crazyhouse, etc.)
+  const pocketStr = pocket || "";
+  return rows.join("/") + pocketStr + " w " + castling + " - 0 1";
 }
 
 function boardToFen() {
@@ -1876,7 +1969,15 @@ function boardToFen() {
 // ── Arrow overlay ────────────────────────────────────────────
 
 function uciToSquares(uci) {
-  if (!uci || uci.length < 4) return null;
+  if (!uci || uci.length < 3) return null;
+  // Handle drop notation: P@e4 (piece @ destination square)
+  const dropMatch = uci.match(/^([PNBRQK])@([a-z])(\d+)$/i);
+  if (dropMatch) {
+    const tf = dropMatch[2].charCodeAt(0) - 97;
+    const tr = parseInt(dropMatch[3], 10) - 1;
+    if (tf < 0 || tr < 0) return null;
+    return { from: null, to: { file: tf, rank: tr }, drop: dropMatch[1].toUpperCase() };
+  }
   // Parse UCI move — supports multi-digit ranks for larger boards (e.g. a10b10)
   const m = uci.match(/^([a-z])(\d+)([a-z])(\d+)/);
   if (!m) return null;
@@ -2012,6 +2113,39 @@ function drawArrowOnBoard(svg, fromFile, fromRank, toFile, toRank, sqSize, flipp
   svg.appendChild(polygon);
 }
 
+/** Draw a drop marker (circle + piece letter) on a destination square for drop moves (e.g. P@e4). */
+function drawDropMarker(svg, file, rank, sqSize, flipped, color, pieceLetter, opacity) {
+  const center = squareCenter(file, rank, sqSize, flipped);
+  const op = opacity || 0.85;
+  const radius = sqSize * 0.35;
+
+  // Circle
+  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  circle.setAttribute("cx", center.x);
+  circle.setAttribute("cy", center.y);
+  circle.setAttribute("r", radius);
+  circle.setAttribute("fill", color);
+  circle.setAttribute("opacity", op);
+  circle.setAttribute("stroke", "#fff");
+  circle.setAttribute("stroke-width", Math.max(1.5, sqSize * 0.03));
+  svg.appendChild(circle);
+
+  // Piece letter inside circle
+  if (pieceLetter) {
+    const PIECE_SYMBOLS = { P: "\u265F", N: "\u265E", B: "\u265D", R: "\u265C", Q: "\u265B", K: "\u265A" };
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", center.x);
+    text.setAttribute("y", center.y + sqSize * 0.12);
+    text.setAttribute("text-anchor", "middle");
+    text.setAttribute("font-size", sqSize * 0.38);
+    text.setAttribute("font-weight", "800");
+    text.setAttribute("fill", "#fff");
+    text.setAttribute("opacity", op);
+    text.textContent = PIECE_SYMBOLS[pieceLetter.toUpperCase()] || pieceLetter;
+    svg.appendChild(text);
+  }
+}
+
 // ── Square highlight drawing ─────────────────────────────────
 
 /** Create or retrieve the background SVG layer (sits behind pieces). */
@@ -2096,13 +2230,14 @@ function drawSquareHighlight(svg, file, rank, sqSize, flipped, color, style, bgS
  */
 function drawTrainingHint(uci, bestLine, source) {
   clearArrow();
-  if (!uci || uci.length < 4) return;
+  if (!uci || uci.length < 3) return;
   const geo = getBoardGeometry();
   if (!geo) return;
   const { board, rect, sqSize, flipped } = geo;
   const squares = uciToSquares(uci);
   if (!squares) return;
   const { from, to } = squares;
+  const isDrop = !!squares.drop;
 
   const bgSvg = getOrCreateBgSvg(board, rect);
 
@@ -2111,6 +2246,28 @@ function drawTrainingHint(uci, bestLine, source) {
   const hintColor = "rgba(168,85,247,0.5)"; // purple
   const borderColor = "rgba(168,85,247,0.9)";
   const zoneColor = "rgba(168,85,247,0.2)";
+
+  // For drop moves, skip the source-square hint (there is no source square)
+  if (isDrop) {
+    // Just show the destination in training
+    if (trainingStage >= 2) {
+      drawSingleMove(uci, bestLine, source);
+    } else {
+      // Show "Drop a piece" hint
+      const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      txt.setAttribute("x", rect.width / 2);
+      txt.setAttribute("y", 18);
+      txt.setAttribute("text-anchor", "middle");
+      txt.setAttribute("font-size", Math.max(10, sqSize * 0.14));
+      txt.setAttribute("font-weight", "600");
+      txt.setAttribute("fill", "rgba(168,85,247,0.7)");
+      txt.setAttribute("font-family", "'Inter', sans-serif");
+      txt.textContent = "Drop a piece";
+      svg.appendChild(txt);
+    }
+    return;
+  }
+
   const fromPos = squareTopLeft(from.file, from.rank, sqSize, flipped);
 
   if (trainingDifficulty === "hard") {
@@ -2575,7 +2732,7 @@ function showTrainingFeedback(correct) {
 
 function drawSingleMove(uci, bestLine, source) {
   clearArrow();
-  if (!uci || uci.length < 4) return;
+  if (!uci || uci.length < 3) return;
   const geo = getBoardGeometry();
   if (!geo) { console.log("[chessbot] drawSingleMove: no board geometry"); return; }
   const { board, rect, sqSize, flipped } = geo;
@@ -2583,6 +2740,7 @@ function drawSingleMove(uci, bestLine, source) {
   const squares = uciToSquares(uci);
   if (!squares) { console.log("[chessbot] drawSingleMove: invalid UCI move"); return; }
   const { from, to } = squares;
+  const isDrop = !!squares.drop;
   const isBook = source === "book" || source === "lichess";
 
   const svg = getOrCreateArrowSvg(board, rect);
@@ -2596,26 +2754,31 @@ function drawSingleMove(uci, bestLine, source) {
 
   // Box highlights (drawn first so they sit behind arrows)
   if (displayMode === "box" || displayMode === "both") {
-    drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, boxColorFrom, "from", bgSvg);
+    if (from) drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, boxColorFrom, "from", bgSvg);
     drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, boxColorTo, "to", bgSvg);
   }
 
-  // Arrow
+  // Arrow (or drop circle for drop moves)
   if (displayMode === "arrow" || displayMode === "both") {
-    drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, moveColor);
+    if (isDrop) {
+      drawDropMarker(svg, to.file, to.rank, sqSize, flipped, moveColor, squares.drop);
+    } else {
+      drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, moveColor);
+    }
   }
 
   // Red opponent response
   if (showOpponentResponse && bestLine && bestLine.pv && bestLine.pv.length >= 2) {
     const response = bestLine.pv[1];
-    if (response && response.length >= 4) {
+    if (response && response.length >= 3) {
       const resp = uciToSquares(response);
       if (resp) {
+      const respIsDrop = !!resp.drop;
       if (displayMode === "box" || displayMode === "both") {
         // Skip highlight if square overlaps with best-move squares to avoid muddy blending
-        const sameAsFrom = (sq) => sq.file === from.file && sq.rank === from.rank;
-        const sameAsTo = (sq) => sq.file === to.file && sq.rank === to.rank;
-        if (!sameAsFrom(resp.from) && !sameAsTo(resp.from)) {
+        const sameAsFrom = (sq) => from && sq && sq.file === from.file && sq.rank === from.rank;
+        const sameAsTo = (sq) => sq && sq.file === to.file && sq.rank === to.rank;
+        if (resp.from && !sameAsFrom(resp.from) && !sameAsTo(resp.from)) {
           drawSquareHighlight(svg, resp.from.file, resp.from.rank, sqSize, flipped, "rgba(231,76,60,0.4)", "from", bgSvg);
         }
         if (!sameAsFrom(resp.to) && !sameAsTo(resp.to)) {
@@ -2623,7 +2786,11 @@ function drawSingleMove(uci, bestLine, source) {
         }
       }
       if (displayMode === "arrow" || displayMode === "both") {
-        drawArrowOnBoard(svg, resp.from.file, resp.from.rank, resp.to.file, resp.to.rank, sqSize, flipped, "hsla(350,100%,50%,0.7)", 0.7);
+        if (respIsDrop) {
+          drawDropMarker(svg, resp.to.file, resp.to.rank, sqSize, flipped, "hsla(350,100%,50%,0.7)", resp.drop, 0.7);
+        } else {
+          drawArrowOnBoard(svg, resp.from.file, resp.from.rank, resp.to.file, resp.to.rank, sqSize, flipped, "hsla(350,100%,50%,0.7)", 0.7);
+        }
       }
       }
     }
@@ -2725,10 +2892,11 @@ function drawMultiPV(lines) {
   const parsed = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (!line.move || line.move.length < 4) continue;
+    if (!line.move || line.move.length < 3) continue;
     const lineSquares = uciToSquares(line.move);
     if (!lineSquares) continue;
     const { from, to } = lineSquares;
+    const lineDrop = !!lineSquares.drop;
     // Use red for losing lines, otherwise position-based color
     const losing = isLineLosing(line);
     const color = losing ? "#e74c3c" : (EVAL_COLORS[i] || EVAL_COLORS[EVAL_COLORS.length - 1]);
@@ -2741,11 +2909,15 @@ function drawMultiPV(lines) {
         return `rgba(${r},${g},${b},${a})`;
       };
       const bc = color.startsWith("#") ? hexToRgba(color, boxAlpha) : color.replace(")", `,${boxAlpha})`).replace("rgb(", "rgba(");
-      drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, bc, "from", bgSvg);
+      if (from) drawSquareHighlight(svg, from.file, from.rank, sqSize, flipped, bc, "from", bgSvg);
       drawSquareHighlight(svg, to.file, to.rank, sqSize, flipped, bc, "to", bgSvg);
     }
     if (displayMode === "arrow" || displayMode === "both") {
-      drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, color, opacity);
+      if (lineDrop) {
+        drawDropMarker(svg, to.file, to.rank, sqSize, flipped, color, lineSquares.drop, opacity);
+      } else {
+        drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, color, opacity);
+      }
     }
     parsed.push({ line, from, to, color, dk: `${to.file},${to.rank}` });
   }
@@ -3145,15 +3317,21 @@ function getSquareTarget(file, rank) {
 }
 
 /** Execute a UCI move on the board by simulating click events.
- *  uci = "e2e4", "e7e8q" (with optional promotion char). */
+ *  uci = "e2e4", "e7e8q" (with optional promotion char), or "P@e4" (drop). */
 function executeMove(uci) {
-  if (!uci || uci.length < 4) return false;
+  if (!uci || uci.length < 3) return false;
   const squares = uciToSquares(uci);
   if (!squares) return false;
-  const { from, to } = squares;
-  const promo = uci.length === 5 ? uci[4] : null;
 
   console.log(`[chessbot][auto-move] executing ${uci} on ${SITE}`);
+
+  // Handle drop moves (e.g. P@e4)
+  if (squares.drop) {
+    return executeDropMove(squares.drop, squares.to);
+  }
+
+  const { from, to } = squares;
+  const promo = uci.length === 5 ? uci[4] : null;
 
   if (SITE === "chesscom") {
     return executeMoveChessCom(from, to, promo);
@@ -3163,6 +3341,131 @@ function executeMove(uci) {
     return executeMoveChesstempo(from, to, promo);
   }
   return false;
+}
+
+/** Execute a drop move by clicking the pocket piece then the destination square.
+ *  pieceLetter: "P", "N", "B", "R", "Q". to: { file, rank }. */
+function executeDropMove(pieceLetter, to) {
+  const geo = getBoardGeometry();
+  if (!geo) return false;
+
+  const roleMap = { P: "pawn", N: "knight", B: "bishop", R: "rook", Q: "queen" };
+  const role = roleMap[pieceLetter.toUpperCase()] || "pawn";
+
+  if (IS_CHESSGROUND) {
+    // Lichess/PlayStrategy: pocket pieces are in <pocket> elements
+    // Find the correct pocket piece and click it, then click the destination
+    const pocketPiece = findPocketPiece(role, "white");
+    if (!pocketPiece) {
+      console.warn(`[chessbot][auto-move] pocket piece not found: ${role}`);
+      return false;
+    }
+    const pr = pocketPiece.getBoundingClientRect();
+    const pcx = pr.left + pr.width / 2;
+    const pcy = pr.top + pr.height / 2;
+
+    // Click pocket piece
+    firePointer(pocketPiece, "pointerdown", pcx, pcy);
+    fireMouse(pocketPiece, "mousedown", pcx, pcy);
+    setTimeout(() => {
+      firePointer(pocketPiece, "pointerup", pcx, pcy);
+      fireMouse(pocketPiece, "mouseup", pcx, pcy);
+      fireMouse(pocketPiece, "click", pcx, pcy);
+
+      // Then click destination
+      setTimeout(() => {
+        const dst = getSquareTarget(to.file, to.rank);
+        if (!dst) return;
+        firePointer(dst.target, "pointerdown", dst.clientX, dst.clientY);
+        fireMouse(dst.target, "mousedown", dst.clientX, dst.clientY);
+        setTimeout(() => {
+          firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
+          fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
+          fireMouse(dst.target, "click", dst.clientX, dst.clientY);
+        }, 30);
+      }, 80);
+    }, 30);
+    return true;
+  }
+
+  // Chess.com and other sites: try similar approach
+  if (SITE === "chesscom") {
+    // Chess.com Bughouse/Crazyhouse: pocket pieces may be in spare pieces area
+    const pocketPiece = findPocketPieceChessCom(pieceLetter);
+    if (!pocketPiece) {
+      console.warn(`[chessbot][auto-move] chess.com pocket piece not found: ${pieceLetter}`);
+      return false;
+    }
+    const pr = pocketPiece.getBoundingClientRect();
+    const pcx = pr.left + pr.width / 2;
+    const pcy = pr.top + pr.height / 2;
+
+    firePointer(pocketPiece, "pointerdown", pcx, pcy);
+    fireMouse(pocketPiece, "mousedown", pcx, pcy);
+    setTimeout(() => {
+      firePointer(pocketPiece, "pointerup", pcx, pcy);
+      fireMouse(pocketPiece, "mouseup", pcx, pcy);
+      fireMouse(pocketPiece, "click", pcx, pcy);
+
+      setTimeout(() => {
+        const dst = getSquareTarget(to.file, to.rank);
+        if (!dst) return;
+        firePointer(dst.target, "pointerdown", dst.clientX, dst.clientY);
+        fireMouse(dst.target, "mousedown", dst.clientX, dst.clientY);
+        setTimeout(() => {
+          firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
+          fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
+          fireMouse(dst.target, "click", dst.clientX, dst.clientY);
+        }, 30);
+      }, 50);
+    }, 30);
+    return true;
+  }
+
+  console.warn(`[chessbot][auto-move] drop moves not supported on ${SITE}`);
+  return false;
+}
+
+/** Find a pocket piece element on Lichess/PlayStrategy (Chessground). */
+function findPocketPiece(role, color) {
+  // Lichess Crazyhouse pockets: <pocket> elements near the board
+  // Each contains <piece> elements with class like "pawn white"
+  const pockets = document.querySelectorAll("pocket, .pocket, .crazyhouse-pocket, [class*='pocket']");
+  for (const pocket of pockets) {
+    const pieces = pocket.querySelectorAll("piece");
+    for (const piece of pieces) {
+      const cl = piece.className || "";
+      if (cl.includes(role) && cl.includes(color)) {
+        // Check piece is available (not empty/zero count)
+        const nb = piece.getAttribute("data-nb");
+        if (nb && parseInt(nb) <= 0) continue;
+        return piece;
+      }
+    }
+  }
+  return null;
+}
+
+/** Find a pocket piece element on Chess.com. */
+function findPocketPieceChessCom(pieceLetter) {
+  const board = getBoardElement();
+  const roots = [document];
+  if (board && board.shadowRoot) roots.push(board.shadowRoot);
+
+  const colorChar = "w"; // We're always moving our own pieces
+  const target = colorChar + pieceLetter.toLowerCase(); // e.g. "wp", "wn"
+
+  for (const root of roots) {
+    // Look for spare/pocket piece containers
+    const candidates = root.querySelectorAll(
+      "[class*='spare'] [class*='piece'], [class*='pocket'] [class*='piece'], [class*='bank'] [class*='piece'], [class*='Spare'] [class*='piece']"
+    );
+    for (const el of candidates) {
+      const cls = typeof el.className === "string" ? el.className : (el.getAttribute("class") || "");
+      if (cls.includes(target)) return el;
+    }
+  }
+  return null;
 }
 
 /** Chess.com: click source square, then click target square.

@@ -1868,14 +1868,47 @@ function renderBoard() {
     const pv = line.pv || [];
     if (pv.length >= 1) drawArrow(svg, pv[0], true, numFiles, numRanks);
     if (pv.length >= 2) drawArrow(svg, pv[1], false, numFiles, numRanks);
-  } else if (currentData.bestmove && currentData.bestmove.length >= 4) {
+  } else if (currentData.bestmove && currentData.bestmove.length >= 3) {
     drawArrow(svg, currentData.bestmove, true, numFiles, numRanks);
   }
 }
 
 function drawArrow(svg, uci, isOurMove, numFiles, numRanks) {
-  if (!uci || uci.length < 4) return;
+  if (!uci || uci.length < 3) return;
   const sqSize = 100;
+
+  // Handle drop notation: P@e4 (piece @ destination)
+  const dropMatch = uci.match(/^([PNBRQK])@([a-z])(\d+)$/i);
+  if (dropMatch) {
+    const toF = dropMatch[2].charCodeAt(0) - 97;
+    const toR = numRanks - parseInt(dropMatch[3]);
+    const cx = toF * sqSize + sqSize / 2;
+    const cy = toR * sqSize + sqSize / 2;
+    const color = isOurMove ? "hsla(145,100%,50%,0.8)" : "hsla(350,100%,50%,0.7)";
+    const radius = sqSize * 0.35;
+
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", cx);
+    circle.setAttribute("cy", cy);
+    circle.setAttribute("r", radius);
+    circle.setAttribute("fill", color);
+    circle.setAttribute("stroke", "#fff");
+    circle.setAttribute("stroke-width", Math.max(1.5, sqSize * 0.03));
+    svg.appendChild(circle);
+
+    const PIECE_SYMBOLS = { P: "\u265F", N: "\u265E", B: "\u265D", R: "\u265C", Q: "\u265B", K: "\u265A" };
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", cx);
+    text.setAttribute("y", cy + sqSize * 0.12);
+    text.setAttribute("text-anchor", "middle");
+    text.setAttribute("font-size", sqSize * 0.38);
+    text.setAttribute("font-weight", "800");
+    text.setAttribute("fill", "#fff");
+    text.textContent = PIECE_SYMBOLS[dropMatch[1].toUpperCase()] || dropMatch[1];
+    svg.appendChild(text);
+    return;
+  }
+
   const m = uci.match(/^([a-z])(\d+)([a-z])(\d+)/);
   if (!m) return;
   const fromF = m[1].charCodeAt(0) - 97;
