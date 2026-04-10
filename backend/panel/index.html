@@ -540,6 +540,111 @@
   }
 
   /* ── Custom Selects ── */
+  /* ── Variant Picker (searchable dropdown) ── */
+  .variant-picker {
+    position: relative;
+    width: 100%;
+  }
+  .variant-picker-selected {
+    width: 100%;
+    padding: 7px 32px 7px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--bg-600);
+    background: var(--bg-800);
+    color: var(--text-200);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    outline: none;
+  }
+  .variant-picker-selected:hover,
+  .variant-picker-selected:focus {
+    border-color: var(--accent);
+    box-shadow: var(--accent-glow);
+  }
+  .variant-picker.open .variant-picker-selected {
+    border-color: var(--accent);
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .variant-picker-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    background: var(--bg-800);
+    border: 1px solid var(--accent);
+    border-top: none;
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    max-height: 320px;
+    overflow: hidden;
+    flex-direction: column;
+  }
+  .variant-picker.open .variant-picker-dropdown {
+    display: flex;
+  }
+  .variant-picker-search {
+    width: 100%;
+    padding: 7px 10px;
+    border: none;
+    border-bottom: 1px solid var(--bg-600);
+    background: var(--bg-750);
+    color: var(--text-100);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    outline: none;
+    box-sizing: border-box;
+  }
+  .variant-picker-search::placeholder { color: var(--text-400); }
+  .variant-picker-list {
+    overflow-y: auto;
+    max-height: 270px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bg-600) transparent;
+  }
+  .variant-picker-group {
+    padding: 4px 0;
+  }
+  .variant-picker-group-label {
+    padding: 4px 10px 2px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-400);
+    pointer-events: none;
+  }
+  .variant-picker-item {
+    padding: 5px 10px 5px 16px;
+    font-size: 12px;
+    color: var(--text-200);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .variant-picker-item:hover,
+  .variant-picker-item.highlighted {
+    background: var(--accent-muted);
+    color: var(--text-50);
+  }
+  .variant-picker-item.selected {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .variant-picker-empty {
+    padding: 12px 10px;
+    font-size: 12px;
+    color: var(--text-400);
+    text-align: center;
+  }
+
   .panel-select {
     /* Hidden — used for value storage only */
     display: none !important;
@@ -870,17 +975,17 @@
       <div class="settings-col">
         <div class="settings-group">
           <div class="group-title">Variant</div>
-          <select id="variant-select" class="panel-select">
-            <option value="chess" selected>Standard</option>
-            <option value="chess960">Chess960</option>
-            <option value="atomic">Atomic</option>
-            <option value="crazyhouse">Crazyhouse</option>
-            <option value="kingofthehill">King of the Hill</option>
-            <option value="3check">Three-check</option>
-            <option value="antichess">Antichess</option>
-            <option value="horde">Horde</option>
-            <option value="racingkings">Racing Kings</option>
-          </select>
+          <div class="variant-picker" id="variant-picker">
+            <div class="variant-picker-selected" id="variant-picker-btn" tabindex="0">
+              <span id="variant-picker-label">Standard</span>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 5l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="variant-picker-dropdown" id="variant-picker-dropdown">
+              <input type="text" class="variant-picker-search" id="variant-picker-search" placeholder="Search variants…" autocomplete="off" spellcheck="false">
+              <div class="variant-picker-list" id="variant-picker-list"></div>
+            </div>
+          </div>
+          <input type="hidden" id="variant-select" value="chess">
           <div id="variant-engine-hint" class="sub-label" style="margin-top:4px;color:var(--accent);display:none"></div>
         </div>
 
@@ -1236,8 +1341,210 @@ function getSavedSettings() {
   } catch { return null; }
 }
 
-// ── Variant hint ─────────────────────────────────────────
-const FAIRY_VARIANTS = ["atomic","crazyhouse","kingofthehill","3check","antichess","horde","racingkings"];
+// ── Variant data & picker ────────────────────────────────
+const VARIANT_DATA = [
+  { cat: "Standard",  items: [
+    { key: "chess",         label: "Standard" },
+    { key: "chess960",      label: "Chess960" },
+  ]},
+  { cat: "Popular",   items: [
+    { key: "atomic",        label: "Atomic" },
+    { key: "crazyhouse",    label: "Crazyhouse" },
+    { key: "kingofthehill", label: "King of the Hill" },
+    { key: "3check",        label: "Three-check" },
+    { key: "antichess",     label: "Antichess" },
+    { key: "horde",         label: "Horde" },
+    { key: "racingkings",   label: "Racing Kings" },
+  ]},
+  { cat: "Chess Variants",  items: [
+    { key: "5check",        label: "Five-check" },
+    { key: "almost",        label: "Almost Chess" },
+    { key: "amazon",        label: "Amazon Chess" },
+    { key: "armageddon",    label: "Armageddon" },
+    { key: "bughouse",      label: "Bughouse" },
+    { key: "chessgi",       label: "Chessgi" },
+    { key: "chigorin",      label: "Chigorin" },
+    { key: "codrus",        label: "Codrus" },
+    { key: "coregal",       label: "Coregal" },
+    { key: "extinction",    label: "Extinction" },
+    { key: "fischerandom",  label: "Fischer Random" },
+    { key: "giveaway",      label: "Giveaway" },
+    { key: "grasshopper",   label: "Grasshopper Chess" },
+    { key: "hoppelpoppel",  label: "Hoppel-Poppel" },
+    { key: "kinglet",       label: "Kinglet" },
+    { key: "knightmate",    label: "Knightmate" },
+    { key: "koedem",        label: "Koedem" },
+    { key: "loop",          label: "Loop Chess" },
+    { key: "losers",        label: "Losers" },
+    { key: "newzealand",    label: "New Zealand" },
+    { key: "nightrider",    label: "Nightrider Chess" },
+    { key: "nocastle",      label: "No Castling" },
+    { key: "nocheckatomic", label: "Atomic (No Check)" },
+    { key: "placement",     label: "Placement Chess" },
+    { key: "pocketknight",  label: "Pocket Knight" },
+    { key: "seirawan",      label: "Seirawan (S-Chess)" },
+    { key: "shouse",        label: "S-House" },
+    { key: "suicide",       label: "Suicide Chess" },
+    { key: "threekings",    label: "Three Kings" },
+  ]},
+  { cat: "Regional",  items: [
+    { key: "ai-wok",        label: "Ai-Wok" },
+    { key: "asean",         label: "ASEAN Chess" },
+    { key: "cambodian",     label: "Cambodian Chess" },
+    { key: "chaturanga",    label: "Chaturanga" },
+    { key: "karouk",        label: "Kar Ouk" },
+    { key: "makpong",       label: "Makpong" },
+    { key: "makruk",        label: "Makruk" },
+    { key: "shatar",        label: "Shatar" },
+    { key: "shatranj",      label: "Shatranj" },
+    { key: "sittuyin",      label: "Sittuyin" },
+  ]},
+  { cat: "Shogi",     items: [
+    { key: "dobutsu",       label: "Dobutsu Shogi" },
+    { key: "euroshogi",     label: "EuroShogi" },
+    { key: "gorogoro",      label: "Goro Goro Shogi" },
+    { key: "judkins",       label: "Judkins Shogi" },
+    { key: "kyotoshogi",    label: "Kyoto Shogi" },
+    { key: "minishogi",     label: "Minishogi" },
+    { key: "torishogi",     label: "Tori Shogi" },
+  ]},
+  { cat: "Mini Games", items: [
+    { key: "gardner",       label: "Gardner's Minichess" },
+    { key: "losalamos",     label: "Los Alamos Chess" },
+    { key: "micro",         label: "Micro Chess" },
+    { key: "mini",          label: "Mini Chess" },
+    { key: "minixiangqi",   label: "Mini Xiangqi" },
+  ]},
+  { cat: "Other",     items: [
+    { key: "ataxx",         label: "Ataxx" },
+    { key: "breakthrough",  label: "Breakthrough" },
+    { key: "clobber",       label: "Clobber" },
+  ]},
+];
+// Flat lookup: key → label
+const VARIANT_LABELS = {};
+VARIANT_DATA.forEach(g => g.items.forEach(v => { VARIANT_LABELS[v.key] = v.label; }));
+// All fairy (non-stockfish) variant keys
+const FAIRY_VARIANTS = Object.keys(VARIANT_LABELS).filter(k => k !== "chess" && k !== "chess960");
+
+// -- Variant picker widget --
+const vpPicker   = document.getElementById("variant-picker");
+const vpBtn      = document.getElementById("variant-picker-btn");
+const vpLabel    = document.getElementById("variant-picker-label");
+const vpDropdown = document.getElementById("variant-picker-dropdown");
+const vpSearch   = document.getElementById("variant-picker-search");
+const vpList     = document.getElementById("variant-picker-list");
+const vpHidden   = document.getElementById("variant-select");
+let vpHighlightIdx = -1;
+let vpVisibleItems = [];
+
+function vpSetValue(key, silent) {
+  vpHidden.value = key;
+  vpLabel.textContent = VARIANT_LABELS[key] || key;
+  vpClose();
+  if (!silent) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "switch_variant", variant: key }));
+    }
+    filterEnginesByVariant(null);
+    saveSettings();
+  }
+}
+
+function vpOpen() {
+  vpPicker.classList.add("open");
+  vpSearch.value = "";
+  vpRender("");
+  vpSearch.focus();
+}
+function vpClose() {
+  vpPicker.classList.remove("open");
+  vpHighlightIdx = -1;
+}
+function vpToggle() {
+  vpPicker.classList.contains("open") ? vpClose() : vpOpen();
+}
+
+function vpRender(filter) {
+  vpList.innerHTML = "";
+  vpVisibleItems = [];
+  const q = filter.toLowerCase();
+  VARIANT_DATA.forEach(group => {
+    const matches = group.items.filter(v =>
+      v.label.toLowerCase().includes(q) || v.key.toLowerCase().includes(q)
+    );
+    if (matches.length === 0) return;
+    const gEl = document.createElement("div");
+    gEl.className = "variant-picker-group";
+    const gLabel = document.createElement("div");
+    gLabel.className = "variant-picker-group-label";
+    gLabel.textContent = group.cat;
+    gEl.appendChild(gLabel);
+    matches.forEach(v => {
+      const item = document.createElement("div");
+      item.className = "variant-picker-item";
+      if (v.key === vpHidden.value) item.classList.add("selected");
+      item.textContent = v.label;
+      item.dataset.key = v.key;
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        vpSetValue(v.key);
+        updateVariantHint(v.key);
+      });
+      gEl.appendChild(item);
+      vpVisibleItems.push(item);
+    });
+    vpList.appendChild(gEl);
+  });
+  if (vpVisibleItems.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "variant-picker-empty";
+    empty.textContent = "No matching variants";
+    vpList.appendChild(empty);
+  }
+  vpHighlightIdx = -1;
+}
+
+function vpHighlight(idx) {
+  vpVisibleItems.forEach(el => el.classList.remove("highlighted"));
+  if (idx >= 0 && idx < vpVisibleItems.length) {
+    vpHighlightIdx = idx;
+    vpVisibleItems[idx].classList.add("highlighted");
+    vpVisibleItems[idx].scrollIntoView({ block: "nearest" });
+  }
+}
+
+vpBtn.addEventListener("click", vpToggle);
+vpBtn.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); vpToggle(); }
+});
+vpSearch.addEventListener("input", () => vpRender(vpSearch.value));
+vpSearch.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    vpHighlight(Math.min(vpHighlightIdx + 1, vpVisibleItems.length - 1));
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    vpHighlight(Math.max(vpHighlightIdx - 1, 0));
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (vpHighlightIdx >= 0 && vpVisibleItems[vpHighlightIdx]) {
+      const key = vpVisibleItems[vpHighlightIdx].dataset.key;
+      vpSetValue(key);
+      updateVariantHint(key);
+    }
+  } else if (e.key === "Escape") {
+    vpClose();
+    vpBtn.focus();
+  }
+});
+document.addEventListener("mousedown", (e) => {
+  if (!vpPicker.contains(e.target)) vpClose();
+});
+
+// Initialize picker
+vpRender("");
+
 function updateVariantHint(variant) {
   const hint = document.getElementById("variant-engine-hint");
   if (FAIRY_VARIANTS.includes(variant)) {
@@ -1301,7 +1608,7 @@ function connect() {
       applySettings(msg);
     }
     if (msg.type === "variant_switched") {
-      document.getElementById("variant-select").value = msg.variant;
+      vpSetValue(msg.variant, true);
       updateVariantHint(msg.variant);
       filterEnginesByVariant(msg.activeEngine || null);
     }
@@ -1965,14 +2272,7 @@ document.getElementById("engine-select").addEventListener("change", (e) => {
   }
   saveSettings();
 });
-document.getElementById("variant-select").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "switch_variant", variant: e.target.value }));
-  }
-  // Immediately filter engine list for the new variant
-  filterEnginesByVariant(null);
-  saveSettings();
-});
+// variant-select change is handled by the variant picker widget (vpSetValue)
 document.getElementById("book-select").addEventListener("change", (e) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     const selected = Array.from(e.target.selectedOptions).map(o => o.value).filter(Boolean);
@@ -2070,7 +2370,7 @@ function applySettings(msg) {
   if (saved) {
     // Restore variant
     if (saved.variant) {
-      document.getElementById("variant-select").value = saved.variant;
+      vpSetValue(saved.variant, true);
       updateVariantHint(saved.variant);
       // Re-filter engine dropdown for the restored variant
       filterEnginesByVariant(msg.activeEngine);
@@ -2229,7 +2529,7 @@ function applySettings(msg) {
   } else {
     // No saved settings — use server defaults
     if (msg.variant) {
-      document.getElementById("variant-select").value = msg.variant;
+      vpSetValue(msg.variant, true);
       updateVariantHint(msg.variant);
     }
     if (msg.defaultDepth) {

@@ -115,16 +115,79 @@ async function main() {
   eco.loadEco(path.join(__dirname, "eco"));
 
   // ── Variant definitions ────────────────────────────────
+  // category: "standard" | "popular" | "chess" | "regional" | "shogi" | "mini" | "other"
+  const f = (label, uci, cat) => ({ label, engine: "fairy", uciVariant: uci, uci960: false, category: cat });
   const VARIANTS = {
-    chess:        { label: "Standard",        engine: "stockfish", uciVariant: null,           uci960: false },
-    chess960:     { label: "Chess960",         engine: "stockfish", uciVariant: null,           uci960: true  },
-    atomic:       { label: "Atomic",           engine: "fairy",     uciVariant: "atomic",       uci960: false },
-    crazyhouse:   { label: "Crazyhouse",       engine: "fairy",     uciVariant: "crazyhouse",   uci960: false },
-    kingofthehill:{ label: "King of the Hill", engine: "fairy",     uciVariant: "kingofthehill", uci960: false },
-    "3check":     { label: "Three-check",      engine: "fairy",     uciVariant: "3check",       uci960: false },
-    antichess:    { label: "Antichess",        engine: "fairy",     uciVariant: "antichess",    uci960: false },
-    horde:        { label: "Horde",            engine: "fairy",     uciVariant: "horde",        uci960: false },
-    racingkings:  { label: "Racing Kings",     engine: "fairy",     uciVariant: "racingkings",  uci960: false },
+    // Standard engines
+    chess:            { label: "Standard",           engine: "stockfish", uciVariant: null,  uci960: false, category: "standard" },
+    chess960:         { label: "Chess960",            engine: "stockfish", uciVariant: null,  uci960: true,  category: "standard" },
+    // Popular lichess/chess.com variants
+    atomic:           f("Atomic",                    "atomic",           "popular"),
+    crazyhouse:       f("Crazyhouse",                "crazyhouse",       "popular"),
+    kingofthehill:    f("King of the Hill",          "kingofthehill",    "popular"),
+    "3check":         f("Three-check",               "3check",           "popular"),
+    antichess:        f("Antichess",                 "antichess",        "popular"),
+    horde:            f("Horde",                     "horde",            "popular"),
+    racingkings:      f("Racing Kings",              "racingkings",      "popular"),
+    // Chess variants
+    "5check":         f("Five-check",                "5check",           "chess"),
+    almost:           f("Almost Chess",              "almost",           "chess"),
+    amazon:           f("Amazon Chess",              "amazon",           "chess"),
+    armageddon:       f("Armageddon",               "armageddon",       "chess"),
+    bughouse:         f("Bughouse",                  "bughouse",         "chess"),
+    chessgi:          f("Chessgi",                   "chessgi",          "chess"),
+    chigorin:         f("Chigorin",                  "chigorin",         "chess"),
+    codrus:           f("Codrus",                    "codrus",           "chess"),
+    coregal:          f("Coregal",                   "coregal",          "chess"),
+    extinction:       f("Extinction",                "extinction",       "chess"),
+    fischerandom:     f("Fischer Random",            "fischerandom",     "chess"),
+    giveaway:         f("Giveaway",                  "giveaway",         "chess"),
+    grasshopper:      f("Grasshopper Chess",         "grasshopper",      "chess"),
+    hoppelpoppel:     f("Hoppel-Poppel",             "hoppelpoppel",     "chess"),
+    kinglet:          f("Kinglet",                   "kinglet",          "chess"),
+    knightmate:       f("Knightmate",                "knightmate",       "chess"),
+    koedem:           f("Koedem",                    "koedem",           "chess"),
+    loop:             f("Loop Chess",                "loop",             "chess"),
+    losers:           f("Losers",                    "losers",           "chess"),
+    newzealand:       f("New Zealand",               "newzealand",       "chess"),
+    nightrider:       f("Nightrider Chess",          "nightrider",       "chess"),
+    nocastle:         f("No Castling",               "nocastle",         "chess"),
+    nocheckatomic:    f("Atomic (No Check)",         "nocheckatomic",    "chess"),
+    placement:        f("Placement Chess",           "placement",        "chess"),
+    pocketknight:     f("Pocket Knight",             "pocketknight",     "chess"),
+    seirawan:         f("Seirawan (S-Chess)",        "seirawan",         "chess"),
+    shouse:           f("S-House",                   "shouse",           "chess"),
+    suicide:          f("Suicide Chess",             "suicide",          "chess"),
+    threekings:       f("Three Kings",               "threekings",       "chess"),
+    // Regional / historical
+    "ai-wok":         f("Ai-Wok",                    "ai-wok",           "regional"),
+    asean:            f("ASEAN Chess",               "asean",            "regional"),
+    cambodian:        f("Cambodian Chess",           "cambodian",        "regional"),
+    chaturanga:       f("Chaturanga",                "chaturanga",       "regional"),
+    karouk:           f("Kar Ouk",                   "karouk",           "regional"),
+    makpong:          f("Makpong",                   "makpong",          "regional"),
+    makruk:           f("Makruk",                    "makruk",           "regional"),
+    shatar:           f("Shatar",                    "shatar",           "regional"),
+    shatranj:         f("Shatranj",                  "shatranj",         "regional"),
+    sittuyin:         f("Sittuyin",                  "sittuyin",         "regional"),
+    // Shogi variants
+    dobutsu:          f("Dobutsu Shogi",             "dobutsu",          "shogi"),
+    euroshogi:        f("EuroShogi",                 "euroshogi",        "shogi"),
+    gorogoro:         f("Goro Goro Shogi",           "gorogoro",         "shogi"),
+    judkins:          f("Judkins Shogi",             "judkins",          "shogi"),
+    kyotoshogi:       f("Kyoto Shogi",               "kyotoshogi",       "shogi"),
+    minishogi:        f("Minishogi",                 "minishogi",        "shogi"),
+    torishogi:        f("Tori Shogi",                "torishogi",        "shogi"),
+    // Mini games
+    gardner:          f("Gardner's Minichess",       "gardner",          "mini"),
+    losalamos:        f("Los Alamos Chess",          "losalamos",        "mini"),
+    micro:            f("Micro Chess",               "micro",            "mini"),
+    mini:             f("Mini Chess",                "mini",             "mini"),
+    minixiangqi:      f("Mini Xiangqi",              "minixiangqi",      "mini"),
+    // Other games
+    ataxx:            f("Ataxx",                     "ataxx",            "other"),
+    breakthrough:     f("Breakthrough",              "breakthrough",     "other"),
+    clobber:          f("Clobber",                   "clobber",          "other"),
   };
   let currentVariant = "chess"; // active variant key
   let currentEngineType = "stockfish"; // "stockfish" | "fairy"
