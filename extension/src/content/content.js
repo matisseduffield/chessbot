@@ -4094,6 +4094,28 @@ function scheduleAutoMove(moveUci, lines, fen) {
   }, delay);
 }
 
+// ── Toast notifications ──────────────────────────────────────
+let _toastEl = null;
+let _toastTimer = null;
+function showToast(text, duration = 1800) {
+  if (!_toastEl) {
+    _toastEl = document.createElement("div");
+    Object.assign(_toastEl.style, {
+      position: "fixed", bottom: "24px", left: "50%", transform: "translateX(-50%)",
+      background: "rgba(30,30,30,0.92)", color: "#fff", padding: "8px 18px",
+      borderRadius: "8px", fontSize: "14px", fontFamily: "system-ui, sans-serif",
+      fontWeight: "500", zIndex: "2147483647", pointerEvents: "none",
+      transition: "opacity 0.25s", opacity: "0", whiteSpace: "nowrap",
+      boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+    });
+    document.body.appendChild(_toastEl);
+  }
+  _toastEl.textContent = text;
+  _toastEl.style.opacity = "1";
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { _toastEl.style.opacity = "0"; }, duration);
+}
+
 // ── Hotkeys ──────────────────────────────────────────────────
 // Alt+A = resume analysis, Alt+S = stop analysis
 // Alt+W = set side to white, Alt+Q = set side to black
@@ -4106,6 +4128,7 @@ document.addEventListener("keydown", (e) => {
     if (!enabled) {
       enabled = true;
       console.log("[chessbot] resumed via hotkey (Alt+A)");
+      showToast("Analysis resumed");
       readAndSend();
     }
   } else if (code === "KeyS") {
@@ -4113,6 +4136,7 @@ document.addEventListener("keydown", (e) => {
     if (enabled) {
       enabled = false;
       console.log("[chessbot] stopped via hotkey (Alt+S)");
+      showToast("Analysis stopped");
       clearArrow();
     }
   } else if (code === "KeyW") {
@@ -4122,6 +4146,7 @@ document.addEventListener("keydown", (e) => {
     lastSentFen = "";
     pendingEval = false;
     console.log("[chessbot] hotkey: analyze for Me (Alt+W)");
+    showToast("Analyzing for Me");
     readAndSend();
   } else if (code === "KeyQ") {
     e.preventDefault();
@@ -4130,6 +4155,7 @@ document.addEventListener("keydown", (e) => {
     lastSentFen = "";
     pendingEval = false;
     console.log("[chessbot] hotkey: analyze for Opponent (Alt+Q)");
+    showToast("Analyzing for Opponent");
     readAndSend();
   } else if (code === "KeyT") {
     e.preventDefault();
@@ -4137,6 +4163,7 @@ document.addEventListener("keydown", (e) => {
     trainingStage = 0;
     trainingBestMove = null;
     console.log(`[chessbot] training mode: ${trainingMode} (Alt+T)`);
+    showToast(`Training mode: ${trainingMode ? "ON" : "OFF"}`);
     if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({ chessbot_trainingMode: trainingMode });
     }
@@ -4145,6 +4172,7 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     autoMoveEnabled = !autoMoveEnabled;
     console.log(`[chessbot] auto-move: ${autoMoveEnabled} (Alt+M)`);
+    showToast(`Auto-move: ${autoMoveEnabled ? "ON" : "OFF"}`);
     if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({ chessbot_autoMove: autoMoveEnabled });
     }
