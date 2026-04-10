@@ -107,16 +107,33 @@
     z-index: 2;
   }
   #wdl-bar {
+    display: none;
+    width: 100%;
+    height: 28px;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: var(--bg-700);
+    position: relative;
+    box-shadow: inset 0 0 6px rgba(0,0,0,0.3);
+    border: 1px solid var(--bg-600);
+  }
+  #wdl-bar-inner {
     display: flex;
     width: 100%;
-    height: 6px;
-    border-radius: 0 0 4px 4px;
-    overflow: hidden;
-    margin-top: -1px;
+    height: 100%;
   }
-  #wdl-win { background: #2ecc71; height: 100%; transition: width 0.4s; }
-  #wdl-draw { background: #95a5a6; height: 100%; transition: width 0.4s; }
-  #wdl-loss { background: #e74c3c; height: 100%; transition: width 0.4s; }
+  #wdl-win { background: #2ecc71; height: 100%; transition: width 0.4s; display: flex; align-items: center; justify-content: center; }
+  #wdl-draw { background: #7f8c8d; height: 100%; transition: width 0.4s; display: flex; align-items: center; justify-content: center; }
+  #wdl-loss { background: #e74c3c; height: 100%; transition: width 0.4s; display: flex; align-items: center; justify-content: center; }
+  .wdl-label {
+    font-size: 10px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    white-space: nowrap;
+    pointer-events: none;
+  }
   #board-col {
     display: flex;
     flex-direction: column;
@@ -931,16 +948,18 @@
           <div id="eval-bar-bot"></div>
         </div>
         <div id="eval-bar-score" style="bottom:4px;color:#333;">0.0</div>
-        <div id="wdl-bar" style="display:none">
-          <div id="wdl-win"></div>
-          <div id="wdl-draw"></div>
-          <div id="wdl-loss"></div>
-        </div>
       </div>
       <div id="board-col">
         <div id="eco-label"></div>
         <div id="board-svg-container">
           <svg id="board-svg" viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+        <div id="wdl-bar">
+          <div id="wdl-bar-inner">
+            <div id="wdl-win"><span class="wdl-label" id="wdl-win-label"></span></div>
+            <div id="wdl-draw"><span class="wdl-label" id="wdl-draw-label"></span></div>
+            <div id="wdl-loss"><span class="wdl-label" id="wdl-loss-label"></span></div>
+          </div>
         </div>
       </div>
     </div>
@@ -1715,11 +1734,17 @@ function renderEvalBar() {
       const w = turn === "w" ? best.wdl.win : best.wdl.loss;
       const d = best.wdl.draw;
       const l = turn === "w" ? best.wdl.loss : best.wdl.win;
-      document.getElementById("wdl-win").style.width = `${(w / total * 100).toFixed(1)}%`;
-      document.getElementById("wdl-draw").style.width = `${(d / total * 100).toFixed(1)}%`;
-      document.getElementById("wdl-loss").style.width = `${(l / total * 100).toFixed(1)}%`;
-      wdlBar.title = `W: ${(w / 10).toFixed(1)}%  D: ${(d / 10).toFixed(1)}%  L: ${(l / 10).toFixed(1)}%`;
-      wdlBar.style.display = "flex";
+      const wPct = (w / total * 100).toFixed(1);
+      const dPct = (d / total * 100).toFixed(1);
+      const lPct = (l / total * 100).toFixed(1);
+      document.getElementById("wdl-win").style.width = `${wPct}%`;
+      document.getElementById("wdl-draw").style.width = `${dPct}%`;
+      document.getElementById("wdl-loss").style.width = `${lPct}%`;
+      document.getElementById("wdl-win-label").textContent = parseFloat(wPct) >= 8 ? `${Math.round(wPct)}%` : "";
+      document.getElementById("wdl-draw-label").textContent = parseFloat(dPct) >= 8 ? `${Math.round(dPct)}%` : "";
+      document.getElementById("wdl-loss-label").textContent = parseFloat(lPct) >= 8 ? `${Math.round(lPct)}%` : "";
+      wdlBar.title = `Win: ${(w / 10).toFixed(1)}%  Draw: ${(d / 10).toFixed(1)}%  Loss: ${(l / 10).toFixed(1)}%`;
+      wdlBar.style.display = "block";
     }
   } else {
     wdlBar.style.display = "none";
