@@ -1180,24 +1180,47 @@ function chesscomBoardToFen() {
   if (isDropVariant) {
     if (whitePocket || blackPocket) {
       console.log(`[chessbot] pocket: ${pocket} (${pieces.length} total pieces, ${found} on board)`);
-    } else if (!chesscomBoardToFen._pocketWarnLogged) {
-      chesscomBoardToFen._pocketWarnLogged = true;
-      console.warn(`[chessbot] drop variant "${detectedVariant}" but no pocket pieces found (${pieces.length} total pieces, ${found} on board)`);
-      // Diagnostic: log info about all pieces to help debug
-      for (let i = 0; i < Math.min(6, pieces.length); i++) {
-        const p = pieces[i];
-        const pr = p.getBoundingClientRect();
-        const cls = typeof p.className === "string" ? p.className : (p.getAttribute("class") || "");
-        const dp = p.getAttribute("data-piece") || "";
-        const dc = p.getAttribute("data-color") || "";
-        const relX = (pr.left + pr.width / 2 - boardRect.left).toFixed(0);
-        const relY = (pr.top + pr.height / 2 - boardRect.top).toFixed(0);
-        console.log(`[chessbot] piece[${i}]: cls="${cls.substring(0, 80)}" data-piece="${dp}" data-color="${dc}" pos=(${relX},${relY}) board=(${boardRect.width.toFixed(0)}x${boardRect.height.toFixed(0)})`);
+    } else {
+      // No pocket pieces found via off-board piece detection — try DOM-scanning fallback
+      const scannedPocket = scanChesscomPocketDOM(board, flipped);
+      if (scannedPocket && scannedPocket !== "[]") {
+        console.log(`[chessbot] pocket (DOM scan): ${scannedPocket}`);
+        const fen = gridToFenBoard(grid, scannedPocket);
+        const boardPart2 = fen.split(" ")[0].replace(/\[.*?\]/, "");
+        const wK2 = (boardPart2.match(/K/g) || []).length;
+        const bK2 = (boardPart2.match(/k/g) || []).length;
+        const isVar = !!detectedVariant && detectedVariant !== "chess960";
+        if (isVar || (wK2 === 1 && bK2 === 1)) return fen;
       }
-      // Also log what the board element is and its parent structure
-      const boardCls = typeof board.className === "string" ? board.className : (board.getAttribute("class") || "");
-      const parentCls = board.parentElement ? (typeof board.parentElement.className === "string" ? board.parentElement.className : (board.parentElement.getAttribute("class") || "")) : "none";
-      console.log(`[chessbot] board: <${board.tagName} class="${boardCls.substring(0, 60)}"> parent: <${board.parentElement?.tagName} class="${parentCls.substring(0, 60)}">`);
+      if (!chesscomBoardToFen._pocketWarnLogged) {
+        chesscomBoardToFen._pocketWarnLogged = true;
+        console.warn(`[chessbot] drop variant "${detectedVariant}" but no pocket pieces found (${pieces.length} total pieces, ${found} on board)`);
+        // Diagnostic: log info about all pieces to help debug
+        for (let i = 0; i < Math.min(6, pieces.length); i++) {
+          const p = pieces[i];
+          const pr = p.getBoundingClientRect();
+          const cls = typeof p.className === "string" ? p.className : (p.getAttribute("class") || "");
+          const dp = p.getAttribute("data-piece") || "";
+          const dc = p.getAttribute("data-color") || "";
+          const relX = (pr.left + pr.width / 2 - boardRect.left).toFixed(0);
+          const relY = (pr.top + pr.height / 2 - boardRect.top).toFixed(0);
+          console.log(`[chessbot] piece[${i}]: cls="${cls.substring(0, 80)}" data-piece="${dp}" data-color="${dc}" pos=(${relX},${relY}) board=(${boardRect.width.toFixed(0)}x${boardRect.height.toFixed(0)})`);
+        }
+        // Log DOM structure around the board for debugging
+        const boardCls = typeof board.className === "string" ? board.className : (board.getAttribute("class") || "");
+        const parentCls = board.parentElement ? (typeof board.parentElement.className === "string" ? board.parentElement.className : (board.parentElement.getAttribute("class") || "")) : "none";
+        console.log(`[chessbot] board: <${board.tagName} class="${boardCls.substring(0, 60)}"> parent: <${board.parentElement?.tagName} class="${parentCls.substring(0, 60)}">`);
+        // Log all siblings of the board for pocket detection clues
+        const parent = board.parentElement;
+        if (parent) {
+          for (const sib of parent.children) {
+            if (sib === board) continue;
+            const sibCls = typeof sib.className === "string" ? sib.className : (sib.getAttribute("class") || "");
+            const sibRect = sib.getBoundingClientRect();
+            console.log(`[chessbot] sibling: <${sib.tagName} class="${sibCls.substring(0, 80)}"> ${sibRect.width.toFixed(0)}x${sibRect.height.toFixed(0)} at (${sibRect.left.toFixed(0)},${sibRect.top.toFixed(0)})`);
+          }
+        }
+      }
     }
   }
   const fen = gridToFenBoard(grid, pocket);
@@ -1430,6 +1453,113 @@ function findChesscomBankPieces(board, excludeContainer) {
     console.log(`[chessbot] found ${bankPieces.length} bank/pocket piece elements outside board container`);
   }
   return bankPieces;
+}
+
+/** Scan chess.com variant page DOM for pocket piece information.
+ *  Chess.com Crazyhouse renders pockets as custom UI elements (not .piece divs).
+ *  This scans sibling/nearby elements around the board for anything that looks
+ *  like a pocket: piece icons with counts, text like "Q N B R P", SVG icons, etc.
+ *  Returns a pocket string like "[QNBppp]" or null. */
+function scanChesscomPocketDOM(board, flipped) {
+  let whitePocket = "";
+  let blackPocket = "";
+  const boardRect = getVisualBoardRect(board);
+  const boardCenterY = boardRect.top + boardRect.height / 2;
+
+  // Strategy: look for elements near but outside the board that contain piece info.
+  // Walk up from the board to find the game layout container.
+  let layoutRoot = board;
+  for (let i = 0; i < 6 && layoutRoot.parentElement && layoutRoot.parentElement !== document.body; i++) {
+    layoutRoot = layoutRoot.parentElement;
+  }
+
+  // Piece type patterns to recognize
+  const pieceLetterMap = {
+    queen: "q", rook: "r", bishop: "b", knight: "n", pawn: "p", king: "k",
+    q: "q", r: "r", b: "b", n: "n", p: "p", k: "k",
+  };
+
+  // --- Method 1: Elements with piece-related data attributes ---
+  const dataEls = layoutRoot.querySelectorAll("[data-piece], [data-type], [data-role]");
+  for (const el of dataEls) {
+    // Skip elements on the board itself
+    const er = el.getBoundingClientRect();
+    if (er.width === 0) continue;
+    const ecx = er.left + er.width / 2;
+    const ecy = er.top + er.height / 2;
+    if (ecx >= boardRect.left - 5 && ecx <= boardRect.right + 5 &&
+        ecy >= boardRect.top - 5 && ecy <= boardRect.bottom + 5) continue;
+
+    const dp = (el.getAttribute("data-piece") || el.getAttribute("data-type") || el.getAttribute("data-role") || "").toLowerCase();
+    const type = pieceLetterMap[dp];
+    if (!type) continue;
+    const dc = (el.getAttribute("data-color") || el.getAttribute("data-side") || "").toLowerCase();
+    // Count
+    const countAttr = el.getAttribute("data-count") || el.getAttribute("data-nb") || "";
+    const countChild = el.querySelector("[class*='count'], [class*='Count'], [class*='badge'], [class*='num']");
+    const count = parseInt(countAttr) || parseInt(countChild?.textContent) || 1;
+    if (count <= 0) continue;
+
+    // Determine color: if above board center → top player, below → bottom player
+    const isTop = ecy < boardCenterY;
+    // Top = opponent, bottom = us. If flipped, top = white pieces, bottom = black
+    const isWhitePiece = flipped ? isTop : !isTop;
+    const ch = isWhitePiece ? type.toUpperCase() : type.toLowerCase();
+    for (let i = 0; i < count; i++) {
+      if (isWhitePiece) whitePocket += ch;
+      else blackPocket += ch;
+    }
+  }
+  if (whitePocket || blackPocket) return "[" + whitePocket + blackPocket + "]";
+
+  // --- Method 2: Elements with piece class names (wb][prnbqk] pattern) ---
+  const allEls = layoutRoot.querySelectorAll("[class*='piece'], [class*='Piece']");
+  for (const el of allEls) {
+    const er = el.getBoundingClientRect();
+    if (er.width === 0) continue;
+    const ecx = er.left + er.width / 2;
+    const ecy = er.top + er.height / 2;
+    if (ecx >= boardRect.left - 5 && ecx <= boardRect.right + 5 &&
+        ecy >= boardRect.top - 5 && ecy <= boardRect.bottom + 5) continue;
+
+    const cls = typeof el.className === "string" ? el.className : (el.getAttribute("class") || "");
+    const m = cls.match(/\b([wb])([prnbqk])\b/);
+    if (!m) continue;
+    const color = m[1];
+    const type = m[2];
+    const ch = color === "w" ? type.toUpperCase() : type.toLowerCase();
+    const countChild = el.querySelector("[class*='count'], [class*='Count'], [class*='badge'], [class*='num']");
+    const count = parseInt(countChild?.textContent) || 1;
+    for (let i = 0; i < count; i++) {
+      if (color === "w") whitePocket += ch;
+      else blackPocket += ch;
+    }
+  }
+  if (whitePocket || blackPocket) return "[" + whitePocket + blackPocket + "]";
+
+  // --- Method 3: Look for img/svg elements with piece-indication src/class ---
+  const imgEls = layoutRoot.querySelectorAll("img[src*='piece'], img[src*='chess'], svg[class*='piece'], svg[class*='Piece']");
+  for (const el of imgEls) {
+    const er = el.getBoundingClientRect();
+    if (er.width === 0) continue;
+    const ecx = er.left + er.width / 2;
+    const ecy = er.top + er.height / 2;
+    if (ecx >= boardRect.left - 5 && ecx <= boardRect.right + 5 &&
+        ecy >= boardRect.top - 5 && ecy <= boardRect.bottom + 5) continue;
+
+    const src = (el.getAttribute("src") || el.getAttribute("href") || el.getAttribute("class") || "").toLowerCase();
+    // chess.com piece image URLs typically contain the piece code like "wq", "bn", "wp" etc.
+    const pieceMatch = src.match(/[\/._-]([wb])([prnbqk])[\/._-]/);
+    if (!pieceMatch) continue;
+    const color = pieceMatch[1];
+    const type = pieceMatch[2];
+    const ch = color === "w" ? type.toUpperCase() : type.toLowerCase();
+    if (color === "w") whitePocket += ch;
+    else blackPocket += ch;
+  }
+  if (whitePocket || blackPocket) return "[" + whitePocket + blackPocket + "]";
+
+  return null;
 }
 
 // ── Lichess board reader ─────────────────────────────────────
@@ -3207,7 +3337,27 @@ function drawEvalBar(bestLine, source, tablebase) {
   // Build the eval bar container
   // Push further left on drop-variant games where pockets occupy space beside the board
   const isDropVar = detectedVariant && DROP_VARIANTS.has(detectedVariant);
-  const evalBarOffset = (SITE === "chesscom" && isDropVar) ? 70 : 28;
+  let evalBarOffset = 28;
+  if (SITE === "chesscom" && isDropVar) {
+    // Measure the actual pocket/bank width on the left side of the board
+    const boardAbsRect = rect; // visual board rect (absolute coords)
+    const pocketSels = "[class*='bank'], [class*='Bank'], [class*='pocket'], [class*='Pocket'], [class*='spare'], [class*='Spare'], [class*='holdings'], [class*='Holdings'], [class*='reserve'], [class*='Reserve']";
+    let pocketWidth = 0;
+    // Search from the board's parent up for pocket containers
+    let searchNode = board.parentElement || document.body;
+    for (let i = 0; i < 4 && searchNode && searchNode !== document.body; i++) {
+      searchNode = searchNode.parentElement || document.body;
+    }
+    const pocketEls = (searchNode || document.body).querySelectorAll(pocketSels);
+    for (const pel of pocketEls) {
+      const pr = pel.getBoundingClientRect();
+      if (pr.width > 0 && pr.right <= boardAbsRect.left + 10) {
+        // This pocket is to the left of the board
+        pocketWidth = Math.max(pocketWidth, boardAbsRect.left - pr.left + 6);
+      }
+    }
+    evalBarOffset = Math.max(28, pocketWidth + 28);
+  }
   const container = document.createElement("div");
   container.id = "chessbot-eval-bar";
   container.style.cssText = `
