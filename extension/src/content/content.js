@@ -3335,34 +3335,15 @@ function drawEvalBar(bestLine, source, tablebase) {
                   (SITE === "chesstempo" && isChesstempFlipped());
 
   // Build the eval bar container
-  // Push further left on drop-variant games where pockets occupy space beside the board
+  // For drop-variant games, place eval bar on the RIGHT to avoid pocket overlap
   const isDropVar = detectedVariant && DROP_VARIANTS.has(detectedVariant);
-  let evalBarOffset = 28;
-  if (SITE === "chesscom" && isDropVar) {
-    // Measure the actual pocket/bank width on the left side of the board
-    const boardAbsRect = rect; // visual board rect (absolute coords)
-    const pocketSels = "[class*='bank'], [class*='Bank'], [class*='pocket'], [class*='Pocket'], [class*='spare'], [class*='Spare'], [class*='holdings'], [class*='Holdings'], [class*='reserve'], [class*='Reserve']";
-    let pocketWidth = 0;
-    // Search from the board's parent up for pocket containers
-    let searchNode = board.parentElement || document.body;
-    for (let i = 0; i < 4 && searchNode && searchNode !== document.body; i++) {
-      searchNode = searchNode.parentElement || document.body;
-    }
-    const pocketEls = (searchNode || document.body).querySelectorAll(pocketSels);
-    for (const pel of pocketEls) {
-      const pr = pel.getBoundingClientRect();
-      if (pr.width > 0 && pr.right <= boardAbsRect.left + 10) {
-        // This pocket is to the left of the board
-        pocketWidth = Math.max(pocketWidth, boardAbsRect.left - pr.left + 6);
-      }
-    }
-    evalBarOffset = Math.max(28, pocketWidth + 28);
-  }
+  const evalBarOnRight = SITE === "chesscom" && isDropVar;
+  const evalBarLeft = evalBarOnRight ? (dx + rect.width + 6) : (dx - 28);
   const container = document.createElement("div");
   container.id = "chessbot-eval-bar";
   container.style.cssText = `
     position: absolute;
-    left: ${dx - evalBarOffset}px;
+    left: ${evalBarLeft}px;
     top: ${dy}px;
     width: 22px;
     height: ${rect.height}px;
