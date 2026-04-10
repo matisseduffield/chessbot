@@ -2218,37 +2218,106 @@ function drawArrowOnBoard(svg, fromFile, fromRank, toFile, toRank, sqSize, flipp
   svg.appendChild(polygon);
 }
 
-/** Draw a drop marker (circle + piece letter) on a destination square for drop moves (e.g. P@e4). */
+/** Draw a drop marker on a destination square for drop moves (e.g. P@e4).
+ *  Shows a prominent pulsing indicator with the piece symbol and "DROP" label. */
 function drawDropMarker(svg, file, rank, sqSize, flipped, color, pieceLetter, opacity) {
   const center = squareCenter(file, rank, sqSize, flipped);
-  const op = opacity || 0.85;
-  const radius = sqSize * 0.35;
+  const top = squareTopLeft(file, rank, sqSize, flipped);
+  const op = opacity || 0.9;
+  const PIECE_SYMBOLS = { P: "\u265F", N: "\u265E", B: "\u265D", R: "\u265C", Q: "\u265B", K: "\u265A" };
+  const PIECE_NAMES = { P: "PAWN", N: "KNIGHT", B: "BISHOP", R: "ROOK", Q: "QUEEN", K: "KING" };
+  const symbol = PIECE_SYMBOLS[pieceLetter?.toUpperCase()] || pieceLetter || "";
+  const sw = Math.max(2, sqSize * 0.04);
 
-  // Circle
+  // Inject pulse animation once
+  if (!svg.querySelector("#chessbot-drop-pulse-style")) {
+    const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+    style.id = "chessbot-drop-pulse-style";
+    style.textContent = `
+      @keyframes chessbot-drop-pulse {
+        0%, 100% { opacity: ${op}; transform: scale(1); }
+        50% { opacity: ${Math.min(1, op + 0.1)}; transform: scale(1.06); }
+      }
+    `;
+    svg.insertBefore(style, svg.firstChild);
+  }
+
+  // Group for the drop marker (enables pulse animation on all elements)
+  const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  g.setAttribute("style", `animation: chessbot-drop-pulse 1.2s ease-in-out infinite; transform-origin: ${center.x}px ${center.y}px;`);
+
+  // Square highlight with dashed border
+  const highlight = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  highlight.setAttribute("x", top.x + sw / 2);
+  highlight.setAttribute("y", top.y + sw / 2);
+  highlight.setAttribute("width", sqSize - sw);
+  highlight.setAttribute("height", sqSize - sw);
+  highlight.setAttribute("fill", color);
+  highlight.setAttribute("fill-opacity", "0.3");
+  highlight.setAttribute("stroke", color);
+  highlight.setAttribute("stroke-width", sw);
+  highlight.setAttribute("stroke-dasharray", `${sqSize * 0.15} ${sqSize * 0.08}`);
+  highlight.setAttribute("rx", sqSize * 0.06);
+  g.appendChild(highlight);
+
+  // Central circle background
+  const radius = sqSize * 0.38;
   const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
   circle.setAttribute("cx", center.x);
   circle.setAttribute("cy", center.y);
   circle.setAttribute("r", radius);
   circle.setAttribute("fill", color);
-  circle.setAttribute("opacity", op);
   circle.setAttribute("stroke", "#fff");
-  circle.setAttribute("stroke-width", Math.max(1.5, sqSize * 0.03));
-  svg.appendChild(circle);
+  circle.setAttribute("stroke-width", Math.max(2, sqSize * 0.04));
+  circle.setAttribute("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.5))");
+  g.appendChild(circle);
 
-  // Piece letter inside circle
-  if (pieceLetter) {
-    const PIECE_SYMBOLS = { P: "\u265F", N: "\u265E", B: "\u265D", R: "\u265C", Q: "\u265B", K: "\u265A" };
+  // Piece symbol
+  if (symbol) {
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("x", center.x);
-    text.setAttribute("y", center.y + sqSize * 0.12);
+    text.setAttribute("y", center.y + sqSize * 0.14);
     text.setAttribute("text-anchor", "middle");
-    text.setAttribute("font-size", sqSize * 0.38);
-    text.setAttribute("font-weight", "800");
+    text.setAttribute("font-size", sqSize * 0.46);
+    text.setAttribute("font-weight", "900");
     text.setAttribute("fill", "#fff");
-    text.setAttribute("opacity", op);
-    text.textContent = PIECE_SYMBOLS[pieceLetter.toUpperCase()] || pieceLetter;
-    svg.appendChild(text);
+    text.setAttribute("filter", "drop-shadow(0 1px 2px rgba(0,0,0,0.6))");
+    text.textContent = symbol;
+    g.appendChild(text);
   }
+
+  // "DROP" label above the square (or piece name if enough room)
+  const labelText = sqSize > 40 ? (PIECE_NAMES[pieceLetter?.toUpperCase()] || "DROP") : "DROP";
+  const labelFontSize = Math.max(8, sqSize * 0.17);
+  const labelY = top.y - labelFontSize * 0.3;
+  if (labelY > 0) {
+    // Label background pill
+    const pillW = labelFontSize * labelText.length * 0.7 + 8;
+    const pillH = labelFontSize + 4;
+    const pill = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    pill.setAttribute("x", center.x - pillW / 2);
+    pill.setAttribute("y", labelY - pillH + 2);
+    pill.setAttribute("width", pillW);
+    pill.setAttribute("height", pillH);
+    pill.setAttribute("fill", color);
+    pill.setAttribute("rx", pillH / 2);
+    pill.setAttribute("filter", "drop-shadow(0 1px 3px rgba(0,0,0,0.4))");
+    g.appendChild(pill);
+
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", center.x);
+    label.setAttribute("y", labelY);
+    label.setAttribute("text-anchor", "middle");
+    label.setAttribute("font-size", labelFontSize);
+    label.setAttribute("font-weight", "900");
+    label.setAttribute("font-family", "system-ui, sans-serif");
+    label.setAttribute("fill", "#fff");
+    label.setAttribute("letter-spacing", "0.5");
+    label.textContent = labelText;
+    g.appendChild(label);
+  }
+
+  svg.appendChild(g);
 }
 
 // ── Square highlight drawing ─────────────────────────────────
@@ -3136,11 +3205,14 @@ function drawEvalBar(bestLine, source, tablebase) {
                   (SITE === "chesstempo" && isChesstempFlipped());
 
   // Build the eval bar container
+  // Push further left on drop-variant games where pockets occupy space beside the board
+  const isDropVar = detectedVariant && DROP_VARIANTS.has(detectedVariant);
+  const evalBarOffset = (SITE === "chesscom" && isDropVar) ? 70 : 28;
   const container = document.createElement("div");
   container.id = "chessbot-eval-bar";
   container.style.cssText = `
     position: absolute;
-    left: ${dx - 28}px;
+    left: ${dx - evalBarOffset}px;
     top: ${dy}px;
     width: 22px;
     height: ${rect.height}px;

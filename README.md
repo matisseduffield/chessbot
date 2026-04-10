@@ -92,7 +92,7 @@ Real-time chess analysis overlay for online chess sites. A Chrome extension read
 │ • draws arrows    │                   │ • opening book   │
 │ • turn detection  │                   │ • ECO database   │
 │ • FEN conversion  │                   │ • Syzygy tables  │
-└────────────────── ┘                   └──────────────────┘
+└───────────────────┘                   └──────────────────┘
         ▲                                       ▲
         │                                       │
         ▼                                       ▼

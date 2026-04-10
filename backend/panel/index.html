@@ -1884,28 +1884,83 @@ function drawArrow(svg, uci, isOurMove, numFiles, numRanks) {
     const toR = numRanks - parseInt(dropMatch[3]);
     const cx = toF * sqSize + sqSize / 2;
     const cy = toR * sqSize + sqSize / 2;
+    const tx = toF * sqSize;
+    const ty = toR * sqSize;
     const color = isOurMove ? "hsla(145,100%,50%,0.8)" : "hsla(350,100%,50%,0.7)";
-    const radius = sqSize * 0.35;
+    const radius = sqSize * 0.38;
+    const sw = Math.max(2, sqSize * 0.04);
+    const PIECE_SYMBOLS = { P: "\u265F", N: "\u265E", B: "\u265D", R: "\u265C", Q: "\u265B", K: "\u265A" };
+    const PIECE_NAMES = { P: "PAWN", N: "KNIGHT", B: "BISHOP", R: "ROOK", Q: "QUEEN", K: "KING" };
+    const symbol = PIECE_SYMBOLS[dropMatch[1].toUpperCase()] || dropMatch[1];
+    const pieceName = PIECE_NAMES[dropMatch[1].toUpperCase()] || "DROP";
 
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+
+    // Dashed square highlight
+    const highlight = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    highlight.setAttribute("x", tx + sw / 2);
+    highlight.setAttribute("y", ty + sw / 2);
+    highlight.setAttribute("width", sqSize - sw);
+    highlight.setAttribute("height", sqSize - sw);
+    highlight.setAttribute("fill", color);
+    highlight.setAttribute("fill-opacity", "0.25");
+    highlight.setAttribute("stroke", color);
+    highlight.setAttribute("stroke-width", sw);
+    highlight.setAttribute("stroke-dasharray", `${sqSize * 0.15} ${sqSize * 0.08}`);
+    highlight.setAttribute("rx", sqSize * 0.06);
+    g.appendChild(highlight);
+
+    // Circle
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     circle.setAttribute("cx", cx);
     circle.setAttribute("cy", cy);
     circle.setAttribute("r", radius);
     circle.setAttribute("fill", color);
     circle.setAttribute("stroke", "#fff");
-    circle.setAttribute("stroke-width", Math.max(1.5, sqSize * 0.03));
-    svg.appendChild(circle);
+    circle.setAttribute("stroke-width", Math.max(2, sqSize * 0.04));
+    circle.setAttribute("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.5))");
+    g.appendChild(circle);
 
-    const PIECE_SYMBOLS = { P: "\u265F", N: "\u265E", B: "\u265D", R: "\u265C", Q: "\u265B", K: "\u265A" };
+    // Piece symbol
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("x", cx);
-    text.setAttribute("y", cy + sqSize * 0.12);
+    text.setAttribute("y", cy + sqSize * 0.14);
     text.setAttribute("text-anchor", "middle");
-    text.setAttribute("font-size", sqSize * 0.38);
-    text.setAttribute("font-weight", "800");
+    text.setAttribute("font-size", sqSize * 0.46);
+    text.setAttribute("font-weight", "900");
     text.setAttribute("fill", "#fff");
-    text.textContent = PIECE_SYMBOLS[dropMatch[1].toUpperCase()] || dropMatch[1];
-    svg.appendChild(text);
+    text.setAttribute("filter", "drop-shadow(0 1px 2px rgba(0,0,0,0.6))");
+    text.textContent = symbol;
+    g.appendChild(text);
+
+    // Piece name label above
+    const labelFontSize = sqSize * 0.17;
+    const labelY = ty - labelFontSize * 0.3;
+    if (labelY > 0) {
+      const pillW = labelFontSize * pieceName.length * 0.7 + 8;
+      const pillH = labelFontSize + 4;
+      const pill = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      pill.setAttribute("x", cx - pillW / 2);
+      pill.setAttribute("y", labelY - pillH + 2);
+      pill.setAttribute("width", pillW);
+      pill.setAttribute("height", pillH);
+      pill.setAttribute("fill", color);
+      pill.setAttribute("rx", pillH / 2);
+      g.appendChild(pill);
+
+      const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      label.setAttribute("x", cx);
+      label.setAttribute("y", labelY);
+      label.setAttribute("text-anchor", "middle");
+      label.setAttribute("font-size", labelFontSize);
+      label.setAttribute("font-weight", "900");
+      label.setAttribute("font-family", "system-ui, sans-serif");
+      label.setAttribute("fill", "#fff");
+      label.textContent = pieceName;
+      g.appendChild(label);
+    }
+
+    svg.appendChild(g);
     return;
   }
 
