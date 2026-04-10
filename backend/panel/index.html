@@ -130,7 +130,7 @@
   }
   #board-svg-container {
     width: 100%;
-    aspect-ratio: 1;
+    aspect-ratio: var(--board-aspect, 1);
     max-width: min(calc(100vh - 160px), 560px);
     position: relative;
     background: var(--bg-700);
@@ -1738,6 +1738,29 @@ function formatScore(line) {
 }
 
 // ── Board SVG ────────────────────────────────────────────
+function parseBoardDimensions(fen) {
+  if (!fen) return { files: 8, ranks: 8 };
+  let boardPart = fen.split(" ")[0];
+  boardPart = boardPart.replace(/\[.*?\]$/g, "");
+  const rows = boardPart.split("/");
+  const ranks = rows.length;
+  let maxFiles = 0;
+  for (const row of rows) {
+    let files = 0;
+    let numBuf = "";
+    for (const ch of row) {
+      if (ch >= "0" && ch <= "9") { numBuf += ch; }
+      else {
+        if (numBuf) { files += parseInt(numBuf); numBuf = ""; }
+        if (ch !== "+" && ch !== "~") files++;
+      }
+    }
+    if (numBuf) files += parseInt(numBuf);
+    if (files > maxFiles) maxFiles = files;
+  }
+  return { files: maxFiles || 8, ranks: ranks || 8 };
+}
+
 function renderBoard() {
   const container = document.getElementById("board-svg-container");
   container.style.display = "block";
@@ -1747,18 +1770,24 @@ function renderBoard() {
 
   const fen = currentData.fen;
   if (!fen) return;
-  const boardPart = fen.split(" ")[0];
-  const size = 800;
-  const sq = size / 8;
+  const boardPart = fen.split(" ")[0].replace(/\[.*?\]$/g, "");
+  const dim = parseBoardDimensions(fen);
+  const numFiles = dim.files;
+  const numRanks = dim.ranks;
+  const sqSize = 100;
+  const svgW = numFiles * sqSize;
+  const svgH = numRanks * sqSize;
+  svg.setAttribute("viewBox", `0 0 ${svgW} ${svgH}`);
+  container.style.setProperty("--board-aspect", `${numFiles} / ${numRanks}`);
 
   // Draw squares
-  for (let r = 0; r < 8; r++) {
-    for (let f = 0; f < 8; f++) {
+  for (let r = 0; r < numRanks; r++) {
+    for (let f = 0; f < numFiles; f++) {
       const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      rect.setAttribute("x", f * sq);
-      rect.setAttribute("y", r * sq);
-      rect.setAttribute("width", sq);
-      rect.setAttribute("height", sq);
+      rect.setAttribute("x", f * sqSize);
+      rect.setAttribute("y", r * sqSize);
+      rect.setAttribute("width", sqSize);
+      rect.setAttribute("height", sqSize);
       rect.setAttribute("fill", (r + f) % 2 === 0 ? LIGHT_SQ : DARK_SQ);
       svg.appendChild(rect);
     }
@@ -1768,14 +1797,23 @@ function renderBoard() {
   const rows = boardPart.split("/");
   for (let r = 0; r < rows.length; r++) {
     let f = 0;
-    for (const ch of rows[r]) {
-      if (ch >= "1" && ch <= "8") { f += parseInt(ch); continue; }
+    for (let i = 0; i < rows[r].length; i++) {
+      const ch = rows[r][i];
+      if (ch >= "0" && ch <= "9") {
+        let num = ch;
+        while (i + 1 < rows[r].length && rows[r][i + 1] >= "0" && rows[r][i + 1] <= "9") {
+          num += rows[r][++i];
+        }
+        f += parseInt(num);
+        continue;
+      }
+      if (ch === "+" || ch === "~") continue;
       const pieceDef = PIECE_SVG[ch];
       if (!pieceDef) { f++; continue; }
       const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      const scale = sq / 45;
-      const tx = f * sq;
-      const ty = r * sq;
+      const scale = sqSize / 45;
+      const tx = f * sqSize;
+      const ty = r * sqSize;
       g.setAttribute("transform", `translate(${tx},${ty}) scale(${scale})`);
       g.setAttribute("style", "filter:drop-shadow(1px 1px 2px rgba(0,0,0,0.35));pointer-events:none;");
       pieceDef.paths.forEach(d => {
@@ -1828,33 +1866,33 @@ function renderBoard() {
   if (lines.length > 0) {
     const line = lines[Math.min(selectedPV - 1, lines.length - 1)];
     const pv = line.pv || [];
-    if (pv.length >= 1) drawArrow(svg, pv[0], true, size);
-    if (pv.length >= 2) drawArrow(svg, pv[1], false, size);
+    if (pv.length >= 1) drawArrow(svg, pv[0], true, numFiles, numRanks);
+    if (pv.length >= 2) drawArrow(svg, pv[1], false, numFiles, numRanks);
   } else if (currentData.bestmove && currentData.bestmove.length >= 4) {
-    // Book move — draw single green arrow from bestmove UCI
-    drawArrow(svg, currentData.bestmove, true, size);
+    drawArrow(svg, currentData.bestmove, true, numFiles, numRanks);
   }
 }
 
-function drawArrow(svg, uci, isOurMove, size) {
+function drawArrow(svg, uci, isOurMove, numFiles, numRanks) {
   if (!uci || uci.length < 4) return;
-  const sq = size / 8;
-  const files = "abcdefgh";
-  const fromF = files.indexOf(uci[0]);
-  const fromR = 8 - parseInt(uci[1]);
-  const toF = files.indexOf(uci[2]);
-  const toR = 8 - parseInt(uci[3]);
+  const sqSize = 100;
+  const m = uci.match(/^([a-z])(\d+)([a-z])(\d+)/);
+  if (!m) return;
+  const fromF = m[1].charCodeAt(0) - 97;
+  const fromR = numRanks - parseInt(m[2]);
+  const toF = m[3].charCodeAt(0) - 97;
+  const toR = numRanks - parseInt(m[4]);
 
-  const x1 = fromF * sq + sq / 2;
-  const y1 = fromR * sq + sq / 2;
-  let x2 = toF * sq + sq / 2;
-  let y2 = toR * sq + sq / 2;
+  const x1 = fromF * sqSize + sqSize / 2;
+  const y1 = fromR * sqSize + sqSize / 2;
+  let x2 = toF * sqSize + sqSize / 2;
+  let y2 = toR * sqSize + sqSize / 2;
 
   // Shorten so arrowhead sits near target square edge
   const dx = x2 - x1;
   const dy = y2 - y1;
   const dist = Math.sqrt(dx * dx + dy * dy);
-  const shorten = sq * 0.35;
+  const shorten = sqSize * 0.35;
   if (dist > shorten) {
     const scale = (dist - shorten) / dist;
     x2 = x1 + dx * scale;
@@ -1863,13 +1901,12 @@ function drawArrow(svg, uci, isOurMove, size) {
 
   const color = isOurMove ? "hsla(145,100%,50%,0.8)" : "hsla(350,100%,50%,0.7)";
 
-  // Arrowhead as polygon (avoids marker url(#) CSP issues)
   const adx = x2 - x1, ady = y2 - y1;
   const len = Math.sqrt(adx * adx + ady * ady);
   if (len < 1) return;
   const ux = adx / len, uy = ady / len;
-  const headLen = sq * 0.38;
-  const headW = sq * 0.28;
+  const headLen = sqSize * 0.38;
+  const headW = sqSize * 0.28;
   const tipX = x2 + ux * headLen * 0.3;
   const tipY = y2 + uy * headLen * 0.3;
   const baseX = x2 - ux * headLen * 0.5;
@@ -1887,7 +1924,7 @@ function drawArrow(svg, uci, isOurMove, size) {
   line.setAttribute("x2", x2);
   line.setAttribute("y2", y2);
   line.setAttribute("stroke", color);
-  line.setAttribute("stroke-width", sq / 5);
+  line.setAttribute("stroke-width", sqSize / 5);
   line.setAttribute("stroke-linecap", "round");
 
   svg.appendChild(line);
