@@ -854,8 +854,10 @@ function hasPremoveElements() {
 
 function countPieces(boardFen) {
   let n = 0;
-  for (const ch of boardFen) {
-    if (ch !== "/" && (ch < "1" || ch > "8")) n++;
+  // Strip pocket notation [...] before counting
+  const cleaned = boardFen.replace(/\[.*?\]$/g, "");
+  for (const ch of cleaned) {
+    if (ch !== "/" && ch !== "+" && ch !== "~" && (ch < "0" || ch > "9")) n++;
   }
   return n;
 }
@@ -910,11 +912,13 @@ function readAndSend() {
     checkTrainingAccuracy(fen);
   }
 
-  // Detect new game: piece count jumped back to 32 (or close) from fewer,
-  // OR the board reset to the starting position. Reset cached player color
-  // so we re-detect which side we're playing.
+  // Detect new game: standard starting position, OR piece count jumped
+  // significantly upward (board reset). Works for variants with non-standard
+  // starting piece counts (Horde, Racing Kings, etc.)
   const isStartPos = boardPart === "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
-  if ((prevBoard && pieceCount === 32 && countPieces(prevBoard) < 30) || isStartPos) {
+  const prevPieceCount = prevBoard ? countPieces(prevBoard) : 0;
+  const pieceCountJump = prevPieceCount > 0 && pieceCount - prevPieceCount >= 10;
+  if (isStartPos || pieceCountJump) {
     console.log("[chessbot] new game detected — resetting state");
     waitingForOpponent = false;
     lastSentFen = "";
@@ -1154,10 +1158,12 @@ function chesscomBoardToFen() {
   const boardPart = fen.split(" ")[0];
   const whiteKings = (boardPart.match(/K/g) || []).length;
   const blackKings = (boardPart.match(/k/g) || []).length;
-  // In atomic chess kings can be destroyed, so allow 0; otherwise require exactly 1
+  // In variants, king counts can differ from standard chess:
+  // Three Kings: 3 white kings, Horde: 0 black king, Atomic: kings destroyed, etc.
+  const isVariant = !!detectedVariant && detectedVariant !== "chess960";
   const isAtomic = detectedVariant === "atomic";
-  const validW = isAtomic ? whiteKings <= 1 : whiteKings === 1;
-  const validB = isAtomic ? blackKings <= 1 : blackKings === 1;
+  const validW = isVariant || isAtomic ? true : whiteKings === 1;
+  const validB = isVariant || isAtomic ? true : blackKings === 1;
   if (!validW || !validB) {
     console.log(`[chessbot] invalid FEN: K=${whiteKings} k=${blackKings} — ${fen.substring(0, 60)}`);
     _variantColorMap = null; // force re-build of color map
@@ -1514,7 +1520,16 @@ function isChesstempFlipped() {
 // ── Turn detection (multiple methods, prioritized) ───────────
 
 function inferTurn(prevBoardFen, currentBoardFen) {
-  // Method 1: diff the two positions to see which color just moved
+  // Method 1: read the move list from the DOM (most reliable — works mid-game, on refresh, etc.)
+  const moveListTurn = detectTurnFromMoveList();
+  if (moveListTurn) return moveListTurn;
+
+  // Method 2: clock-based detection (whose clock is ticking)
+  const clockTurn = detectTurnFromClocks();
+  if (clockTurn) return clockTurn;
+
+  // Method 3: diff the two positions to see which color just moved
+  // (can be unreliable for variants with unusual captures/drops — checked after DOM methods)
   if (prevBoardFen && prevBoardFen !== currentBoardFen) {
     const movedColor = detectWhoMoved(prevBoardFen, currentBoardFen);
     if (movedColor) {
@@ -1522,17 +1537,9 @@ function inferTurn(prevBoardFen, currentBoardFen) {
     }
   }
 
-  // Method 2: read the move list from the DOM (works mid-game, on refresh, etc.)
-  const moveListTurn = detectTurnFromMoveList();
-  if (moveListTurn) return moveListTurn;
-
-  // Method 3: last-move highlight squares (chess.com highlights the move just played)
+  // Method 4: last-move highlight squares (chess.com highlights the move just played)
   const highlightTurn = detectTurnFromHighlights();
   if (highlightTurn) return highlightTurn;
-
-  // Method 4: clock-based detection (whose clock is ticking)
-  const clockTurn = detectTurnFromClocks();
-  if (clockTurn) return clockTurn;
 
   // Last resort: DON'T assume — return null so callers can handle uncertainty
   console.log(`[chessbot] turn detection uncertain — all methods failed`);
@@ -1684,15 +1691,20 @@ function detectWhoMoved(prevFen, currFen) {
   const curr = fenBoardToGrid(currFen);
 
   // Count squares where a piece of each color newly appeared
+  // Use dynamic grid dimensions to support non-8x8 variants
   let whiteAppeared = 0;
   let blackAppeared = 0;
   let whiteDisappeared = 0;
   let blackDisappeared = 0;
 
-  for (let r = 0; r < 8; r++) {
-    for (let f = 0; f < 8; f++) {
-      const p = prev[r][f];
-      const c = curr[r][f];
+  const ranks = Math.max(prev.length, curr.length);
+  for (let r = 0; r < ranks; r++) {
+    const prevRank = prev[r] || [];
+    const currRank = curr[r] || [];
+    const files = Math.max(prevRank.length, currRank.length);
+    for (let f = 0; f < files; f++) {
+      const p = prevRank[f] || null;
+      const c = currRank[f] || null;
       if (p === c) continue;
 
       // Something left this square
@@ -1740,16 +1752,22 @@ function detectWhoMoved(prevFen, currFen) {
 
 function fenBoardToGrid(boardFen) {
   const grid = [];
-  const rows = boardFen.split("/");
+  // Strip pocket notation [...] (crazyhouse, shogi, etc.)
+  const cleaned = boardFen.replace(/\[.*?\]$/g, "");
+  const rows = cleaned.split("/");
   for (const row of rows) {
     const rank = [];
+    let numBuf = "";
     for (const ch of row) {
-      if (ch >= "1" && ch <= "8") {
-        for (let i = 0; i < parseInt(ch, 10); i++) rank.push(null);
+      if (ch >= "0" && ch <= "9") {
+        numBuf += ch;
       } else {
-        rank.push(ch);
+        if (numBuf) { for (let i = 0; i < parseInt(numBuf); i++) rank.push(null); numBuf = ""; }
+        // Skip promoted piece markers (+ and ~ in Shogi/Fairy FENs)
+        if (ch !== "+" && ch !== "~") rank.push(ch);
       }
     }
+    if (numBuf) { for (let i = 0; i < parseInt(numBuf); i++) rank.push(null); }
     grid.push(rank);
   }
   return grid;
@@ -1814,10 +1832,12 @@ function getPlayerColor() {
 
 function gridToFenBoard(grid) {
   const rows = [];
-  for (let r = 0; r < 8; r++) {
+  const numRanks = grid.length;
+  for (let r = 0; r < numRanks; r++) {
     let row = "";
     let empty = 0;
-    for (let f = 0; f < 8; f++) {
+    const numFiles = grid[r].length;
+    for (let f = 0; f < numFiles; f++) {
       if (grid[r][f]) {
         if (empty) { row += empty; empty = 0; }
         row += grid[r][f];
@@ -1828,16 +1848,18 @@ function gridToFenBoard(grid) {
     if (empty) row += empty;
     rows.push(row);
   }
-  // Derive castling rights from king/rook positions
+  // Derive castling rights from king/rook positions (only for 8x8 boards)
   // grid[0] = rank 8 (top), grid[7] = rank 1 (bottom)
   let castling = "";
-  if (grid[7][4] === "K") { // white king on e1
-    if (grid[7][7] === "R") castling += "K";
-    if (grid[7][0] === "R") castling += "Q";
-  }
-  if (grid[0][4] === "k") { // black king on e8
-    if (grid[0][7] === "r") castling += "k";
-    if (grid[0][0] === "r") castling += "q";
+  if (numRanks === 8 && (grid[7] || []).length >= 8) {
+    if (grid[7][4] === "K") { // white king on e1
+      if (grid[7][7] === "R") castling += "K";
+      if (grid[7][0] === "R") castling += "Q";
+    }
+    if (grid[0][4] === "k") { // black king on e8
+      if (grid[0][7] === "r") castling += "k";
+      if (grid[0][0] === "r") castling += "q";
+    }
   }
   if (!castling) castling = "-";
   return rows.join("/") + " w " + castling + " - 0 1";
@@ -1855,12 +1877,14 @@ function boardToFen() {
 
 function uciToSquares(uci) {
   if (!uci || uci.length < 4) return null;
-  // e.g. "e2e4" → { from: {file:4, rank:1}, to: {file:4, rank:3} }
-  const ff = uci.charCodeAt(0) - 97;
-  const fr = parseInt(uci[1], 10) - 1;
-  const tf = uci.charCodeAt(2) - 97;
-  const tr = parseInt(uci[3], 10) - 1;
-  if (ff < 0 || ff > 7 || fr < 0 || fr > 7 || tf < 0 || tf > 7 || tr < 0 || tr > 7) return null;
+  // Parse UCI move — supports multi-digit ranks for larger boards (e.g. a10b10)
+  const m = uci.match(/^([a-z])(\d+)([a-z])(\d+)/);
+  if (!m) return null;
+  const ff = m[1].charCodeAt(0) - 97;
+  const fr = parseInt(m[2], 10) - 1;
+  const tf = m[3].charCodeAt(0) - 97;
+  const tr = parseInt(m[4], 10) - 1;
+  if (ff < 0 || fr < 0 || tf < 0 || tr < 0) return null;
   return {
     from: { file: ff, rank: fr },
     to:   { file: tf, rank: tr },
