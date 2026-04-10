@@ -71,6 +71,7 @@ let autoMoveDelayMax = 2000; // maximum delay before executing move (ms)
 let autoMoveHumanize = true; // occasionally pick 2nd/3rd best move
 let autoMoveHumanizeChance = 0.1; // probability (0–1) of picking suboptimal move
 let autoMoveTimer = null;    // pending auto-move timeout
+let autoMoveCooldownUntil = 0; // timestamp — block scheduling until this time
 
 // ── Log buffer ───────────────────────────────────────────────
 const LOG_BUFFER_MAX = 500;
@@ -4049,6 +4050,12 @@ function scheduleAutoMove(moveUci, lines, fen) {
   // Don't auto-move in training mode
   if (trainingMode) return;
 
+  // Cooldown after executing a move — prevent premoves from stale/intermediate states
+  if (Date.now() < autoMoveCooldownUntil) {
+    console.log("[chessbot][auto-move] cooldown active — skipping");
+    return;
+  }
+
   // Only auto-move on our own turn — prevent premoves when analyzing for "both"
   if (fen) {
     const fenTurn = fen.split(" ")[1]; // "w" or "b"
@@ -4115,6 +4122,9 @@ function scheduleAutoMove(moveUci, lines, fen) {
       }
     }
 
+    // Set cooldown to prevent re-scheduling from intermediate board states
+    autoMoveCooldownUntil = Date.now() + 2000;
+    waitingForOpponent = true;
     executeMove(finalMove);
   }, delay);
 }
