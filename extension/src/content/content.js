@@ -4090,9 +4090,24 @@ function scheduleAutoMove(moveUci, lines, fen) {
   autoMoveTimer = setTimeout(() => {
     autoMoveTimer = null;
 
+    // Re-verify it's still our turn at execution time
+    const playerColor = getPlayerColor();
+    if (playerColor) {
+      // If lastSentFen was cleared (opponent's turn detected), abort
+      if (!lastSentFen) {
+        console.log("[chessbot][auto-move] no active analysis — likely opponent's turn, skipping");
+        return;
+      }
+      const currentTurn = lastSentFen.split(" ")[1];
+      if (currentTurn && currentTurn !== playerColor) {
+        console.log(`[chessbot][auto-move] not our turn at execution (fen=${currentTurn} player=${playerColor}), skipping`);
+        return;
+      }
+    }
+
     // Verify position hasn't changed since we scheduled
-    if (lastSentFen && scheduledFen) {
-      const currentBoard = lastSentFen.split(" ")[0];
+    if (scheduledFen) {
+      const currentBoard = (lastSentFen || "").split(" ")[0];
       const scheduledBoard = scheduledFen.split(" ")[0];
       if (currentBoard !== scheduledBoard) {
         console.log("[chessbot][auto-move] position changed, skipping stale move");
