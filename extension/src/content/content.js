@@ -4167,6 +4167,10 @@ document.addEventListener("keydown", (e) => {
     if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({ chessbot_trainingMode: trainingMode });
     }
+    // Notify server/panel so the toggle stays in sync
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_mode", value: trainingMode } }));
+    }
     resendCurrentPosition();
   } else if (code === "KeyM") {
     e.preventDefault();
@@ -4175,6 +4179,10 @@ document.addEventListener("keydown", (e) => {
     showToast(`Auto-move: ${autoMoveEnabled ? "ON" : "OFF"}`);
     if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({ chessbot_autoMove: autoMoveEnabled });
+    }
+    // Notify server/panel so the toggle stays in sync
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move", value: autoMoveEnabled } }));
     }
     if (!autoMoveEnabled) cancelAutoMove();
   }
