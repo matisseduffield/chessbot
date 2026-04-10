@@ -4049,6 +4049,16 @@ function scheduleAutoMove(moveUci, lines, fen) {
   // Don't auto-move in training mode
   if (trainingMode) return;
 
+  // Only auto-move on our own turn — prevent premoves when analyzing for "both"
+  if (fen) {
+    const fenTurn = fen.split(" ")[1]; // "w" or "b"
+    const playerColor = getPlayerColor();
+    if (fenTurn && playerColor && fenTurn !== playerColor) {
+      console.log(`[chessbot][auto-move] skipping — not our turn (fen=${fenTurn} player=${playerColor})`);
+      return;
+    }
+  }
+
   // Determine which move to actually play
   let finalMove = moveUci;
   if (autoMoveHumanize && lines && lines.length > 1 && Math.random() < autoMoveHumanizeChance) {
