@@ -239,13 +239,15 @@ function init() {
   if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
     chrome.storage.local.get([
       "chessbot_trainingMode", "chessbot_trainingDifficulty",
-      "chessbot_trainingStrict", "chessbot_trainingAutoReveal", "chessbot_trainingSound"
+      "chessbot_trainingStrict", "chessbot_trainingAutoReveal", "chessbot_trainingSound",
+      "chessbot_autoMove"
     ], (result) => {
       if (result.chessbot_trainingMode) { trainingMode = true; console.log("[chessbot] training mode restored from storage"); }
       if (result.chessbot_trainingDifficulty) trainingDifficulty = result.chessbot_trainingDifficulty;
       if (result.chessbot_trainingStrict !== undefined) trainingStrict = !!result.chessbot_trainingStrict;
       if (result.chessbot_trainingAutoReveal !== undefined) trainingAutoReveal = !!result.chessbot_trainingAutoReveal;
       if (result.chessbot_trainingSound !== undefined) trainingSound = !!result.chessbot_trainingSound;
+      if (result.chessbot_autoMove) { autoMoveEnabled = true; console.log("[chessbot] auto-move restored from storage"); }
       startAfterRestore();
     });
   } else {
@@ -426,6 +428,9 @@ function connectWS() {
       if (msg.type === "set_auto_move") {
         autoMoveEnabled = !!msg.value;
         console.log(`[chessbot] auto-move: ${autoMoveEnabled} (from panel)`);
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ chessbot_autoMove: autoMoveEnabled });
+        }
         if (!autoMoveEnabled) cancelAutoMove();
         return;
       }
@@ -4094,22 +4099,23 @@ function scheduleAutoMove(moveUci, lines, fen) {
 // Alt+W = set side to white, Alt+Q = set side to black
 document.addEventListener("keydown", (e) => {
   if (!e.altKey) return;
-  const key = e.key.toLowerCase();
-  if (key === "a") {
+  // Use e.code instead of e.key — Alt+key produces Unicode chars on many OS/layouts
+  const code = e.code;
+  if (code === "KeyA") {
     e.preventDefault();
     if (!enabled) {
       enabled = true;
       console.log("[chessbot] resumed via hotkey (Alt+A)");
       readAndSend();
     }
-  } else if (key === "s") {
+  } else if (code === "KeyS") {
     e.preventDefault();
     if (enabled) {
       enabled = false;
       console.log("[chessbot] stopped via hotkey (Alt+S)");
       clearArrow();
     }
-  } else if (key === "w") {
+  } else if (code === "KeyW") {
     e.preventDefault();
     runEngineFor = "me";
     waitingForOpponent = false;
@@ -4117,7 +4123,7 @@ document.addEventListener("keydown", (e) => {
     pendingEval = false;
     console.log("[chessbot] hotkey: analyze for Me (Alt+W)");
     readAndSend();
-  } else if (key === "q") {
+  } else if (code === "KeyQ") {
     e.preventDefault();
     runEngineFor = "opponent";
     waitingForOpponent = false;
@@ -4125,7 +4131,7 @@ document.addEventListener("keydown", (e) => {
     pendingEval = false;
     console.log("[chessbot] hotkey: analyze for Opponent (Alt+Q)");
     readAndSend();
-  } else if (key === "t") {
+  } else if (code === "KeyT") {
     e.preventDefault();
     trainingMode = !trainingMode;
     trainingStage = 0;
@@ -4135,10 +4141,13 @@ document.addEventListener("keydown", (e) => {
       chrome.storage.local.set({ chessbot_trainingMode: trainingMode });
     }
     resendCurrentPosition();
-  } else if (key === "m") {
+  } else if (code === "KeyM") {
     e.preventDefault();
     autoMoveEnabled = !autoMoveEnabled;
     console.log(`[chessbot] auto-move: ${autoMoveEnabled} (Alt+M)`);
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ chessbot_autoMove: autoMoveEnabled });
+    }
     if (!autoMoveEnabled) cancelAutoMove();
   }
 });
