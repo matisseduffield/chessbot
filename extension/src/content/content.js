@@ -1199,8 +1199,9 @@ function chesscomBoardToFen() {
   if (isDropVariant) {
     if (whitePocket || blackPocket) {
       console.log(`[chessbot] pocket: ${pocket} (${pieces.length} total pieces, ${found} on board)`);
-    } else {
-      // No pocket pieces found via off-board piece detection — try DOM-scanning fallback
+    } else if (found < pieces.length) {
+      // Some pieces are off-board but we didn't categorise them as pocket pieces
+      // — try DOM-scanning fallback
       const scannedPocket = scanChesscomPocketDOM(board, flipped);
       if (scannedPocket && scannedPocket !== "[]") {
         console.log(`[chessbot] pocket (DOM scan): ${scannedPocket}`);
@@ -1214,33 +1215,9 @@ function chesscomBoardToFen() {
       if (!chesscomBoardToFen._pocketWarnLogged) {
         chesscomBoardToFen._pocketWarnLogged = true;
         console.warn(`[chessbot] drop variant "${detectedVariant}" but no pocket pieces found (${pieces.length} total pieces, ${found} on board)`);
-        // Diagnostic: log info about all pieces to help debug
-        for (let i = 0; i < Math.min(6, pieces.length); i++) {
-          const p = pieces[i];
-          const pr = p.getBoundingClientRect();
-          const cls = typeof p.className === "string" ? p.className : (p.getAttribute("class") || "");
-          const dp = p.getAttribute("data-piece") || "";
-          const dc = p.getAttribute("data-color") || "";
-          const relX = (pr.left + pr.width / 2 - boardRect.left).toFixed(0);
-          const relY = (pr.top + pr.height / 2 - boardRect.top).toFixed(0);
-          console.log(`[chessbot] piece[${i}]: cls="${cls.substring(0, 80)}" data-piece="${dp}" data-color="${dc}" pos=(${relX},${relY}) board=(${boardRect.width.toFixed(0)}x${boardRect.height.toFixed(0)})`);
-        }
-        // Log DOM structure around the board for debugging
-        const boardCls = typeof board.className === "string" ? board.className : (board.getAttribute("class") || "");
-        const parentCls = board.parentElement ? (typeof board.parentElement.className === "string" ? board.parentElement.className : (board.parentElement.getAttribute("class") || "")) : "none";
-        console.log(`[chessbot] board: <${board.tagName} class="${boardCls.substring(0, 60)}"> parent: <${board.parentElement?.tagName} class="${parentCls.substring(0, 60)}">`);
-        // Log all siblings of the board for pocket detection clues
-        const parent = board.parentElement;
-        if (parent) {
-          for (const sib of parent.children) {
-            if (sib === board) continue;
-            const sibCls = typeof sib.className === "string" ? sib.className : (sib.getAttribute("class") || "");
-            const sibRect = sib.getBoundingClientRect();
-            console.log(`[chessbot] sibling: <${sib.tagName} class="${sibCls.substring(0, 80)}"> ${sibRect.width.toFixed(0)}x${sibRect.height.toFixed(0)} at (${sibRect.left.toFixed(0)},${sibRect.top.toFixed(0)})`);
-          }
-        }
       }
     }
+    // else: all pieces are on the board → empty pocket is expected (game start / no captures yet)
   }
   const fen = gridToFenBoard(grid, pocket);
   // Validate king counts (only in the board portion, before castling rights)
