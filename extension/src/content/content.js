@@ -73,6 +73,9 @@ let autoMoveHumanizeChance = 0.1; // probability (0–1) of picking suboptimal m
 let autoMoveTimer = null;    // pending auto-move timeout
 let autoMoveCooldownUntil = 0; // timestamp — block scheduling until this time
 
+// ── 3-check state tracking ───────────────────────────────────
+let threeCheckRemaining = { w: 3, b: 3 }; // checks each side still needs to GIVE to win
+
 // ── Log buffer ───────────────────────────────────────────────
 const LOG_BUFFER_MAX = 500;
 const logBuffer = [];
@@ -132,39 +135,96 @@ function detectVariant() {
   return null;
 }
 
-/** For 3-check variant: count checks from the move list and return fairy-stockfish
- *  check counter string (e.g. "3+3" = no checks given, "2+3" = white gave 1 check). */
+/** Return fairy-stockfish 3-check counter string from tracked state. */
 function getThreeCheckCounters() {
   if (detectedVariant !== "3check") return null;
-  let realMoves = [];
-  if (SITE === "chesscom") {
-    let moveNodes = document.querySelectorAll(".main-line-ply, [data-ply], move-list-ply");
-    realMoves = Array.from(moveNodes).filter(el => {
+  return `${threeCheckRemaining.w}+${threeCheckRemaining.b}`;
+}
+
+/** Check if the king of `kingColor` ("w" or "b") is in check on the given board. */
+function isKingInCheck(boardPart, kingColor) {
+  const grid = fenBoardToGrid(boardPart);
+  const kingChar = kingColor === "w" ? "K" : "k";
+  let kr = -1, kf = -1;
+  for (let r = 0; r < grid.length; r++)
+    for (let f = 0; f < grid[r].length; f++)
+      if (grid[r][f] === kingChar) { kr = r; kf = f; }
+  if (kr < 0) return false;
+  const nR = grid.length, nF = grid[0].length;
+  // Attacking pieces: opposite color
+  const atk = kingColor === "b"
+    ? { P: "P", N: "N", B: "B", R: "R", Q: "Q" }
+    : { P: "p", N: "n", B: "b", R: "r", Q: "q" };
+  // Knight
+  for (const [dr, df] of [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]]) {
+    const r = kr+dr, f = kf+df;
+    if (r >= 0 && r < nR && f >= 0 && f < nF && grid[r][f] === atk.N) return true;
+  }
+  // Rook / Queen (straight lines)
+  for (const [dr, df] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    for (let i = 1; i < 8; i++) {
+      const r = kr+dr*i, f = kf+df*i;
+      if (r < 0 || r >= nR || f < 0 || f >= nF) break;
+      const p = grid[r][f];
+      if (p) { if (p === atk.R || p === atk.Q) return true; break; }
+    }
+  }
+  // Bishop / Queen (diagonals)
+  for (const [dr, df] of [[1,1],[1,-1],[-1,1],[-1,-1]]) {
+    for (let i = 1; i < 8; i++) {
+      const r = kr+dr*i, f = kf+df*i;
+      if (r < 0 || r >= nR || f < 0 || f >= nF) break;
+      const p = grid[r][f];
+      if (p) { if (p === atk.B || p === atk.Q) return true; break; }
+    }
+  }
+  // Pawn — white pawns attack upward (lower rank index), black pawns attack downward
+  if (kingColor === "b") {
+    // White pawns attack from rank below (higher grid index)
+    if (kr+1 < nR && kf-1 >= 0 && grid[kr+1][kf-1] === atk.P) return true;
+    if (kr+1 < nR && kf+1 < nF && grid[kr+1][kf+1] === atk.P) return true;
+  } else {
+    // Black pawns attack from rank above (lower grid index)
+    if (kr-1 >= 0 && kf-1 >= 0 && grid[kr-1][kf-1] === atk.P) return true;
+    if (kr-1 >= 0 && kf+1 < nF && grid[kr-1][kf+1] === atk.P) return true;
+  }
+  return false;
+}
+
+/** Try to initialize 3-check counters from the move list DOM (for page refresh mid-game). */
+function initThreeCheckFromMoveList() {
+  if (detectedVariant !== "3check") return;
+  threeCheckRemaining = { w: 3, b: 3 };
+  // Gather move text from all known move list selectors
+  const selectors = SITE === "chesscom"
+    ? [".main-line-ply, [data-ply], move-list-ply", ".move-text-component",
+       ".move-list .move, [class*='move-list'] [class*='move']"]
+    : IS_CHESSGROUND
+      ? ["move, m2, .moves kwdb"]
+      : [];
+  let moveTexts = [];
+  for (const sel of selectors) {
+    const nodes = document.querySelectorAll(sel);
+    const filtered = Array.from(nodes).filter(el => {
       const t = el.textContent.trim();
       return t && /[a-hNBRQKO]/.test(t) && !/^\d+\.?$/.test(t);
     });
-    if (realMoves.length === 0) {
-      moveNodes = document.querySelectorAll(".move-text-component");
-      realMoves = Array.from(moveNodes).filter(el => {
-        const t = el.textContent.trim();
-        return t && /[a-hNBRQKO]/.test(t) && !/^\d+\.?$/.test(t);
-      });
+    if (filtered.length > 0) {
+      moveTexts = filtered.map(el => el.textContent.trim());
+      break;
     }
   }
-  if (IS_CHESSGROUND) {
-    realMoves = Array.from(document.querySelectorAll("move, m2, .moves kwdb"));
-  }
-  let whiteChecks = 0, blackChecks = 0;
-  for (let i = 0; i < realMoves.length; i++) {
-    const t = realMoves[i].textContent.trim();
-    if (t.includes("+") || t.includes("#")) {
-      if (i % 2 === 0) whiteChecks++;
-      else blackChecks++;
+  let wChecks = 0, bChecks = 0;
+  for (let i = 0; i < moveTexts.length; i++) {
+    if (/[+#]/.test(moveTexts[i])) {
+      if (i % 2 === 0) wChecks++; else bChecks++;
     }
   }
-  const wr = Math.max(0, Math.min(3, 3 - whiteChecks));
-  const br = Math.max(0, Math.min(3, 3 - blackChecks));
-  return `${wr}+${br}`;
+  if (wChecks > 0 || bChecks > 0) {
+    threeCheckRemaining.w = Math.max(0, 3 - wChecks);
+    threeCheckRemaining.b = Math.max(0, 3 - bChecks);
+  }
+  console.log(`[chessbot] 3check init: w=${threeCheckRemaining.w} b=${threeCheckRemaining.b} (from ${moveTexts.length} moves, wChecks=${wChecks} bChecks=${bChecks})`);
 }
 
 /** Detect if the current page is a puzzle/training page. */
@@ -342,6 +402,9 @@ function initialRead() {
   initialReadDone = true;
   lastBoardFen = boardPart;
   lastPieceCount = pieceCount;
+
+  // Initialize 3-check counters from move list (for page refresh mid-game)
+  initThreeCheckFromMoveList();
 
   // Determine whose turn it is using all available methods
   const turn = inferTurn("", boardPart);
@@ -986,6 +1049,7 @@ function readAndSend() {
     lastSpokenOpening = "";
     _variantColorMap = null;
     _variantColorMapKey = null;
+    if (detectedVariant === "3check") threeCheckRemaining = { w: 3, b: 3 };
   }
 
   // Determine whose turn it is by diffing board positions
@@ -1015,6 +1079,16 @@ function readAndSend() {
   // Effective turn: use detected turn, alternation fallback, or "w" for starting position
   const effectiveTurn = turn || lastKnownTurn || "w";
   if (turn) lastKnownTurn = turn;
+
+  // 3-check: track check counts by detecting king-in-check from FEN
+  if (detectedVariant === "3check" && prevBoard && boardPart !== prevBoard) {
+    // effectiveTurn = side that now has to move (their king may be in check)
+    if (isKingInCheck(boardPart, effectiveTurn)) {
+      const checker = effectiveTurn === "w" ? "b" : "w";
+      threeCheckRemaining[checker] = Math.max(0, threeCheckRemaining[checker] - 1);
+      console.log(`[chessbot] 3check: ${checker} gave check! remaining: w=${threeCheckRemaining.w} b=${threeCheckRemaining.b}`);
+    }
+  }
 
   // Only show move suggestions based on runEngineFor setting
   // On puzzle pages, always analyze regardless of turn
