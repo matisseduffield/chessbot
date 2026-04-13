@@ -497,8 +497,11 @@ function initialRead() {
     }
   }
 
+  const effectiveInitialTurn = turn || playerColor || "w";
+  lastKnownTurn = effectiveInitialTurn; // seed so readAndSend has a fallback
+
   const parts = fen.split(" ");
-  parts[1] = turn || playerColor; // use detected turn, or player color as fallback
+  parts[1] = effectiveInitialTurn;
   const correctedFen = parts.join(" ");
 
   if (sendFen(correctedFen)) {
@@ -992,10 +995,16 @@ function observeBoard(boardEl) {
   }
 
   // Polling fallback — skip if mutations are actively firing, use longer interval
+  let pollCount = 0;
   pollTimer = setInterval(() => {
     if (!enabled || !boardReady) return;
     // Skip poll if a recent mutation already triggered readAndSend
     if (Date.now() - lastMutationTime < 300) return;
+    // Periodic heartbeat every ~30s so we can confirm script is alive
+    pollCount++;
+    if (pollCount % 38 === 0) {
+      console.log(`[chessbot] heartbeat: boardReady=${boardReady} drag=${isDragging} pending=${pendingEval} lastTurn=${lastKnownTurn} waiting=${waitingForOpponent} nullFen=${nullFenCount} lastBoard=${lastBoardFen.substring(0,20)}…`);
+    }
     try {
       // Verify the board element is still in the DOM (SPA navigation)
       const currentBoard = getBoardElement();
@@ -1240,8 +1249,10 @@ function readAndSend() {
       console.log(`[chessbot] turn unknown — alternating from last known ${lastKnownTurn} → ${altTurn}`);
       lastKnownTurn = altTurn;
     } else {
-      console.log("[chessbot] turn unknown — skipping this cycle");
-      return;
+      // No lastKnownTurn — use player color as fallback instead of blocking forever
+      const fallback = playerColor || "w";
+      console.log(`[chessbot] turn unknown — using player color fallback: ${fallback}`);
+      lastKnownTurn = fallback;
     }
   }
 
@@ -2183,6 +2194,21 @@ function detectTurnFromMoveList() {
       }
       return "b";
     }
+
+    // Pattern 4: chess.com variant/Vue pages — broad search for move notation
+    // elements with data attributes or variant-specific class patterns
+    const variantMoveNodes = document.querySelectorAll(
+      "[class*='Move-'], [class*='move-node'], [class*='MoveList'] [class*='move'], [class*='notations'] [class*='move']"
+    );
+    if (variantMoveNodes.length > 0) {
+      const realMoves = Array.from(variantMoveNodes).filter(el => {
+        const text = el.textContent.trim();
+        return text && /[a-hNBRQKO]/.test(text) && !/^\d+\.?$/.test(text);
+      });
+      if (realMoves.length > 0) {
+        return realMoves.length % 2 === 0 ? "w" : "b";
+      }
+    }
   }
 
   if (IS_CHESSGROUND) {
@@ -2398,6 +2424,29 @@ function detectTurnFromClocks() {
     if (bottom) return flipped ? "b" : "w";
     const top = document.querySelector(topSel);
     if (top) return flipped ? "w" : "b";
+
+    // Variant/Vue page clocks — broader selectors for active/running clocks
+    // positioned relative to the board (use Y-coordinate heuristic)
+    const variantClocks = document.querySelectorAll(
+      "[class*='clock'][class*='active'], [class*='clock'][class*='running'], " +
+      "[class*='Clock'][class*='active'], [class*='Clock'][class*='running'], " +
+      "[class*='timer'][class*='active'], [class*='Timer'][class*='running']"
+    );
+    if (variantClocks.length > 0) {
+      const boardEl = board || getBoardElement();
+      if (boardEl) {
+        const boardRect = getVisualBoardRect(boardEl);
+        const boardMidY = boardRect.top + boardRect.height / 2;
+        for (const clock of variantClocks) {
+          const cr = clock.getBoundingClientRect();
+          if (cr.height === 0) continue;
+          const clockMidY = cr.top + cr.height / 2;
+          const isBelow = clockMidY > boardMidY;
+          // Below board = player's clock, above = opponent's
+          return isBelow ? (flipped ? "b" : "w") : (flipped ? "w" : "b");
+        }
+      }
+    }
   }
   return null; // couldn't determine — let caller decide
 }
