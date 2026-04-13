@@ -124,12 +124,47 @@ function detectVariant() {
     if (path.includes("atomic")) return "atomic";
     if (path.includes("crazyhouse")) return "crazyhouse";
     if (path.includes("kingofthehill") || path.includes("king-of-the-hill")) return "kingofthehill";
-    if (path.includes("3check") || path.includes("threecheck") || path.includes("three-check")) return "3check";
+    if (path.includes("3-check") || path.includes("3check") || path.includes("threecheck") || path.includes("three-check")) return "3check";
     if (path.includes("antichess")) return "antichess";
     if (path.includes("horde")) return "horde";
     if (path.includes("racingkings") || path.includes("racing-kings")) return "racingkings";
   }
   return null;
+}
+
+/** For 3-check variant: count checks from the move list and return fairy-stockfish
+ *  check counter string (e.g. "3+3" = no checks given, "2+3" = white gave 1 check). */
+function getThreeCheckCounters() {
+  if (detectedVariant !== "3check") return null;
+  let realMoves = [];
+  if (SITE === "chesscom") {
+    let moveNodes = document.querySelectorAll(".main-line-ply, [data-ply], move-list-ply");
+    realMoves = Array.from(moveNodes).filter(el => {
+      const t = el.textContent.trim();
+      return t && /[a-hNBRQKO]/.test(t) && !/^\d+\.?$/.test(t);
+    });
+    if (realMoves.length === 0) {
+      moveNodes = document.querySelectorAll(".move-text-component");
+      realMoves = Array.from(moveNodes).filter(el => {
+        const t = el.textContent.trim();
+        return t && /[a-hNBRQKO]/.test(t) && !/^\d+\.?$/.test(t);
+      });
+    }
+  }
+  if (IS_CHESSGROUND) {
+    realMoves = Array.from(document.querySelectorAll("move, m2, .moves kwdb"));
+  }
+  let whiteChecks = 0, blackChecks = 0;
+  for (let i = 0; i < realMoves.length; i++) {
+    const t = realMoves[i].textContent.trim();
+    if (t.includes("+") || t.includes("#")) {
+      if (i % 2 === 0) whiteChecks++;
+      else blackChecks++;
+    }
+  }
+  const wr = Math.max(0, Math.min(3, 3 - whiteChecks));
+  const br = Math.max(0, Math.min(3, 3 - blackChecks));
+  return `${wr}+${br}`;
 }
 
 /** Detect if the current page is a puzzle/training page. */
@@ -992,6 +1027,11 @@ function readAndSend() {
   // Build FEN with correct side-to-move
   const parts = fen.split(" ");
   parts[1] = effectiveTurn;
+  // Inject 3-check counters: fairy-stockfish expects "W+B" between en-passant and halfmove
+  const checkCounters = getThreeCheckCounters();
+  if (checkCounters) {
+    parts.splice(4, 0, checkCounters);
+  }
   const correctedFen = parts.join(" ");
 
   if (correctedFen === lastSentFen) return;
