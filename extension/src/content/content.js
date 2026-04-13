@@ -15,7 +15,7 @@ const DROP_VARIANTS = new Set([
 
 // Variants where castling is never legal (don't generate castling rights in FEN)
 const NO_CASTLING_VARIANTS = new Set([
-  "antichess", "racingkings",
+  "antichess", "giveaway", "racingkings",
 ]);
 
 // Variant-specific starting board positions (piece-placement part of FEN)
@@ -129,6 +129,7 @@ function detectVariant() {
     if (path.includes("/threecheck") || path.includes("/three-check")) return "3check";
     if (path.includes("/fivecheck") || path.includes("/five-check")) return "3check"; // PlayStrategy five-check
     if (path.includes("/antichess")) return "antichess";
+    if (path.includes("/giveaway")) return "giveaway";
     if (path.includes("/horde")) return "horde";
     if (path.includes("/racingkings") || path.includes("/racing-kings")) return "racingkings";
     if (path.includes("/nocastling") || path.includes("/no-castling")) return null; // standard rules, no special engine
@@ -141,6 +142,7 @@ function detectVariant() {
     if (path.includes("kingofthehill") || path.includes("king-of-the-hill")) return "kingofthehill";
     if (path.includes("3-check") || path.includes("3check") || path.includes("threecheck") || path.includes("three-check")) return "3check";
     if (path.includes("antichess")) return "antichess";
+    if (path.includes("giveaway")) return "giveaway";
     if (path.includes("horde")) return "horde";
     if (path.includes("racingkings") || path.includes("racing-kings")) return "racingkings";
     // Chess.com in-game pages (/game/live/12345) don't have variant in URL.
@@ -163,6 +165,7 @@ function detectVariantFromDOM() {
     ["king of the hill", "kingofthehill"],
     ["3-check", "3check"], ["three-check", "3check"], ["three check", "3check"],
     ["antichess", "antichess"],
+    ["giveaway", "giveaway"],
     ["horde", "horde"],
     ["racing kings", "racingkings"],
     ["chess960", "chess960"], ["fischer random", "chess960"],
