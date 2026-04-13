@@ -450,7 +450,7 @@ async function main() {
       }
 
       if (msg.type === "fen" && typeof msg.fen === "string") {
-        const fen = msg.fen.trim();
+        let fen = msg.fen.trim();
         // Basic FEN validation (relaxed for variants like crazyhouse which append [] to board)
         const fenParts = fen.split(" ");
         const boardPart = fenParts[0].replace(/\[.*?\]/, ""); // strip crazyhouse pocket
@@ -458,6 +458,14 @@ async function main() {
           console.warn(`[server] invalid FEN rejected: ${fen}`);
           safeSend(ws, { type: "error", message: "Invalid FEN" });
           return;
+        }
+
+        // Safety net: ensure 3check FEN has check counters
+        // fairy-stockfish misparses standard FEN (reads halfmove as counter → 1+1)
+        if ((msg.variant === "3check" || currentVariant === "3check") && fenParts.length === 6) {
+          fenParts.splice(4, 0, "3+3");
+          fen = fenParts.join(" ");
+          console.log(`[server] injected default 3check counters into FEN`);
         }
 
         // If content script detected a variant, auto-switch

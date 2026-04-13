@@ -650,6 +650,16 @@ function sendFen(fen) {
     console.log(`[chessbot] sendFen skipped — WS not open (state=${ws ? ws.readyState : "null"})`);
     return false;
   }
+  // Ensure 3-check FEN always has check counters (fairy-stockfish misparses without them)
+  if (detectedVariant === "3check") {
+    const fenParts = fen.split(" ");
+    if (fenParts.length === 6) {
+      const counters = getThreeCheckCounters() || "3+3";
+      fenParts.splice(4, 0, counters);
+      fen = fenParts.join(" ");
+      console.log(`[chessbot] injected 3check counters: ${counters}`);
+    }
+  }
   const msg = { type: "fen", fen, depth: currentDepth };
   if (searchMovetime) msg.movetime = searchMovetime;
   if (searchNodes) msg.nodes = searchNodes;
@@ -1027,11 +1037,6 @@ function readAndSend() {
   // Build FEN with correct side-to-move
   const parts = fen.split(" ");
   parts[1] = effectiveTurn;
-  // Inject 3-check counters: fairy-stockfish expects "W+B" between en-passant and halfmove
-  const checkCounters = getThreeCheckCounters();
-  if (checkCounters) {
-    parts.splice(4, 0, checkCounters);
-  }
   const correctedFen = parts.join(" ");
 
   if (correctedFen === lastSentFen) return;
