@@ -483,8 +483,22 @@ function initialRead() {
   console.log(`[chessbot] initial load — turn=${turn} player=${playerColor} pieces=${pieceCount}`);
 
   if (!turn) {
-    // Can't determine turn — for initial load, assume it's the player's turn
-    console.log("[chessbot] turn unknown on initial load — assuming player's turn");
+    // Can't determine turn — for starting position it's always white's turn
+    const boardNoPocket = boardPart.replace(/\[.*?\]$/, "");
+    const isStart = boardNoPocket === "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+    const assumedTurn = isStart ? "w" : playerColor;
+    console.log(`[chessbot] turn unknown on initial load — assuming ${assumedTurn}`);
+    const isMyTurn = assumedTurn === playerColor;
+    const shouldAnalyze =
+      runEngineFor === "both" ||
+      (runEngineFor === "me" && isMyTurn) ||
+      (runEngineFor === "opponent" && !isMyTurn);
+    if (!shouldAnalyze) {
+      // Still seed lastKnownTurn so readAndSend has a fallback
+      lastKnownTurn = assumedTurn;
+      console.log("[chessbot] not our analysis turn on initial load — waiting");
+      return;
+    }
   } else {
     const isMyTurn = turn === playerColor;
     const shouldAnalyze =
@@ -497,7 +511,10 @@ function initialRead() {
     }
   }
 
-  const effectiveInitialTurn = turn || playerColor || "w";
+  // Starting position is always white's turn — don't let playerColor override this
+  const boardPartNoPocket = boardPart.replace(/\[.*?\]$/, "");
+  const isStartingPos = boardPartNoPocket === "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+  const effectiveInitialTurn = turn || (isStartingPos ? "w" : playerColor) || "w";
   lastKnownTurn = effectiveInitialTurn; // seed so readAndSend has a fallback
 
   const parts = fen.split(" ");
