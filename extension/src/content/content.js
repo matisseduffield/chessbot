@@ -13,6 +13,18 @@ const DROP_VARIANTS = new Set([
   "shogun", "grandhouse", "placement",
 ]);
 
+// Variants where castling is never legal (don't generate castling rights in FEN)
+const NO_CASTLING_VARIANTS = new Set([
+  "antichess", "racingkings",
+]);
+
+// Variant-specific starting board positions (piece-placement part of FEN)
+// Used for new-game detection when the standard starting position doesn't match.
+const VARIANT_START_FENS = {
+  horde: "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP",
+  racingkings: "8/8/8/8/8/8/krbnNBRK/qrbnNBRQ",
+};
+
 // ── State ────────────────────────────────────────────────────
 let ws = null;
 let lastBoardFen = ""; // piece-placement part only (before first space)
@@ -131,6 +143,42 @@ function detectVariant() {
     if (path.includes("antichess")) return "antichess";
     if (path.includes("horde")) return "horde";
     if (path.includes("racingkings") || path.includes("racing-kings")) return "racingkings";
+    // Chess.com in-game pages (/game/live/12345) don't have variant in URL.
+    // Try detecting from page title or DOM elements.
+    const domVariant = detectVariantFromDOM();
+    if (domVariant) return domVariant;
+  }
+  return null;
+}
+
+/** Detect variant from chess.com DOM when URL doesn't contain variant name.
+ *  Chess.com shows variant name in page title ("Atomic • user vs user")
+ *  and in game-info elements. */
+function detectVariantFromDOM() {
+  // Method 1: page title — chess.com format: "Variant • Player vs Player"
+  const title = document.title.toLowerCase();
+  const titleVariants = [
+    ["atomic", "atomic"],
+    ["crazyhouse", "crazyhouse"],
+    ["king of the hill", "kingofthehill"],
+    ["3-check", "3check"], ["three-check", "3check"], ["three check", "3check"],
+    ["antichess", "antichess"],
+    ["horde", "horde"],
+    ["racing kings", "racingkings"],
+    ["chess960", "chess960"], ["fischer random", "chess960"],
+  ];
+  for (const [needle, variant] of titleVariants) {
+    if (title.includes(needle)) return variant;
+  }
+  // Method 2: game-info header text (chess.com shows variant name near player names)
+  const infoEls = document.querySelectorAll(
+    "[class*='game-info'], [class*='GameInfo'], [class*='header-title'], [class*='game-type'], [data-cy='game-info-variant']"
+  );
+  for (const el of infoEls) {
+    const text = (el.textContent || "").toLowerCase();
+    for (const [needle, variant] of titleVariants) {
+      if (text.includes(needle)) return variant;
+    }
   }
   return null;
 }
@@ -402,6 +450,19 @@ function initialRead() {
   initialReadDone = true;
   lastBoardFen = boardPart;
   lastPieceCount = pieceCount;
+
+  // Late variant detection: if URL didn't reveal the variant, try DOM-based
+  // detection now that the page has loaded (chess.com title updates async)
+  if (!detectedVariant && SITE === "chesscom") {
+    const domVariant = detectVariantFromDOM();
+    if (domVariant) {
+      detectedVariant = domVariant;
+      console.log(`[chessbot] late variant detection from DOM: ${domVariant}`);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "switch_variant", variant: domVariant }));
+      }
+    }
+  }
 
   // Initialize 3-check counters from move list (for page refresh mid-game)
   initThreeCheckFromMoveList();
@@ -1032,12 +1093,14 @@ function readAndSend() {
     checkTrainingAccuracy(fen);
   }
 
-  // Detect new game: standard starting position, OR piece count jumped
-  // significantly upward (board reset). Works for variants with non-standard
-  // starting piece counts (Horde, Racing Kings, etc.)
+  // Detect new game: standard starting position, variant starting position,
+  // or piece count jumped significantly upward (board reset).
   // Strip pocket notation [...] before comparing (Crazyhouse appends e.g. "[]")
   const boardPartNoPocket = boardPart.replace(/\[.*?\]$/, "");
-  const isStartPos = boardPartNoPocket === "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+  const isStandardStart = boardPartNoPocket === "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+  const variantStartFen = detectedVariant && VARIANT_START_FENS[detectedVariant];
+  const isVariantStart = variantStartFen && boardPartNoPocket === variantStartFen;
+  const isStartPos = isStandardStart || isVariantStart;
   const prevPieceCount = prevBoard ? countPieces(prevBoard) : 0;
   const pieceCountJump = prevPieceCount > 0 && pieceCount - prevPieceCount >= 10;
   if (isStartPos || pieceCountJump) {
@@ -2354,9 +2417,11 @@ function gridToFenBoard(grid, pocket) {
     rows.push(row);
   }
   // Derive castling rights from king/rook positions (only for 8x8 boards)
+  // Some variants never have castling (antichess, racing kings, horde)
   // grid[0] = rank 8 (top), grid[7] = rank 1 (bottom)
   let castling = "";
-  if (numRanks === 8 && (grid[7] || []).length >= 8) {
+  const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
+  if (!noCastling && numRanks === 8 && (grid[7] || []).length >= 8) {
     if (grid[7][4] === "K") { // white king on e1
       if (grid[7][7] === "R") castling += "K";
       if (grid[7][0] === "R") castling += "Q";
