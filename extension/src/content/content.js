@@ -45,6 +45,7 @@ let initialReadDone = false; // guard against duplicate initialRead calls
 let pendingInitialFen = null; // FEN read before WS was ready, to send on connect
 let currentDepth = 15; // analysis depth, updated from popup settings
 let isDragging = false; // true while user is dragging a piece
+let isDraggingSince = 0; // timestamp when drag started — safety valve for stuck drags
 let waitingForOpponent = false; // true after our move, until board changes again
 let renderGeneration = 0; // increments on each board change — prevents stale overlays
 let documentDragHandlersAttached = false; // document-level handlers added only once
@@ -414,6 +415,8 @@ function findBoard() {
   _variantColorMap = null;
   _variantColorMapKey = null;
   lastKnownTurn = null;
+  nullFenCount = 0;
+  observedBoardEl = null;
   chesscomBoardToFen._diagLogged = false;
   waitForBoard().then((boardEl) => {
     const rect = (SITE === "chesscom") ? getVisualBoardRect(boardEl) : boardEl.getBoundingClientRect();
@@ -910,8 +913,11 @@ function findVariantBoardContainer() {
  *  mutations may not bubble to an external observer, so we also poll. */
 let pollTimer = null;
 let lastMutationTime = 0; // timestamp of last real board mutation
+let observedBoardEl = null; // the board element the observer is currently watching
+let nullFenCount = 0; // consecutive boardToFen() null returns — for recovery
 
 function observeBoard(boardEl) {
+  observedBoardEl = boardEl;
   if (observer) observer.disconnect();
   if (pollTimer) clearInterval(pollTimer);
   if (debounceTimer) clearTimeout(debounceTimer);
@@ -980,8 +986,9 @@ function observeBoard(boardEl) {
     dragTarget.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
       isDragging = true;
+      isDraggingSince = Date.now();
     }, true);
-    dragTarget.addEventListener("touchstart", () => { isDragging = true; }, true);
+    dragTarget.addEventListener("touchstart", () => { isDragging = true; isDraggingSince = Date.now(); }, true);
   }
 
   // Polling fallback — skip if mutations are actively firing, use longer interval
@@ -995,6 +1002,7 @@ function observeBoard(boardEl) {
       if (!currentBoard) {
         console.log("[chessbot] board disappeared (navigation?), searching again");
         boardReady = false;
+        observedBoardEl = null;
         if (observer) observer.disconnect();
         clearInterval(pollTimer);
         clearArrow();
@@ -1004,6 +1012,63 @@ function observeBoard(boardEl) {
         findBoard();
         return;
       }
+
+      // Board element changed (Vue re-render, SPA navigation) — re-attach observer
+      if (observedBoardEl && currentBoard !== observedBoardEl) {
+        console.log("[chessbot] board element replaced — re-attaching observer");
+        observedBoardEl = currentBoard;
+        if (observer) observer.disconnect();
+        observer = new MutationObserver((mutations) => {
+          if (!enabled) return;
+          const dominated = mutations.every((m) => {
+            const t = m.target;
+            if (t.id && t.id.startsWith("chessbot-")) return true;
+            if (t.classList && t.classList.contains("chessbot-eval-badge")) return true;
+            if (t.closest && t.closest("#chessbot-arrow-svg, #chessbot-bg-svg, #chessbot-eval-bar, .chessbot-eval-badge")) return true;
+            if (m.type === "childList") {
+              const allOwn = [...m.addedNodes, ...m.removedNodes].every(
+                n => n.nodeType !== 1 || (n.id && n.id.startsWith("chessbot-")) ||
+                     (n.classList && (n.classList.contains("chessbot-eval-badge") ||
+                      n.classList.contains("chessbot-score-badge") ||
+                      n.classList.contains("chessbot-hint-btn") ||
+                      n.classList.contains("chessbot-training-feedback")))
+              );
+              if (allOwn && m.addedNodes.length + m.removedNodes.length > 0) return true;
+            }
+            return false;
+          });
+          if (dominated) return;
+          lastMutationTime = Date.now();
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(readAndSend, 400);
+        });
+        const targets = [currentBoard];
+        if (currentBoard.shadowRoot) targets.push(currentBoard.shadowRoot);
+        for (const target of targets) {
+          observer.observe(target, {
+            childList: true, subtree: true, attributes: true,
+            attributeFilter: ["class", "style", "data-piece", "transform"],
+          });
+        }
+        // Reset drag binding for new element
+        if (!currentBoard.dataset.chessbotDragBound) {
+          currentBoard.dataset.chessbotDragBound = "1";
+          const dragTarget = currentBoard.shadowRoot || currentBoard;
+          dragTarget.addEventListener("mousedown", (e) => {
+            if (e.button !== 0) return;
+            isDragging = true;
+            isDraggingSince = Date.now();
+          }, true);
+          dragTarget.addEventListener("touchstart", () => { isDragging = true; isDraggingSince = Date.now(); }, true);
+        }
+        // Reset board reader state for new element
+        _variantColorMap = null;
+        _variantColorMapKey = null;
+        _geoCache = null;
+        chesscomBoardToFen._diagLogged = false;
+        nullFenCount = 0;
+      }
+
       readAndSend();
     } catch (err) {
       console.log("[chessbot] poll error:", err);
@@ -1051,6 +1116,11 @@ function countPieces(boardFen) {
 
 function readAndSend() {
   if (!boardReady) return;
+  // Safety valve: if isDragging has been stuck for >5s, force-clear it
+  if (isDragging && isDraggingSince && (Date.now() - isDraggingSince > 5000)) {
+    console.log("[chessbot] isDragging stuck for >5s — force-clearing");
+    isDragging = false;
+  }
   if (isDragging) return; // user is holding a piece — wait for drop
 
   // Client-side eval timeout: if we've been waiting too long for a response,
@@ -1062,7 +1132,37 @@ function readAndSend() {
   }
 
   const fen = boardToFen();
-  if (!fen) return; // no board or pieces yet — silent skip
+  if (!fen) {
+    // Track consecutive null reads — if persistent, the board DOM may have changed
+    nullFenCount++;
+    if (nullFenCount === 5) {
+      console.log("[chessbot] boardToFen() returned null 5 times — logging diagnostics");
+      const board = getBoardElement();
+      if (board) {
+        const tag = board.tagName;
+        const cls = (board.className || "").toString().substring(0, 80);
+        const rect = board.getBoundingClientRect();
+        const pieces = board.querySelectorAll(".piece, [data-piece]");
+        console.log(`[chessbot] board: <${tag}> class="${cls}" rect=${Math.round(rect.width)}x${Math.round(rect.height)} pieces=${pieces.length} inDOM=${document.body.contains(board)}`);
+      } else {
+        console.log("[chessbot] getBoardElement() also returned null");
+      }
+    }
+    if (nullFenCount >= 15) {
+      console.log("[chessbot] boardToFen() null for 15 cycles — re-finding board");
+      nullFenCount = 0;
+      boardReady = false;
+      observedBoardEl = null;
+      if (observer) observer.disconnect();
+      if (pollTimer) clearInterval(pollTimer);
+      lastBoardFen = "";
+      lastSentFen = "";
+      lastPieceCount = 0;
+      findBoard();
+    }
+    return;
+  }
+  nullFenCount = 0; // successful read — reset counter
 
   const boardPart = fen.split(" ")[0];
 
