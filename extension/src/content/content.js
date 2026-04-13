@@ -132,6 +132,7 @@ function detectVariant() {
     if (path.includes("/giveaway")) return "giveaway";
     if (path.includes("/horde")) return "horde";
     if (path.includes("/racingkings") || path.includes("/racing-kings")) return "racingkings";
+    if (path.includes("/bughouse")) return "bughouse";
     if (path.includes("/nocastling") || path.includes("/no-castling")) return null; // standard rules, no special engine
   }
   if (SITE === "chesscom") {
@@ -145,6 +146,7 @@ function detectVariant() {
     if (path.includes("giveaway")) return "giveaway";
     if (path.includes("horde")) return "horde";
     if (path.includes("racingkings") || path.includes("racing-kings")) return "racingkings";
+    if (path.includes("bughouse")) return "bughouse";
     // Chess.com in-game pages (/game/live/12345) don't have variant in URL.
     // Try detecting from page title or DOM elements.
     const domVariant = detectVariantFromDOM();
@@ -164,10 +166,11 @@ function detectVariantFromDOM() {
     ["crazyhouse", "crazyhouse"],
     ["king of the hill", "kingofthehill"],
     ["3-check", "3check"], ["three-check", "3check"], ["three check", "3check"],
-    ["antichess", "antichess"],
     ["giveaway", "giveaway"],
+    ["antichess", "giveaway"], // chess.com plays giveaway rules even when labelled "antichess"
     ["horde", "horde"],
     ["racing kings", "racingkings"],
+    ["bughouse", "bughouse"],
     ["chess960", "chess960"], ["fischer random", "chess960"],
   ];
   for (const [needle, variant] of titleVariants) {
