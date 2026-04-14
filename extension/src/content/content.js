@@ -800,6 +800,12 @@ function connectWS() {
           console.log("[chessbot] received null bestmove (engine timeout?)");
           return;
         }
+        // If we just auto-moved and are waiting for the opponent, discard any
+        // bestmove — it's a stale response from before our move.
+        if (waitingForOpponent) {
+          console.log("[chessbot] ignoring bestmove while waiting for opponent");
+          return;
+        }
         // Discard stale responses if the position has changed since we sent the eval.
         // Compare board position + turn so a result for white's turn is never applied
         // when it's now black's turn (and vice versa). Don't compare castling/en passant/
@@ -4652,6 +4658,12 @@ function scheduleAutoMove(moveUci, lines, fen) {
 
   // Don't auto-move in training mode
   if (trainingMode) return;
+
+  // Don't schedule while waiting for the opponent — prevents premoves
+  if (waitingForOpponent) {
+    console.log("[chessbot][auto-move] waiting for opponent — skipping");
+    return;
+  }
 
   // Cooldown after executing a move — prevent premoves from stale/intermediate states
   if (Date.now() < autoMoveCooldownUntil) {
