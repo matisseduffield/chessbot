@@ -4175,12 +4175,16 @@ function getSquareTarget(file, rank) {
   // Determine the actual event target element
   let target;
   if (SITE === "chesscom") {
-    // Chess.com's board component uses coordinate-based hit detection (clientX/clientY),
-    // so the exact target element doesn't matter — only coordinates do.
-    // Using elementFromPoint is unreliable: it can return null when the shadow DOM
-    // hasn't rendered, during animations, or when overlays cover squares.
-    // Always target the board element itself for reliable event delivery.
-    target = board;
+    // Chess.com uses wc-chess-board (shadow DOM) or Vue-based variant boards.
+    // Try elementFromPoint on the shadow root first (hits internal elements that
+    // have the actual event listeners). Fall back to the board element itself
+    // if elementFromPoint returns null (can happen during animations/renders).
+    const sr = board.shadowRoot;
+    if (sr && sr.elementFromPoint) {
+      target = sr.elementFromPoint(clientX, clientY) || board;
+    } else {
+      target = document.elementFromPoint(clientX, clientY) || board;
+    }
   } else {
     target = document.elementFromPoint(clientX, clientY) || board;
   }
