@@ -4390,7 +4390,7 @@ function executeDropMove(pieceLetter, to) {
 
     const dst = getSquareTarget(to.file, to.rank);
     if (!dst) {
-      console.warn("[chessbot][auto-move] chess.com drop: destination square not found");
+      console.log("[chessbot][auto-move] chess.com drop: destination square not found");
       return false;
     }
 
@@ -4532,9 +4532,9 @@ function executeMoveChessCom(from, to, promo, attemptNum = 1) {
               const dst2 = getSquareTarget(to.file, to.rank);
               fireMouse((dst2 && dst2.target) ? dst2.target : dst.target, "mouseup", dst.clientX, dst.clientY);
               if (promo) setTimeout(() => selectPromotionChessCom(promo), 200);
-            } catch (e) { console.warn("[chessbot][auto-move] drag pointerup failed:", e.message); }
+            } catch (e) { console.log("[chessbot][auto-move] drag pointerup failed:", e.message); }
           }, 80);
-        } catch (e) { console.warn("[chessbot][auto-move] drag pointermove failed:", e.message); }
+        } catch (e) { console.log("[chessbot][auto-move] drag pointermove failed:", e.message); }
       }, 30);
       return true;
     }
@@ -4563,16 +4563,16 @@ function executeMoveChessCom(from, to, promo, attemptNum = 1) {
                 fireMouse(dst2.target, "mouseup", dst2.clientX, dst2.clientY);
                 fireMouse(dst2.target, "click", dst2.clientX, dst2.clientY);
                 if (promo) setTimeout(() => selectPromotionChessCom(promo), 200);
-              } catch (e) { console.warn("[chessbot][auto-move] click dst pointerup failed:", e.message); }
+              } catch (e) { console.log("[chessbot][auto-move] click dst pointerup failed:", e.message); }
             }, 30);
-          } catch (e) { console.warn("[chessbot][auto-move] click dst pointerdown failed:", e.message); }
+          } catch (e) { console.log("[chessbot][auto-move] click dst pointerdown failed:", e.message); }
         }, 80);
-      } catch (e) { console.warn("[chessbot][auto-move] click src pointerup failed:", e.message); }
+      } catch (e) { console.log("[chessbot][auto-move] click src pointerup failed:", e.message); }
     }, 30);
 
     return true;
   } catch (e) {
-    console.warn("[chessbot][auto-move] executeMoveChessCom failed:", e.message);
+    console.log("[chessbot][auto-move] executeMoveChessCom failed:", e.message);
     return false;
   }
 }
@@ -4913,18 +4913,18 @@ function scheduleAutoMove(moveUci, lines, fen) {
         _geoCache = null;
         moveOk = executeMove(finalMove, attempts);
       } catch (e) {
-        console.warn(`[chessbot][auto-move] executeMove threw (attempt ${attempts}):`, e.message);
+        console.log(`[chessbot][auto-move] executeMove threw (attempt ${attempts}):`, e.message);
       }
 
       if (!moveOk) {
-        console.warn(`[chessbot][auto-move] executeMove returned false (attempt ${attempts})`);
+        console.log(`[chessbot][auto-move] executeMove returned false (attempt ${attempts})`);
         if (attempts < maxAttempts) {
           // Retry after a short delay
           setTimeout(attemptMove, 300);
           return;
         }
         // All attempts exhausted
-        console.warn("[chessbot][auto-move] all move attempts failed — resetting state");
+        console.log("[chessbot][auto-move] all move attempts failed — resetting state");
         waitingForOpponent = false;
         _skipNextBoardChange = false;
         autoMoveCooldownUntil = 0;
@@ -4948,10 +4948,10 @@ function scheduleAutoMove(moveUci, lines, fen) {
 
         // Board didn't change — move likely failed silently
         if (attempts < maxAttempts) {
-          console.warn(`[chessbot][auto-move] board unchanged after attempt ${attempts} — retrying`);
+          console.log(`[chessbot][auto-move] board unchanged after attempt ${attempts} — retrying`);
           setTimeout(attemptMove, 200);
         } else {
-          console.warn("[chessbot][auto-move] board unchanged after all attempts — resetting state");
+          console.log("[chessbot][auto-move] board unchanged after all attempts — resetting state");
           _skipNextBoardChange = false;
           waitingForOpponent = false;
           autoMoveCooldownUntil = 0;
@@ -4965,7 +4965,7 @@ function scheduleAutoMove(moveUci, lines, fen) {
     // Final safety net: if board hasn't changed after generous timeout, reset
     setTimeout(() => {
       if (_skipNextBoardChange) {
-        console.warn("[chessbot][auto-move] move not detected on board after timeout — resetting state");
+        console.log("[chessbot][auto-move] move not detected on board after timeout — resetting state");
         _skipNextBoardChange = false;
         waitingForOpponent = false;
         autoMoveCooldownUntil = 0;
