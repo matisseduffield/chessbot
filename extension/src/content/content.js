@@ -1371,6 +1371,7 @@ function readAndSend() {
     lastSentFen = ""; // reset so we re-analyse when appropriate turn arrives
     waitingForOpponent = true; // don't re-analyze until board changes
     pendingEval = false;
+    cancelAutoMove(); // cancel any pending auto-move — it's not our turn
     return;
   }
 
@@ -2303,16 +2304,30 @@ function detectTurnFromMoveList() {
   }
 
   if (IS_CHESSGROUND) {
-    // Lichess / PlayStrategy: moves are in <move> or <m2> elements, or .moves kwdb elements
-    const moves = document.querySelectorAll("move, m2, .moves kwdb");
+    // Lichess / PlayStrategy: moves are in <move>, <m2>, <kwdb>, or .tview2 elements
+    const moves = document.querySelectorAll("move, m2, kwdb, .moves kwdb");
     if (moves.length > 0) {
-      const lastPly = moves.length;
-      return lastPly % 2 === 0 ? "w" : "b";
+      // Filter to only actual move elements (must contain move notation text)
+      const realMoves = Array.from(moves).filter(el => {
+        const text = el.textContent.trim();
+        return text && /[a-hNBRQKO@]/.test(text) && !/^\d+\.?$/.test(text);
+      });
+      if (realMoves.length > 0) {
+        return realMoves.length % 2 === 0 ? "w" : "b";
+      }
+      // Fallback: use raw count
+      return moves.length % 2 === 0 ? "w" : "b";
     }
-    // Alternative: l-moves container
-    const plies = document.querySelectorAll("l4x move, .tview2 move");
+    // Alternative: l4x/tview2 container elements
+    const plies = document.querySelectorAll("l4x move, .tview2 move, .tview2 kwdb");
     if (plies.length > 0) {
       return plies.length % 2 === 0 ? "w" : "b";
+    }
+
+    // Alternative: Lichess <rm6> container with child move tags
+    const rm6Moves = document.querySelectorAll("rm6 kwdb, rm6 move");
+    if (rm6Moves.length > 0) {
+      return rm6Moves.length % 2 === 0 ? "w" : "b";
     }
   }
 
@@ -4178,29 +4193,21 @@ function executeDropMove(pieceLetter, to) {
     const pcx = pr.left + pr.width / 2;
     const pcy = pr.top + pr.height / 2;
 
-    // Click pocket piece
-    firePointer(pocketPiece, "pointerdown", pcx, pcy);
-    fireMouse(pocketPiece, "mousedown", pcx, pcy);
+    // Click pocket piece — Chessground drop mode handles pocket clicks
+    // through dragNewPiece, so we use mousedown on the pocket element
+    const marker = { detail: 42424242 };
+    fireMouse(pocketPiece, "mousedown", pcx, pcy, marker);
     setTimeout(() => {
-      firePointer(pocketPiece, "pointerup", pcx, pcy);
-      fireMouse(pocketPiece, "mouseup", pcx, pcy);
-      fireMouse(pocketPiece, "click", pcx, pcy);
-
-      // Then click destination on cg-board (needs isTrusted bypass marker)
+      // Drag to destination on document, then release
+      const { board, rect, sqSize, flipped } = geo;
+      const dstCenter = squareCenter(to.file, to.rank, sqSize, flipped);
+      const dstX = rect.left + dstCenter.x;
+      const dstY = rect.top + dstCenter.y;
+      fireMouse(document, "mousemove", dstX, dstY);
       setTimeout(() => {
-        const { board, rect, sqSize, flipped } = geo;
-        const dstCenter = squareCenter(to.file, to.rank, sqSize, flipped);
-        const dstX = rect.left + dstCenter.x;
-        const dstY = rect.top + dstCenter.y;
-        const marker = { detail: 42424242 };
-        firePointer(board, "pointerdown", dstX, dstY, marker);
-        fireMouse(board, "mousedown", dstX, dstY, marker);
-        setTimeout(() => {
-          firePointer(board, "pointerup", dstX, dstY);
-          fireMouse(board, "mouseup", dstX, dstY);
-        }, 30);
-      }, 80);
-    }, 30);
+        fireMouse(document, "mouseup", dstX, dstY);
+      }, 60);
+    }, 20);
     return true;
   }
 
@@ -4386,7 +4393,12 @@ function selectPromotionChessCom(promoChar) {
   console.warn(`[chessbot][auto-move] promotion popup not found for ${promoChar}`);
 }
 
-/** Lichess / PlayStrategy (Chessground): mousedown on source, mouseup on target. */
+/** Lichess / PlayStrategy (Chessground): select piece then click destination.
+ *  Chessground binds mousedown on cg-board and mouseup/mousemove on document.
+ *  Our lichess-inject.js wraps the mousedown handler to bypass isTrusted check
+ *  for events with detail=42424242. We use drag simulation (mousedown → mousemove
+ *  → mouseup) which is the most reliable approach regardless of the user's
+ *  selectable/draggable preference settings. */
 function executeMoveChessground(from, to, promo) {
   const geo = getBoardGeometry();
   if (!geo) return false;
@@ -4405,34 +4417,33 @@ function executeMoveChessground(from, to, promo) {
   // handler on cg-board and proxies isTrusted for events with this marker.
   const marker = { detail: 42424242 };
 
-  // Click-click: select piece on source, then click destination to move.
-  // All events go directly on the board element (cg-board) — Chessground
-  // reads clientX/clientY to determine the square.
+  // Drag simulation: mousedown on source → mousemove to destination → mouseup
+  // on destination. This works for both drag-only and click-only user prefs.
+  // Only fire mousedown on the board (Chessground only listens for mousedown,
+  // not pointerdown). Fire mousemove/mouseup on document (where Chessground
+  // binds those handlers).
 
-  // Step 1: Click source square to select the piece
-  firePointer(board, "pointerdown", srcX, srcY, marker);
+  // Step 1: mousedown on source — Chessground selects the piece and starts drag tracking
   fireMouse(board, "mousedown", srcX, srcY, marker);
 
+  // Step 2: mousemove to destination on document — updates drag position.
+  // processDrag runs in rAF loop and sets cur.started when distance threshold met.
   setTimeout(() => {
-    firePointer(board, "pointerup", srcX, srcY);
-    fireMouse(board, "mouseup", srcX, srcY);
+    fireMouse(document, "mousemove", dstX, dstY);
+  }, 20);
 
-    // Step 2: Click destination square to complete the move
-    setTimeout(() => {
-      firePointer(board, "pointerdown", dstX, dstY, marker);
-      fireMouse(board, "mousedown", dstX, dstY, marker);
+  // Step 3: mouseup on document at destination — drag.end() sees cur.started
+  // and dest !== orig, calls userMove to complete the move.
+  // Wait long enough for at least one rAF frame (~16ms) after the mousemove
+  // so processDrag can set cur.started = true.
+  setTimeout(() => {
+    fireMouse(document, "mouseup", dstX, dstY);
 
-      setTimeout(() => {
-        firePointer(board, "pointerup", dstX, dstY);
-        fireMouse(board, "mouseup", dstX, dstY);
-
-        // Handle promotion popup
-        if (promo) {
-          setTimeout(() => selectPromotionChessground(promo), 200);
-        }
-      }, 30);
-    }, 80);
-  }, 30);
+    // Handle promotion popup
+    if (promo) {
+      setTimeout(() => selectPromotionChessground(promo), 200);
+    }
+  }, 80);
 
   return true;
 }
@@ -4566,10 +4577,11 @@ function scheduleAutoMove(moveUci, lines, fen) {
   autoMoveTimer = setTimeout(() => {
     autoMoveTimer = null;
 
-    // Re-verify it's still our turn at execution time
+    // Re-verify it's still our turn at execution time using multiple methods.
+    // This is critical to prevent premoves (making a move during opponent's turn).
     const playerColor = getPlayerColor();
     if (playerColor) {
-      // If lastSentFen was cleared (opponent's turn detected), abort
+      // Method 1: check lastSentFen turn field
       if (!lastSentFen) {
         console.log("[chessbot][auto-move] no active analysis — likely opponent's turn, skipping");
         return;
@@ -4577,6 +4589,14 @@ function scheduleAutoMove(moveUci, lines, fen) {
       const currentTurn = lastSentFen.split(" ")[1];
       if (currentTurn && currentTurn !== playerColor) {
         console.log(`[chessbot][auto-move] not our turn at execution (fen=${currentTurn} player=${playerColor}), skipping`);
+        return;
+      }
+
+      // Method 2: real-time DOM check — clock and move list indicate whose turn it is.
+      // This catches cases where lastSentFen's turn field is stale or wrong.
+      const domTurn = detectTurnFromClocks() || detectTurnFromMoveList();
+      if (domTurn && domTurn !== playerColor) {
+        console.log(`[chessbot][auto-move] DOM says not our turn (dom=${domTurn} player=${playerColor}), skipping premove`);
         return;
       }
     }

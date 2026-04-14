@@ -11,8 +11,8 @@
   EventTarget.prototype.addEventListener = function (type, listener, options) {
     if (
       this &&
-      this.tagName === "CG-BOARD" &&
-      (type === "mousedown" || type === "touchstart" || type === "pointerdown")
+      (this.tagName === "CG-BOARD" || this.tagName === "PIECE" || this.tagName === "POCKET") &&
+      (type === "mousedown" || type === "touchstart")
     ) {
       var wrapped = function (event) {
         if (event.detail === MARKER) {
