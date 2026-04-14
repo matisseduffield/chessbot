@@ -904,8 +904,8 @@ function sendFen(fen) {
       console.log(`[chessbot] injected 3check counters: ${counters}`);
     }
   }
-  const msg = { type: "fen", fen, depth: bulletMode ? 12 : currentDepth };
-  if (bulletMode) { msg.movetime = 500; }
+  const msg = { type: "fen", fen, depth: bulletMode ? 18 : currentDepth };
+  if (bulletMode) { msg.movetime = 1500; }
   else if (searchMovetime) msg.movetime = searchMovetime;
   if (searchNodes) msg.nodes = searchNodes;
   if (detectedVariant) msg.variant = detectedVariant;
@@ -1061,7 +1061,7 @@ function observeBoard(boardEl) {
     if (dominated) return;
     lastMutationTime = Date.now();
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(readAndSend, bulletMode ? 50 : 400);
+    debounceTimer = setTimeout(readAndSend, bulletMode ? 150 : 400);
   });
 
   // Observe the board element AND its shadow root if available
@@ -1158,7 +1158,7 @@ function observeBoard(boardEl) {
           if (dominated) return;
           lastMutationTime = Date.now();
           clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(readAndSend, bulletMode ? 50 : 400);
+          debounceTimer = setTimeout(readAndSend, bulletMode ? 150 : 400);
         });
         const targets = [currentBoard];
         if (currentBoard.shadowRoot) targets.push(currentBoard.shadowRoot);
@@ -4703,8 +4703,8 @@ function scheduleAutoMove(moveUci, lines, fen) {
     }
   }
 
-  // Random delay within configured range (bullet mode: zero delay)
-  const delay = bulletMode ? 0 : autoMoveDelayMin + Math.random() * (autoMoveDelayMax - autoMoveDelayMin);
+  // Random delay within configured range (bullet mode: small delay to let DOM settle)
+  const delay = bulletMode ? 150 : autoMoveDelayMin + Math.random() * (autoMoveDelayMax - autoMoveDelayMin);
   const scheduledFen = fen;
 
   console.log(`[chessbot][auto-move] scheduled ${finalMove} in ${Math.round(delay)}ms`);
