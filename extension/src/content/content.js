@@ -3847,6 +3847,7 @@ function drawMultiPV(lines) {
  *  On lichess we inject directly into cg-board to avoid offset issues
  *  (cg-board → cg-container → cg-wrap introduces fractional pixel drift). */
 function getOverlayTarget(board) {
+  if (!board) return { target: null, dx: 0, dy: 0 };
   if (IS_CHESSGROUND) {
     const pos = getComputedStyle(board).position;
     if (pos === "static") board.style.position = "relative";
@@ -3881,6 +3882,7 @@ function getOverlayTarget(board) {
 
 function injectOverlay(board, svg) {
   const { target, dx, dy } = getOverlayTarget(board);
+  if (!target) return;
   if (dx || dy) {
     svg.style.left = `${dx}px`;
     svg.style.top = `${dy}px`;
@@ -4156,6 +4158,8 @@ function fireMouse(target, type, clientX, clientY, opts = {}) {
   const ev = new MouseEvent(type, {
     bubbles: true, cancelable: true, composed: true, view: window,
     clientX, clientY,
+    screenX: clientX + (window.screenX || 0),
+    screenY: clientY + (window.screenY || 0),
     button: 0, buttons: type === "mouseup" ? 0 : 1,
     ...opts,
   });
@@ -4168,6 +4172,8 @@ function firePointer(target, type, clientX, clientY, opts = {}) {
   const ev = new PointerEvent(type, {
     bubbles: true, cancelable: true, composed: true, view: window,
     clientX, clientY,
+    screenX: clientX + (window.screenX || 0),
+    screenY: clientY + (window.screenY || 0),
     button: 0, buttons: type === "pointerup" ? 0 : 1,
     pointerId: 1, pointerType: "mouse",
     isPrimary: true,
@@ -4394,19 +4400,26 @@ function findPocketPieceChessCom(pieceLetter) {
   return null;
 }
 
-/** Chess.com: click source square, then click destination square.
- *  For promotions, chess.com shows a popup — click the correct piece.
- *  If attemptNum > 1, uses drag approach as alternative strategy. */
+/** Chess.com: execute a move by simulating drag or click events.
+ *  Primary strategy is drag (works on both standard and variant pages).
+ *  Fallback is click-click for retry attempts. */
 function executeMoveChessCom(from, to, promo, attemptNum = 1) {
   const src = getSquareTarget(from.file, from.rank);
   if (!src || !src.target) return false;
   const dst = getSquareTarget(to.file, to.rank);
   if (!dst || !dst.target) return false;
 
+  // Clear overlays before move execution to avoid interfering with event dispatch
+  clearArrow();
+
   try {
-    if (attemptNum > 1) {
-      // Alternative strategy: drag from source to destination
-      console.log("[chessbot][auto-move] chess.com: trying drag approach");
+    if (attemptNum <= 2) {
+      // Primary strategy: drag from source to destination.
+      // Drag is more reliable than click-click because:
+      // - Works on both standard (shadow DOM) and variant (Vue) pages
+      // - Doesn't depend on "selection" state between clicks
+      // All pointer events go to src.target (simulates pointer capture behavior).
+      console.log(`[chessbot][auto-move] chess.com: trying drag approach (attempt ${attemptNum})`);
       firePointer(src.target, "pointerdown", src.clientX, src.clientY);
       fireMouse(src.target, "mousedown", src.clientX, src.clientY);
       setTimeout(() => {
@@ -4415,7 +4428,8 @@ function executeMoveChessCom(from, to, promo, attemptNum = 1) {
           fireMouse(document, "mousemove", dst.clientX, dst.clientY);
           setTimeout(() => {
             try {
-              firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
+              // pointerup goes to src (pointer capture) with dst coordinates
+              firePointer(src.target, "pointerup", dst.clientX, dst.clientY);
               fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
               if (promo) setTimeout(() => selectPromotionChessCom(promo), 200);
             } catch (e) { console.warn("[chessbot][auto-move] drag pointerup failed:", e.message); }
@@ -4425,7 +4439,8 @@ function executeMoveChessCom(from, to, promo, attemptNum = 1) {
       return true;
     }
 
-    // Primary strategy: click source, then click destination
+    // Fallback strategy (attempt 3): click source, then click destination
+    console.log("[chessbot][auto-move] chess.com: trying click-click approach");
     firePointer(src.target, "pointerdown", src.clientX, src.clientY);
     fireMouse(src.target, "mousedown", src.clientX, src.clientY);
     setTimeout(() => {
