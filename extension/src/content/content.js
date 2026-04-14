@@ -1043,7 +1043,7 @@ function observeBoard(boardEl) {
     if (dominated) return;
     lastMutationTime = Date.now();
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(readAndSend, 400);
+    debounceTimer = setTimeout(readAndSend, bulletMode ? 50 : 400);
   });
 
   // Observe the board element AND its shadow root if available
@@ -1140,7 +1140,7 @@ function observeBoard(boardEl) {
           if (dominated) return;
           lastMutationTime = Date.now();
           clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(readAndSend, 400);
+          debounceTimer = setTimeout(readAndSend, bulletMode ? 50 : 400);
         });
         const targets = [currentBoard];
         if (currentBoard.shadowRoot) targets.push(currentBoard.shadowRoot);
@@ -4630,7 +4630,7 @@ function scheduleAutoMove(moveUci, lines, fen) {
     }
 
     // Set cooldown to prevent re-scheduling from intermediate board states
-    autoMoveCooldownUntil = Date.now() + 2000;
+    autoMoveCooldownUntil = Date.now() + (bulletMode ? 500 : 2000);
     waitingForOpponent = true;
     _skipNextBoardChange = true; // skip analysis of our own move appearing on board
     lastSentFen = ""; // clear so we don't re-analyze the current position

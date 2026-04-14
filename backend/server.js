@@ -481,9 +481,11 @@ async function main() {
           }
         }
 
-        const depth = config.defaultDepth;
+        const depth = (msg.depth !== undefined && msg.depth !== null) ? Number(msg.depth) : config.defaultDepth;
         const searchOptions = {};
-        if (config.searchMovetime) searchOptions.movetime = Number(config.searchMovetime);
+        if (msg.movetime) searchOptions.movetime = Number(msg.movetime);
+        else if (config.searchMovetime) searchOptions.movetime = Number(config.searchMovetime);
+        else if (msg.nodes) searchOptions.nodes = Number(msg.nodes);
         else if (config.searchNodes) searchOptions.nodes = Number(config.searchNodes);
         const gen = ++evalGeneration;
         const variantGen = globalVariantGen; // snapshot for staleness check
