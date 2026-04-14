@@ -70,9 +70,7 @@ Drop variants feature full pocket piece detection and drop-move suggestions with
 
 ### Dashboard Panel
 
-![Dashboard settings panel](screenshots/settings.png)
-
-Full settings UI at `http://localhost:8080` with a live board preview and three settings columns. All slider values are clickable for direct keyboard input.
+Full settings UI at `http://localhost:8080` with a live board preview and three settings columns. All slider values are clickable for direct keyboard input. Includes a color picker to customize the accent color across the entire dashboard.
 
 **Column 1 — Analysis:** Variant picker, depth (0–30), multi-PV (1–8), analyze for me/opponent/both, time & node limits, FEN display.
 
