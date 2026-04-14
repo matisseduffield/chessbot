@@ -858,6 +858,8 @@ function connectWS() {
   ws.onclose = () => {
     console.log(`[chessbot] disconnected — retrying in ${Math.min(wsBackoff / 1000, 30)}s`);
     pendingEval = false; // unblock so we can resend on reconnect
+    waitingForOpponent = false; // unblock board change detection
+    _skipNextBoardChange = false;
     setTimeout(connectWS, wsBackoff);
     wsBackoff = Math.min(wsBackoff * 1.5, 30000); // exponential backoff, max 30s
   };
@@ -1229,6 +1231,7 @@ function readAndSend() {
     console.log(`[chessbot] eval timeout (${getEvalTimeout()}ms) — resetting state`);
     pendingEval = false;
     lastSentFen = "";
+    waitingForOpponent = false; // unblock so board changes trigger re-analysis
   }
 
   const fen = boardToFen();
@@ -4224,7 +4227,7 @@ function executeDropMove(pieceLetter, to) {
       fireMouse(document, "mousemove", dstX, dstY);
       setTimeout(() => {
         fireMouse(document, "mouseup", dstX, dstY);
-      }, 60);
+      }, 130);
     }, 20);
     return true;
   }
@@ -4452,8 +4455,9 @@ function executeMoveChessground(from, to, promo) {
 
   // Step 3: mouseup on document at destination — drag.end() sees cur.started
   // and dest !== orig, calls userMove to complete the move.
-  // Wait long enough for at least one rAF frame (~16ms) after the mousemove
-  // so processDrag can set cur.started = true.
+  // Wait long enough for multiple rAF frames (~16ms each) after the mousemove
+  // so processDrag can set cur.started = true. 150ms gives ~8 frames of margin,
+  // surviving background-tab throttling and high CPU load.
   setTimeout(() => {
     fireMouse(document, "mouseup", dstX, dstY);
 
@@ -4461,7 +4465,7 @@ function executeMoveChessground(from, to, promo) {
     if (promo) {
       setTimeout(() => selectPromotionChessground(promo), 200);
     }
-  }, 80);
+  }, 150);
 
   return true;
 }
@@ -4599,15 +4603,14 @@ function scheduleAutoMove(moveUci, lines, fen) {
     // This is critical to prevent premoves (making a move during opponent's turn).
     const playerColor = getPlayerColor();
     if (playerColor) {
-      // Method 1: check lastSentFen turn field
-      if (!lastSentFen) {
-        console.log("[chessbot][auto-move] no active analysis — likely opponent's turn, skipping");
-        return;
-      }
-      const currentTurn = lastSentFen.split(" ")[1];
-      if (currentTurn && currentTurn !== playerColor) {
-        console.log(`[chessbot][auto-move] not our turn at execution (fen=${currentTurn} player=${playerColor}), skipping`);
-        return;
+      // Method 1: check lastSentFen or scheduledFen turn field
+      const checkFen = lastSentFen || scheduledFen;
+      if (checkFen) {
+        const currentTurn = checkFen.split(" ")[1];
+        if (currentTurn && currentTurn !== playerColor) {
+          console.log(`[chessbot][auto-move] not our turn at execution (fen=${currentTurn} player=${playerColor}), skipping`);
+          return;
+        }
       }
 
       // Method 2: real-time DOM check — clock and move list indicate whose turn it is.
@@ -4634,7 +4637,27 @@ function scheduleAutoMove(moveUci, lines, fen) {
     waitingForOpponent = true;
     _skipNextBoardChange = true; // skip analysis of our own move appearing on board
     lastSentFen = ""; // clear so we don't re-analyze the current position
-    executeMove(finalMove);
+    const moveOk = executeMove(finalMove);
+
+    // Move verification: if executeMove returned false (DOM lookup failed),
+    // or if the board doesn't change within a reasonable window, reset state
+    // so we don't get stuck in waitingForOpponent forever.
+    if (!moveOk) {
+      console.warn("[chessbot][auto-move] executeMove returned false — resetting state");
+      waitingForOpponent = false;
+      _skipNextBoardChange = false;
+      return;
+    }
+    // Safety net: if board hasn't changed after generous timeout, assume move failed
+    setTimeout(() => {
+      if (_skipNextBoardChange) {
+        console.warn("[chessbot][auto-move] move not detected on board after timeout — resetting state");
+        _skipNextBoardChange = false;
+        waitingForOpponent = false;
+        autoMoveCooldownUntil = 0;
+        readAndSend(); // retry analysis
+      }
+    }, bulletMode ? 1000 : 3000);
   }, delay);
 }
 
