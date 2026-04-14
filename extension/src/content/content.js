@@ -979,30 +979,17 @@ function detectGameOver() {
       "[class*='game-over'], [class*='gameOver'], [class*='GameOver'], " +
       ".board-modal-container-container, " +
       ".game-result-header, [class*='game-result'], [class*='gameResult'], " +
-      // Chess.com puts rematch/new-game buttons in specific containers
       "[class*='game-over'] button, [class*='gameOver'] button"
     )) return true;
     // Chess.com variant pages: result overlay or game-end text
+    // Be very specific — only match elements whose ENTIRE text is a result or game-end phrase
     const resultTexts = document.querySelectorAll(
       "[class*='result'], [class*='Result'], [class*='endgame'], [class*='EndGame']"
     );
     for (const el of resultTexts) {
       const text = el.textContent.trim();
       if (/^(1-0|0-1|1\/2-1\/2|½-½)$/.test(text)) return true;
-      if (/game over|checkmate|stalemate|resigned|time ?out|aborted|abandoned/i.test(text)) return true;
-    }
-    // Both clocks stopped with moves on the board = game ended
-    const board = getBoardElement();
-    if (board) {
-      const bottomSel = ".clock-bottom .clock-running, .clock-bottom.clock-running, .clock-bottom [class*='active']";
-      const topSel = ".clock-top .clock-running, .clock-top.clock-running, .clock-top [class*='active']";
-      const anyClockRunning = document.querySelector(bottomSel) || document.querySelector(topSel);
-      if (!anyClockRunning) {
-        const hasMoves = document.querySelector(
-          ".main-line-ply, [data-ply], move-list-ply, .move-text-component"
-        );
-        if (hasMoves) return true;
-      }
+      if (/^(game over|checkmate|stalemate|resigned|time ?out|aborted|abandoned)$/i.test(text)) return true;
     }
     return false;
   }
