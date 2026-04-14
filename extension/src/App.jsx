@@ -7,14 +7,25 @@ function App() {
   const [copied, setCopied] = useState(false)
   const [displayMode, setDisplayMode] = useState('both')
 
-  // Query content script for actual enabled state on mount
+  // Load persisted state, then query content script for live state
   useEffect(() => {
+    chrome.storage?.local?.get(['chessbot_popup_enabled', 'chessbot_popup_displayMode'], (result) => {
+      if (result?.chessbot_popup_enabled !== undefined) setEnabled(result.chessbot_popup_enabled)
+      if (result?.chessbot_popup_displayMode) setDisplayMode(result.chessbot_popup_displayMode)
+    })
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'get_status' }, (resp) => {
           if (chrome.runtime.lastError || !resp) return
-          if (typeof resp.enabled === 'boolean') setEnabled(resp.enabled)
+          if (typeof resp.enabled === 'boolean') {
+            setEnabled(resp.enabled)
+            chrome.storage?.local?.set({ chessbot_popup_enabled: resp.enabled })
+          }
           if (typeof resp.connected === 'boolean') setConnected(resp.connected)
+          if (resp.displayMode) {
+            setDisplayMode(resp.displayMode)
+            chrome.storage?.local?.set({ chessbot_popup_displayMode: resp.displayMode })
+          }
         })
       }
     })
@@ -42,6 +53,7 @@ function App() {
   const toggle = () => {
     const next = !enabled
     setEnabled(next)
+    chrome.storage?.local?.set({ chessbot_popup_enabled: next })
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'toggle', enabled: next }, () => {
@@ -57,6 +69,7 @@ function App() {
 
   const changeDisplayMode = (mode) => {
     setDisplayMode(mode)
+    chrome.storage?.local?.set({ chessbot_popup_displayMode: mode })
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'set_display_mode', value: mode }, () => {

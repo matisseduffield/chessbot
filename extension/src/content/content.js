@@ -5398,6 +5398,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       sendResponse({
         connected: ws && ws.readyState === WebSocket.OPEN,
         enabled,
+        displayMode,
         site: SITE,
         lastFen: lastSentFen,
       });
