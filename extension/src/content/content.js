@@ -4262,25 +4262,57 @@ function executeDropMove(pieceLetter, to) {
     const pcx = pr.left + pr.width / 2;
     const pcy = pr.top + pr.height / 2;
 
+    const dst = getSquareTarget(to.file, to.rank);
+    if (!dst) {
+      console.warn("[chessbot][auto-move] chess.com drop: destination square not found");
+      return false;
+    }
+
+    // Method: drag from pocket piece to destination square.
+    // This is more reliable than click-click for Chess.com Crazyhouse.
     firePointer(pocketPiece, "pointerdown", pcx, pcy);
     fireMouse(pocketPiece, "mousedown", pcx, pcy);
+
     setTimeout(() => {
-      firePointer(pocketPiece, "pointerup", pcx, pcy);
-      fireMouse(pocketPiece, "mouseup", pcx, pcy);
-      fireMouse(pocketPiece, "click", pcx, pcy);
+      // Move to destination
+      firePointer(pocketPiece, "pointermove", dst.clientX, dst.clientY);
+      fireMouse(document, "mousemove", dst.clientX, dst.clientY);
 
       setTimeout(() => {
-        const dst = getSquareTarget(to.file, to.rank);
-        if (!dst) return;
-        firePointer(dst.target, "pointerdown", dst.clientX, dst.clientY);
-        fireMouse(dst.target, "mousedown", dst.clientX, dst.clientY);
+        // Release on destination
+        firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
+        fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
+
+        // Fallback: also try click-click pattern after a delay
+        // (some Chess.com variants respond to click-select-click rather than drag)
         setTimeout(() => {
-          firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
-          fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
-          fireMouse(dst.target, "click", dst.clientX, dst.clientY);
-        }, 30);
-      }, 50);
-    }, 30);
+          const currentBoard = boardToFen();
+          const currentBoardPart = currentBoard ? currentBoard.split(" ")[0] : "";
+          if (currentBoardPart === lastBoardFen) {
+            // Board didn't change — drag may have failed, try click-click
+            console.log("[chessbot][auto-move] drag-drop didn't register, trying click-click fallback");
+            firePointer(pocketPiece, "pointerdown", pcx, pcy);
+            fireMouse(pocketPiece, "mousedown", pcx, pcy);
+            setTimeout(() => {
+              firePointer(pocketPiece, "pointerup", pcx, pcy);
+              fireMouse(pocketPiece, "mouseup", pcx, pcy);
+              fireMouse(pocketPiece, "click", pcx, pcy);
+              setTimeout(() => {
+                const dst2 = getSquareTarget(to.file, to.rank);
+                if (!dst2) return;
+                firePointer(dst2.target, "pointerdown", dst2.clientX, dst2.clientY);
+                fireMouse(dst2.target, "mousedown", dst2.clientX, dst2.clientY);
+                setTimeout(() => {
+                  firePointer(dst2.target, "pointerup", dst2.clientX, dst2.clientY);
+                  fireMouse(dst2.target, "mouseup", dst2.clientX, dst2.clientY);
+                  fireMouse(dst2.target, "click", dst2.clientX, dst2.clientY);
+                }, 30);
+              }, 50);
+            }, 30);
+          }
+        }, 300);
+      }, 80);
+    }, 20);
     return true;
   }
 
@@ -4368,40 +4400,68 @@ function findPocketPieceChessCom(pieceLetter) {
   return null;
 }
 
-/** Chess.com: click source square, then click target square.
+/** Chess.com: drag piece from source to destination.
+ *  Falls back to click-click if drag doesn't register.
  *  For promotions, chess.com shows a popup — click the correct piece. */
 function executeMoveChessCom(from, to, promo) {
   const src = getSquareTarget(from.file, from.rank);
   if (!src) return false;
+  const dst = getSquareTarget(to.file, to.rank);
+  if (!dst) return false;
 
-  // Click source square
+  const boardBefore = lastBoardFen;
+
+  // Primary method: drag from source to destination
   firePointer(src.target, "pointerdown", src.clientX, src.clientY);
   fireMouse(src.target, "mousedown", src.clientX, src.clientY);
 
   setTimeout(() => {
-    firePointer(src.target, "pointerup", src.clientX, src.clientY);
-    fireMouse(src.target, "mouseup", src.clientX, src.clientY);
-    fireMouse(src.target, "click", src.clientX, src.clientY);
+    firePointer(src.target, "pointermove", dst.clientX, dst.clientY);
+    fireMouse(document, "mousemove", dst.clientX, dst.clientY);
 
-    // Short delay then click destination
     setTimeout(() => {
-      const dst = getSquareTarget(to.file, to.rank);
-      if (!dst) return;
-      firePointer(dst.target, "pointerdown", dst.clientX, dst.clientY);
-      fireMouse(dst.target, "mousedown", dst.clientX, dst.clientY);
+      firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
+      fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
 
+      if (promo) {
+        setTimeout(() => selectPromotionChessCom(promo), 200);
+      }
+
+      // Verify drag worked; if not, fall back to click-click
       setTimeout(() => {
-        firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
-        fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
-        fireMouse(dst.target, "click", dst.clientX, dst.clientY);
+        const currentFen = boardToFen();
+        const currentBoard = currentFen ? currentFen.split(" ")[0] : "";
+        if (currentBoard && currentBoard !== boardBefore) return; // drag worked
 
-        // Handle promotion popup if needed
-        if (promo) {
-          setTimeout(() => selectPromotionChessCom(promo), 200);
-        }
-      }, 30);
-    }, 50);
-  }, 30);
+        console.log("[chessbot][auto-move] chess.com drag didn't register, trying click-click");
+        const src2 = getSquareTarget(from.file, from.rank);
+        if (!src2) return;
+
+        firePointer(src2.target, "pointerdown", src2.clientX, src2.clientY);
+        fireMouse(src2.target, "mousedown", src2.clientX, src2.clientY);
+        setTimeout(() => {
+          firePointer(src2.target, "pointerup", src2.clientX, src2.clientY);
+          fireMouse(src2.target, "mouseup", src2.clientX, src2.clientY);
+          fireMouse(src2.target, "click", src2.clientX, src2.clientY);
+
+          setTimeout(() => {
+            const dst2 = getSquareTarget(to.file, to.rank);
+            if (!dst2) return;
+            firePointer(dst2.target, "pointerdown", dst2.clientX, dst2.clientY);
+            fireMouse(dst2.target, "mousedown", dst2.clientX, dst2.clientY);
+            setTimeout(() => {
+              firePointer(dst2.target, "pointerup", dst2.clientX, dst2.clientY);
+              fireMouse(dst2.target, "mouseup", dst2.clientX, dst2.clientY);
+              fireMouse(dst2.target, "click", dst2.clientX, dst2.clientY);
+              if (promo) {
+                setTimeout(() => selectPromotionChessCom(promo), 200);
+              }
+            }, 30);
+          }, 50);
+        }, 30);
+      }, 300);
+    }, 80);
+  }, 20);
 
   return true;
 }
@@ -4678,27 +4738,72 @@ function scheduleAutoMove(moveUci, lines, fen) {
     waitingForOpponent = true;
     _skipNextBoardChange = true; // skip analysis of our own move appearing on board
     lastSentFen = ""; // clear so we don't re-analyze the current position
-    const moveOk = executeMove(finalMove);
 
-    // Move verification: if executeMove returned false (DOM lookup failed),
-    // or if the board doesn't change within a reasonable window, reset state
-    // so we don't get stuck in waitingForOpponent forever.
-    if (!moveOk) {
-      console.warn("[chessbot][auto-move] executeMove returned false — resetting state");
-      waitingForOpponent = false;
-      _skipNextBoardChange = false;
-      return;
+    // Attempt the move with retries — DOM interactions can fail silently
+    // (e.g. elementFromPoint returns wrong element, shadow DOM not ready, etc.)
+    const boardBefore = lastBoardFen;
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    function attemptMove() {
+      attempts++;
+      console.log(`[chessbot][auto-move] attempt ${attempts}/${maxAttempts} for ${finalMove}`);
+      const moveOk = executeMove(finalMove);
+
+      if (!moveOk) {
+        console.warn(`[chessbot][auto-move] executeMove returned false (attempt ${attempts})`);
+        if (attempts < maxAttempts) {
+          // Retry after a short delay
+          setTimeout(attemptMove, 300);
+          return;
+        }
+        // All attempts exhausted
+        console.warn("[chessbot][auto-move] all move attempts failed — resetting state");
+        waitingForOpponent = false;
+        _skipNextBoardChange = false;
+        autoMoveCooldownUntil = 0;
+        readAndSend();
+        return;
+      }
+
+      // Move was dispatched — verify the board actually changes
+      const verifyDelay = bulletMode ? 400 : 800;
+      setTimeout(() => {
+        // Read the board to see if it changed (move was accepted by the site)
+        const currentFen = boardToFen();
+        const currentBoard = currentFen ? currentFen.split(" ")[0] : null;
+
+        if (currentBoard && currentBoard !== boardBefore) {
+          // Board changed — move was successful
+          return;
+        }
+
+        // Board didn't change — move likely failed silently
+        if (attempts < maxAttempts) {
+          console.warn(`[chessbot][auto-move] board unchanged after attempt ${attempts} — retrying`);
+          setTimeout(attemptMove, 200);
+        } else {
+          console.warn("[chessbot][auto-move] board unchanged after all attempts — resetting state");
+          _skipNextBoardChange = false;
+          waitingForOpponent = false;
+          autoMoveCooldownUntil = 0;
+          readAndSend();
+        }
+      }, verifyDelay);
     }
-    // Safety net: if board hasn't changed after generous timeout, assume move failed
+
+    attemptMove();
+
+    // Final safety net: if board hasn't changed after generous timeout, reset
     setTimeout(() => {
       if (_skipNextBoardChange) {
         console.warn("[chessbot][auto-move] move not detected on board after timeout — resetting state");
         _skipNextBoardChange = false;
         waitingForOpponent = false;
         autoMoveCooldownUntil = 0;
-        readAndSend(); // retry analysis
+        readAndSend();
       }
-    }, bulletMode ? 1000 : 3000);
+    }, bulletMode ? 2000 : 5000);
   }, delay);
 }
 
