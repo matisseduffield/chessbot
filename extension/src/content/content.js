@@ -135,6 +135,10 @@ function detectVariant() {
     if (path.includes("/racingkings") || path.includes("/racing-kings")) return "racingkings";
     if (path.includes("/bughouse")) return "bughouse";
     if (path.includes("/nocastling") || path.includes("/no-castling")) return null; // standard rules, no special engine
+    // Lichess game pages (/AbCdEfGh) don't have variant in URL.
+    // Detect from the game-info label or page title.
+    const lichessDom = detectVariantFromLichessDOM();
+    if (lichessDom) return lichessDom;
   }
   if (SITE === "chesscom") {
     // Chess.com: /variants/chess960, /variants/atomic, etc. Also /play/chess960, /live/chess960
@@ -187,6 +191,60 @@ function detectVariantFromDOM() {
       if (text.includes(needle)) return variant;
     }
   }
+  return null;
+}
+
+/** Detect variant from Lichess DOM when URL is just a game ID (/AbCdEfGh).
+ *  Lichess shows a variant label (e.g. blue "ATOMIC") in the game info section
+ *  and includes the variant name in the page title. */
+function detectVariantFromLichessDOM() {
+  const variantMap = [
+    ["atomic", "atomic"],
+    ["crazyhouse", "crazyhouse"],
+    ["chess960", "chess960"], ["chess 960", "chess960"], ["960", "chess960"],
+    ["king of the hill", "kingofthehill"],
+    ["three-check", "3check"], ["threecheck", "3check"], ["three check", "3check"], ["3-check", "3check"], ["3check", "3check"],
+    ["antichess", "antichess"],
+    ["horde", "horde"],
+    ["racing kings", "racingkings"],
+    ["no castling", null], // standard rules, no special engine
+  ];
+
+  // Method 1: game info section — Lichess has a .game__meta section
+  // containing a variant link like <a href="/variant/atomic">ATOMIC</a>
+  const metaEls = document.querySelectorAll(
+    ".game__meta a[href*='/variant/'], .game__meta .header .setup, " +
+    ".game__meta .setup, .round__underboard .game__meta, " +
+    "section.game__meta, .setup-info a[href*='/variant/']"
+  );
+  for (const el of metaEls) {
+    const text = (el.textContent || "").toLowerCase().trim();
+    for (const [needle, variant] of variantMap) {
+      if (text.includes(needle)) {
+        console.log(`[chessbot] Lichess DOM variant detected: "${text}" → ${variant || "standard"}`);
+        return variant;
+      }
+    }
+    // Also check href for variant links
+    const href = (el.getAttribute("href") || "").toLowerCase();
+    for (const [needle, variant] of variantMap) {
+      if (href.includes(needle.replace(/ /g, ""))) {
+        console.log(`[chessbot] Lichess DOM variant detected from href: "${href}" → ${variant || "standard"}`);
+        return variant;
+      }
+    }
+  }
+
+  // Method 2: page title — Lichess format: "player • player in variant"
+  // or "Casual Atomic • player vs player"
+  const title = document.title.toLowerCase();
+  for (const [needle, variant] of variantMap) {
+    if (title.includes(needle)) {
+      console.log(`[chessbot] Lichess title variant detected: "${needle}" → ${variant || "standard"}`);
+      return variant;
+    }
+  }
+
   return null;
 }
 
@@ -462,9 +520,11 @@ function initialRead() {
   lastPieceCount = pieceCount;
 
   // Late variant detection: if URL didn't reveal the variant, try DOM-based
-  // detection now that the page has loaded (chess.com title updates async)
-  if (!detectedVariant && SITE === "chesscom") {
-    const domVariant = detectVariantFromDOM();
+  // detection now that the page has loaded (title/game-info updates async)
+  if (!detectedVariant) {
+    let domVariant = null;
+    if (SITE === "chesscom") domVariant = detectVariantFromDOM();
+    else if (IS_CHESSGROUND) domVariant = detectVariantFromLichessDOM();
     if (domVariant) {
       detectedVariant = domVariant;
       console.log(`[chessbot] late variant detection from DOM: ${domVariant}`);
