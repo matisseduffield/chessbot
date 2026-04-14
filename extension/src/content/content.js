@@ -426,6 +426,14 @@ function onPossibleNavigation() {
   waitingForOpponent = false;
   renderGeneration++;
   clearArrow();
+  // Reset training and auto-move state for new game/variant
+  trainingBestMove = null;
+  trainingLastFen = "";
+  trainingStage = 0;
+  trainingLines = [];
+  trainingRevealActive = false;
+  cancelAutoMove();
+  autoMoveCooldownUntil = 0;
 
   // Small delay to let the SPA render the new page
   setTimeout(() => {
@@ -622,6 +630,7 @@ function connectWS() {
         if (sendFen(pendingInitialFen)) {
           lastSentFen = pendingInitialFen;
           pendingEval = true;
+          evalSentAt = Date.now();
         }
         pendingInitialFen = null;
       }
@@ -629,6 +638,7 @@ function connectWS() {
       // Reconnected — resend last position for continuity
       console.log(`[chessbot] reconnected — resending last position`);
       pendingEval = true;
+      evalSentAt = Date.now();
       sendFen(lastSentFen);
     } else if (boardReady && !lastSentFen) {
       // Board found but no FEN queued or sent — try reading now
@@ -1334,6 +1344,14 @@ function readAndSend() {
     _cachedPlayerColor = null; // reset so flip detection re-runs for new game
     _geoCache = null; // force geometry recomputation with fresh flip detection
     _skipNextBoardChange = false;
+    // Reset training state so hints from previous game don't leak
+    trainingBestMove = null;
+    trainingLastFen = "";
+    trainingStage = 0;
+    trainingLines = [];
+    trainingRevealActive = false;
+    cancelAutoMove();
+    autoMoveCooldownUntil = 0;
     if (detectedVariant === "3check") threeCheckRemaining = { w: 3, b: 3 };
   }
 
@@ -4475,8 +4493,10 @@ function selectPromotionChessground(promoChar) {
   const roleMap = { q: "queen", r: "rook", b: "bishop", n: "knight" };
   const role = roleMap[promoChar.toLowerCase()] || "queen";
 
-  // Chessground shows a promotion picker with piece elements
-  const promoSquares = document.querySelectorAll("cg-container piece, .cg-wrap piece, square[data-promotion]");
+  // Chessground promotion picker: pieces are inside <square> elements
+  // that are direct children of cg-container (NOT inside cg-board).
+  // Using "cg-container > square piece" avoids matching regular board pieces.
+  const promoSquares = document.querySelectorAll("cg-container > square piece, .cg-wrap > square piece");
   for (const el of promoSquares) {
     const cls = el.className.toLowerCase();
     if (cls.includes(role)) {
