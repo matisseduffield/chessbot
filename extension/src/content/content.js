@@ -87,6 +87,7 @@ let autoMoveTimer = null;    // pending auto-move timeout
 let autoMoveCooldownUntil = 0; // timestamp — block scheduling until this time
 let _skipNextBoardChange = false; // after auto-move, skip the first board change (our own move)
 let bulletMode = false; // bullet mode: zero delay, no humanize, fast search
+let variantSwitchUntil = 0; // timestamp — suppress auto-move after variant switch
 
 // ── 3-check state tracking ───────────────────────────────────
 let threeCheckRemaining = { w: 3, b: 3 }; // checks each side still needs to GIVE to win
@@ -417,6 +418,10 @@ function onPossibleNavigation() {
     const label = (newVariant || "standard").replace(/\b\w/g, c => c.toUpperCase());
     showToast(`Variant: ${label}`);
   }
+
+  // Suppress auto-move for a period after any navigation — gives the new variant/game
+  // time to settle so we don't play a stale bestmove from the previous game.
+  variantSwitchUntil = Date.now() + 2000;
 
   // Reset board state and re-find the board
   boardReady = false;
@@ -869,7 +874,8 @@ function connectWS() {
         }
 
         // Auto-move: schedule the move after drawing overlays (non-streaming only)
-        if (autoMoveEnabled && !msg.streaming && msg.bestmove && msg.bestmove !== "(none)") {
+        // Suppress during variant switch cooldown — bestmove may be from old variant/engine
+        if (autoMoveEnabled && !msg.streaming && msg.bestmove && msg.bestmove !== "(none)" && Date.now() >= variantSwitchUntil) {
           scheduleAutoMove(msg.bestmove, lines, msg.fen || lastSentFen);
         }
       }
@@ -4716,6 +4722,24 @@ function scheduleAutoMove(moveUci, lines, fen) {
         console.log(`[chessbot][auto-move] DOM says not our turn (dom=${domTurn} player=${playerColor}), skipping premove`);
         return;
       }
+
+      // Method 3: real-time board read — the most reliable check.
+      // Read the actual board position and check whose turn it is.
+      const liveFen = boardToFen();
+      if (liveFen) {
+        const liveBoard = liveFen.split(" ")[0];
+        const scheduledBoard = scheduledFen ? scheduledFen.split(" ")[0] : null;
+        if (scheduledBoard && liveBoard !== scheduledBoard) {
+          console.log("[chessbot][auto-move] board position changed since scheduling, skipping");
+          return;
+        }
+      }
+    }
+
+    // Suppress auto-move during variant switch cooldown
+    if (Date.now() < variantSwitchUntil) {
+      console.log("[chessbot][auto-move] variant switch cooldown — skipping");
+      return;
     }
 
     // Verify position hasn't changed since we scheduled
