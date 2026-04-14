@@ -968,37 +968,18 @@ function waitForBoard() {
 // ── Game-over detection ──────────────────────────────────────
 
 /** Detect whether the current game has ended by checking DOM indicators.
- *  Chess.com: game-over modal, result header, board "game-over" class.
- *  Lichess: result element, status "is ended", game-over classes.
- *  Returns true if the game is over. */
+ *  Uses only high-confidence selectors to avoid false positives on variant pages. */
 function detectGameOver() {
   if (SITE === "chesscom") {
-    // Chess.com standard: game-over modal, result headers, board disabled state
+    // Chess.com standard game: game-over modal overlay that covers the board.
+    // This is the most reliable indicator — only appears when the game actually ends.
     if (document.querySelector(
-      ".game-over-modal, .modal-game-over-component, " +
-      "[class*='game-over'], [class*='gameOver'], [class*='GameOver'], " +
-      ".board-modal-container-container, " +
-      ".game-result-header, [class*='game-result'], [class*='gameResult'], " +
-      "[class*='game-over'] button, [class*='gameOver'] button"
+      ".game-over-modal, .modal-game-over-component, .board-modal-container-container"
     )) return true;
-    // Chess.com variant pages: result overlay or game-end text
-    // Be very specific — only match elements whose ENTIRE text is a result or game-end phrase
-    const resultTexts = document.querySelectorAll(
-      "[class*='result'], [class*='Result'], [class*='endgame'], [class*='EndGame']"
-    );
-    for (const el of resultTexts) {
-      const text = el.textContent.trim();
-      if (/^(1-0|0-1|1\/2-1\/2|½-½)$/.test(text)) return true;
-      if (/^(game over|checkmate|stalemate|resigned|time ?out|aborted|abandoned)$/i.test(text)) return true;
-    }
     return false;
   }
   if (IS_CHESSGROUND) {
-    const status = document.querySelector(".status, .result-wrap, .game__status");
-    if (status) {
-      const text = status.textContent.trim();
-      if (/game over|checkmate|stalemate|draw|resign|time out|abort|½|1-0|0-1/i.test(text)) return true;
-    }
+    // Lichess "rematch" button only appears after game ends
     if (document.querySelector(".rematch, .game__rematch")) return true;
     return false;
   }
@@ -3111,6 +3092,7 @@ function drawDropMarker(svg, file, rank, sqSize, flipped, color, pieceLetter, op
 /** Create or retrieve the background SVG layer (sits behind pieces). */
 function getOrCreateBgSvg(board, rect) {
   const { target, dx, dy } = getOverlayTarget(board);
+  if (!target) return null;
   let bg = target.querySelector ? target.querySelector("#chessbot-bg-svg") : null;
   if (!bg) {
     bg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -3131,6 +3113,7 @@ function getOrCreateBgSvg(board, rect) {
 /** Create or retrieve the foreground arrow SVG layer (sits on top of pieces). */
 function getOrCreateArrowSvg(board, rect) {
   const { target, dx, dy } = getOverlayTarget(board);
+  if (!target) return null;
   let svg = target.querySelector ? target.querySelector("#chessbot-arrow-svg") : null;
   if (!svg) {
     svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -3202,6 +3185,7 @@ function drawTrainingHint(uci, bestLine, source) {
   const bgSvg = getOrCreateBgSvg(board, rect);
 
   const svg = getOrCreateArrowSvg(board, rect);
+  if (!svg) return;
 
   const hintColor = "rgba(168,85,247,0.5)"; // purple
   const borderColor = "rgba(168,85,247,0.9)";
@@ -3704,6 +3688,7 @@ function drawSingleMove(uci, bestLine, source) {
   const isBook = source === "book" || source === "lichess";
 
   const svg = getOrCreateArrowSvg(board, rect);
+  if (!svg) return;
 
   const moveColor = source === "lichess" ? "rgba(66,133,244,0.95)" : isBook ? "rgba(212,160,23,0.9)" : "rgba(16,185,129,0.9)";
   const boxColorFrom = source === "lichess" ? "rgba(66,133,244,0.4)" : isBook ? "rgba(212,160,23,0.4)" : "rgba(16,185,129,0.4)";
@@ -3844,6 +3829,7 @@ function drawMultiPV(lines) {
 
   // Create or reuse SVG layer for arrows
   const svg = getOrCreateArrowSvg(board, rect);
+  if (!svg) return;
 
   // Background SVG for fills (behind pieces)
   const bgSvg = (displayMode === "box" || displayMode === "both") ? getOrCreateBgSvg(board, rect) : null;
@@ -4169,12 +4155,13 @@ function drawEvalBar(bestLine, source, tablebase) {
   // On chessground sites, we inject into cg-board directly. Both cg-board and its
   // ancestor cg-wrap may clip overflow. Override so the eval bar (left:-28px)
   // and WDL bar (bottom:-22px) are visible.
-  if (IS_CHESSGROUND) {
+  if (IS_CHESSGROUND && parent && parent.style) {
     parent.style.overflow = "visible";
-    const cgWrap = parent.closest(".cg-wrap");
+    const cgWrap = parent.closest ? parent.closest(".cg-wrap") : null;
     if (cgWrap) cgWrap.style.overflow = "visible";
   }
-  parent.appendChild(container);
+  if (parent) parent.appendChild(container);
+  else document.body.appendChild(container);
 }
 
 // ── Voice TTS ────────────────────────────────────────────────
