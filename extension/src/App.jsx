@@ -76,10 +76,13 @@ function App() {
     <div className="popup">
       <header className="header">
         <div className="header-left">
-          <span className="logo">&#9823;</span>
-          <span className="title">Chess Helper</span>
+          <div className="logo-icon">♞</div>
+          <span className="title">ChessBot</span>
         </div>
-        <span className={`status-dot ${connected ? 'green' : 'red'}`} title={connected ? 'Connected' : 'Offline'} />
+        <div className="status-badge">
+          <span className={`status-dot ${connected ? 'green' : 'red'}`} />
+          <span className="status-text">{connected ? 'Connected' : 'Offline'}</span>
+        </div>
       </header>
 
       <div className="popup-body">
@@ -88,15 +91,17 @@ function App() {
           onClick={toggle}
           title={enabled ? 'Disable analysis' : 'Enable analysis'}
         >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
             <line x1="12" y1="2" x2="12" y2="12" />
           </svg>
           <span>{enabled ? 'Analysis On' : 'Analysis Off'}</span>
         </button>
 
+        <div className="divider" />
+
         <div className="display-mode">
-          <span className="display-mode-label">Display</span>
+          <span className="display-mode-label">Display Mode</span>
           <div className="display-mode-btns">
             <button
               className={`mode-btn ${displayMode === 'arrow' ? 'active' : ''}`}
@@ -134,22 +139,26 @@ function App() {
           </div>
         </div>
 
-        <button className="panel-btn" onClick={openPanel}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-            <line x1="3" y1="9" x2="21" y2="9" />
-            <line x1="9" y1="21" x2="9" y2="9" />
-          </svg>
-          <span>Open Dashboard</span>
-        </button>
+        <div className="divider" />
 
-        <button className={`panel-btn ${copied ? 'copied' : ''}`} onClick={copyLogs}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-          </svg>
-          <span>{copied ? 'Copied!' : 'Copy Logs'}</span>
-        </button>
+        <div className="action-btns">
+          <button className="panel-btn primary" onClick={openPanel}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <line x1="3" y1="9" x2="21" y2="9" />
+              <line x1="9" y1="21" x2="9" y2="9" />
+            </svg>
+            <span>Dashboard</span>
+          </button>
+
+          <button className={`panel-btn ${copied ? 'copied' : ''}`} onClick={copyLogs}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+            <span>{copied ? 'Copied!' : 'Logs'}</span>
+          </button>
+        </div>
       </div>
     </div>
   )
