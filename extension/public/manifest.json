@@ -13,6 +13,15 @@
   "content_scripts": [
     {
       "matches": [
+        "https://lichess.org/*",
+        "https://playstrategy.org/*"
+      ],
+      "js": ["lichess-inject.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
         "https://www.chess.com/game/*",
         "https://www.chess.com/play/*",
         "https://www.chess.com/live/*",

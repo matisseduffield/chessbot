@@ -4186,16 +4186,18 @@ function executeDropMove(pieceLetter, to) {
       fireMouse(pocketPiece, "mouseup", pcx, pcy);
       fireMouse(pocketPiece, "click", pcx, pcy);
 
-      // Then click destination
+      // Then click destination on cg-board (needs isTrusted bypass marker)
       setTimeout(() => {
-        const dst = getSquareTarget(to.file, to.rank);
-        if (!dst) return;
-        firePointer(dst.target, "pointerdown", dst.clientX, dst.clientY);
-        fireMouse(dst.target, "mousedown", dst.clientX, dst.clientY);
+        const { board, rect, sqSize, flipped } = geo;
+        const dstCenter = squareCenter(to.file, to.rank, sqSize, flipped);
+        const dstX = rect.left + dstCenter.x;
+        const dstY = rect.top + dstCenter.y;
+        const marker = { detail: 42424242 };
+        firePointer(board, "pointerdown", dstX, dstY, marker);
+        fireMouse(board, "mousedown", dstX, dstY, marker);
         setTimeout(() => {
-          firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
-          fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
-          fireMouse(dst.target, "click", dst.clientX, dst.clientY);
+          firePointer(board, "pointerup", dstX, dstY);
+          fireMouse(board, "mouseup", dstX, dstY);
         }, 30);
       }, 80);
     }, 30);
@@ -4386,26 +4388,51 @@ function selectPromotionChessCom(promoChar) {
 
 /** Lichess / PlayStrategy (Chessground): mousedown on source, mouseup on target. */
 function executeMoveChessground(from, to, promo) {
-  const src = getSquareTarget(from.file, from.rank);
-  if (!src) return false;
+  const geo = getBoardGeometry();
+  if (!geo) return false;
+  const { board, rect, sqSize, flipped } = geo;
 
-  // Mousedown on source
-  firePointer(src.target, "pointerdown", src.clientX, src.clientY);
-  fireMouse(src.target, "mousedown", src.clientX, src.clientY);
+  const srcCenter = squareCenter(from.file, from.rank, sqSize, flipped);
+  const srcX = rect.left + srcCenter.x;
+  const srcY = rect.top + srcCenter.y;
+
+  const dstCenter = squareCenter(to.file, to.rank, sqSize, flipped);
+  const dstX = rect.left + dstCenter.x;
+  const dstY = rect.top + dstCenter.y;
+
+  // Chessground rejects synthetic events via isTrusted check in drag.start().
+  // Our injected page-context script (lichess-inject.js) wraps the mousedown
+  // handler on cg-board and proxies isTrusted for events with this marker.
+  const marker = { detail: 42424242 };
+
+  // Click-click: select piece on source, then click destination to move.
+  // All events go directly on the board element (cg-board) — Chessground
+  // reads clientX/clientY to determine the square.
+
+  // Step 1: Click source square to select the piece
+  firePointer(board, "pointerdown", srcX, srcY, marker);
+  fireMouse(board, "mousedown", srcX, srcY, marker);
 
   setTimeout(() => {
-    const dst = getSquareTarget(to.file, to.rank);
-    if (!dst) return;
+    firePointer(board, "pointerup", srcX, srcY);
+    fireMouse(board, "mouseup", srcX, srcY);
 
-    // Mouseup on target (drag-and-drop style)
-    firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
-    fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
+    // Step 2: Click destination square to complete the move
+    setTimeout(() => {
+      firePointer(board, "pointerdown", dstX, dstY, marker);
+      fireMouse(board, "mousedown", dstX, dstY, marker);
 
-    // Handle promotion popup
-    if (promo) {
-      setTimeout(() => selectPromotionChessground(promo), 200);
-    }
-  }, 80);
+      setTimeout(() => {
+        firePointer(board, "pointerup", dstX, dstY);
+        fireMouse(board, "mouseup", dstX, dstY);
+
+        // Handle promotion popup
+        if (promo) {
+          setTimeout(() => selectPromotionChessground(promo), 200);
+        }
+      }, 30);
+    }, 80);
+  }, 30);
 
   return true;
 }
