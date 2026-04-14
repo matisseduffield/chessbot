@@ -4189,13 +4189,14 @@ function getSquareTarget(file, rank) {
 }
 
 /** Execute a UCI move on the board by simulating click events.
- *  uci = "e2e4", "e7e8q" (with optional promotion char), or "P@e4" (drop). */
-function executeMove(uci) {
+ *  uci = "e2e4", "e7e8q" (with optional promotion char), or "P@e4" (drop).
+ *  attempt = retry attempt number (1-based), used to alternate strategies. */
+function executeMove(uci, attempt = 1) {
   if (!uci || uci.length < 3) return false;
   const squares = uciToSquares(uci);
   if (!squares) return false;
 
-  console.log(`[chessbot][auto-move] executing ${uci} on ${SITE}`);
+  console.log(`[chessbot][auto-move] executing ${uci} on ${SITE} (attempt ${attempt})`);
 
   // Handle drop moves (e.g. P@e4)
   if (squares.drop) {
@@ -4206,7 +4207,7 @@ function executeMove(uci) {
   const promo = uci.length === 5 ? uci[4] : null;
 
   if (SITE === "chesscom") {
-    return executeMoveChessCom(from, to, promo);
+    return executeMoveChessCom(from, to, promo, attempt);
   } else if (IS_CHESSGROUND) {
     return executeMoveChessground(from, to, promo);
   } else if (SITE === "chesstempo") {
@@ -4275,7 +4276,6 @@ function executeDropMove(pieceLetter, to) {
     }
 
     // Method: drag from pocket piece to destination square.
-    // This is more reliable than click-click for Chess.com Crazyhouse.
     firePointer(pocketPiece, "pointerdown", pcx, pcy);
     fireMouse(pocketPiece, "mousedown", pcx, pcy);
 
@@ -4288,35 +4288,6 @@ function executeDropMove(pieceLetter, to) {
         // Release on destination
         firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
         fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
-
-        // Fallback: also try click-click pattern after a delay
-        // (some Chess.com variants respond to click-select-click rather than drag)
-        setTimeout(() => {
-          const currentBoard = boardToFen();
-          const currentBoardPart = currentBoard ? currentBoard.split(" ")[0] : "";
-          if (currentBoardPart === lastBoardFen) {
-            // Board didn't change — drag may have failed, try click-click
-            console.log("[chessbot][auto-move] drag-drop didn't register, trying click-click fallback");
-            firePointer(pocketPiece, "pointerdown", pcx, pcy);
-            fireMouse(pocketPiece, "mousedown", pcx, pcy);
-            setTimeout(() => {
-              firePointer(pocketPiece, "pointerup", pcx, pcy);
-              fireMouse(pocketPiece, "mouseup", pcx, pcy);
-              fireMouse(pocketPiece, "click", pcx, pcy);
-              setTimeout(() => {
-                const dst2 = getSquareTarget(to.file, to.rank);
-                if (!dst2) return;
-                firePointer(dst2.target, "pointerdown", dst2.clientX, dst2.clientY);
-                fireMouse(dst2.target, "mousedown", dst2.clientX, dst2.clientY);
-                setTimeout(() => {
-                  firePointer(dst2.target, "pointerup", dst2.clientX, dst2.clientY);
-                  fireMouse(dst2.target, "mouseup", dst2.clientX, dst2.clientY);
-                  fireMouse(dst2.target, "click", dst2.clientX, dst2.clientY);
-                }, 30);
-              }, 50);
-            }, 30);
-          }
-        }, 300);
       }, 80);
     }, 20);
     return true;
@@ -4406,68 +4377,54 @@ function findPocketPieceChessCom(pieceLetter) {
   return null;
 }
 
-/** Chess.com: drag piece from source to destination.
- *  Falls back to click-click if drag doesn't register.
- *  For promotions, chess.com shows a popup — click the correct piece. */
-function executeMoveChessCom(from, to, promo) {
+/** Chess.com: click source square, then click destination square.
+ *  For promotions, chess.com shows a popup — click the correct piece.
+ *  If attemptNum > 1, uses drag approach as alternative strategy. */
+function executeMoveChessCom(from, to, promo, attemptNum = 1) {
   const src = getSquareTarget(from.file, from.rank);
   if (!src) return false;
   const dst = getSquareTarget(to.file, to.rank);
   if (!dst) return false;
 
-  const boardBefore = lastBoardFen;
+  if (attemptNum > 1) {
+    // Alternative strategy: drag from source to destination
+    console.log("[chessbot][auto-move] chess.com: trying drag approach");
+    firePointer(src.target, "pointerdown", src.clientX, src.clientY);
+    fireMouse(src.target, "mousedown", src.clientX, src.clientY);
+    setTimeout(() => {
+      firePointer(src.target, "pointermove", dst.clientX, dst.clientY);
+      fireMouse(document, "mousemove", dst.clientX, dst.clientY);
+      setTimeout(() => {
+        firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
+        fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
+        if (promo) setTimeout(() => selectPromotionChessCom(promo), 200);
+      }, 80);
+    }, 20);
+    return true;
+  }
 
-  // Primary method: drag from source to destination
+  // Primary strategy: click source, then click destination
   firePointer(src.target, "pointerdown", src.clientX, src.clientY);
   fireMouse(src.target, "mousedown", src.clientX, src.clientY);
-
   setTimeout(() => {
-    firePointer(src.target, "pointermove", dst.clientX, dst.clientY);
-    fireMouse(document, "mousemove", dst.clientX, dst.clientY);
+    firePointer(src.target, "pointerup", src.clientX, src.clientY);
+    fireMouse(src.target, "mouseup", src.clientX, src.clientY);
+    fireMouse(src.target, "click", src.clientX, src.clientY);
 
     setTimeout(() => {
-      firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
-      fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
-
-      if (promo) {
-        setTimeout(() => selectPromotionChessCom(promo), 200);
-      }
-
-      // Verify drag worked; if not, fall back to click-click
+      // Re-fetch destination target (selection may have changed the DOM)
+      const dst2 = getSquareTarget(to.file, to.rank);
+      if (!dst2) return;
+      firePointer(dst2.target, "pointerdown", dst2.clientX, dst2.clientY);
+      fireMouse(dst2.target, "mousedown", dst2.clientX, dst2.clientY);
       setTimeout(() => {
-        const currentFen = boardToFen();
-        const currentBoard = currentFen ? currentFen.split(" ")[0] : "";
-        if (currentBoard && currentBoard !== boardBefore) return; // drag worked
-
-        console.log("[chessbot][auto-move] chess.com drag didn't register, trying click-click");
-        const src2 = getSquareTarget(from.file, from.rank);
-        if (!src2) return;
-
-        firePointer(src2.target, "pointerdown", src2.clientX, src2.clientY);
-        fireMouse(src2.target, "mousedown", src2.clientX, src2.clientY);
-        setTimeout(() => {
-          firePointer(src2.target, "pointerup", src2.clientX, src2.clientY);
-          fireMouse(src2.target, "mouseup", src2.clientX, src2.clientY);
-          fireMouse(src2.target, "click", src2.clientX, src2.clientY);
-
-          setTimeout(() => {
-            const dst2 = getSquareTarget(to.file, to.rank);
-            if (!dst2) return;
-            firePointer(dst2.target, "pointerdown", dst2.clientX, dst2.clientY);
-            fireMouse(dst2.target, "mousedown", dst2.clientX, dst2.clientY);
-            setTimeout(() => {
-              firePointer(dst2.target, "pointerup", dst2.clientX, dst2.clientY);
-              fireMouse(dst2.target, "mouseup", dst2.clientX, dst2.clientY);
-              fireMouse(dst2.target, "click", dst2.clientX, dst2.clientY);
-              if (promo) {
-                setTimeout(() => selectPromotionChessCom(promo), 200);
-              }
-            }, 30);
-          }, 50);
-        }, 30);
-      }, 300);
-    }, 80);
-  }, 20);
+        firePointer(dst2.target, "pointerup", dst2.clientX, dst2.clientY);
+        fireMouse(dst2.target, "mouseup", dst2.clientX, dst2.clientY);
+        fireMouse(dst2.target, "click", dst2.clientX, dst2.clientY);
+        if (promo) setTimeout(() => selectPromotionChessCom(promo), 200);
+      }, 30);
+    }, 50);
+  }, 30);
 
   return true;
 }
@@ -4760,7 +4717,7 @@ function scheduleAutoMove(moveUci, lines, fen) {
     function attemptMove() {
       attempts++;
       console.log(`[chessbot][auto-move] attempt ${attempts}/${maxAttempts} for ${finalMove}`);
-      const moveOk = executeMove(finalMove);
+      const moveOk = executeMove(finalMove, attempts);
 
       if (!moveOk) {
         console.warn(`[chessbot][auto-move] executeMove returned false (attempt ${attempts})`);
@@ -4778,8 +4735,10 @@ function scheduleAutoMove(moveUci, lines, fen) {
         return;
       }
 
-      // Move was dispatched — verify the board actually changes
-      const verifyDelay = bulletMode ? 400 : 800;
+      // Move was dispatched — verify the board actually changes.
+      // Wait long enough for the full async click/drag chain to complete
+      // and for Chess.com to process and re-render the board.
+      const verifyDelay = bulletMode ? 600 : 1000;
       setTimeout(() => {
         // Read the board to see if it changed (move was accepted by the site)
         const currentFen = boardToFen();
