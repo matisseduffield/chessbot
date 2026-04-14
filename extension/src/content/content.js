@@ -30,6 +30,7 @@ let ws = null;
 let lastBoardFen = ""; // piece-placement part only (before first space)
 let lastSentFen = "";  // full FEN last sent for analysis
 let enabled = true;
+let gameOver = false; // true when game has ended (checkmate, resign, draw, abort, etc.)
 let observer = null;
 let debounceTimer = null;
 let pendingEval = false; // true while waiting for a bestmove response
@@ -964,6 +965,59 @@ function waitForBoard() {
   });
 }
 
+// ── Game-over detection ──────────────────────────────────────
+
+/** Detect whether the current game has ended by checking DOM indicators.
+ *  Chess.com: game-over modal, result header, board "game-over" class.
+ *  Lichess: result element, status "is ended", game-over classes.
+ *  Returns true if the game is over. */
+function detectGameOver() {
+  if (SITE === "chesscom") {
+    // Chess.com standard: game-over modal, result headers, board disabled state
+    if (document.querySelector(
+      ".game-over-modal, .modal-game-over-component, " +
+      "[class*='game-over'], [class*='gameOver'], [class*='GameOver'], " +
+      ".board-modal-container-container, " +
+      ".game-result-header, [class*='game-result'], [class*='gameResult'], " +
+      // Chess.com puts rematch/new-game buttons in specific containers
+      "[class*='game-over'] button, [class*='gameOver'] button"
+    )) return true;
+    // Chess.com variant pages: result overlay or game-end text
+    const resultTexts = document.querySelectorAll(
+      "[class*='result'], [class*='Result'], [class*='endgame'], [class*='EndGame']"
+    );
+    for (const el of resultTexts) {
+      const text = el.textContent.trim();
+      if (/^(1-0|0-1|1\/2-1\/2|½-½)$/.test(text)) return true;
+      if (/game over|checkmate|stalemate|resigned|time ?out|aborted|abandoned/i.test(text)) return true;
+    }
+    // Both clocks stopped with moves on the board = game ended
+    const board = getBoardElement();
+    if (board) {
+      const bottomSel = ".clock-bottom .clock-running, .clock-bottom.clock-running, .clock-bottom [class*='active']";
+      const topSel = ".clock-top .clock-running, .clock-top.clock-running, .clock-top [class*='active']";
+      const anyClockRunning = document.querySelector(bottomSel) || document.querySelector(topSel);
+      if (!anyClockRunning) {
+        const hasMoves = document.querySelector(
+          ".main-line-ply, [data-ply], move-list-ply, .move-text-component"
+        );
+        if (hasMoves) return true;
+      }
+    }
+    return false;
+  }
+  if (IS_CHESSGROUND) {
+    const status = document.querySelector(".status, .result-wrap, .game__status");
+    if (status) {
+      const text = status.textContent.trim();
+      if (/game over|checkmate|stalemate|draw|resign|time out|abort|½|1-0|0-1/i.test(text)) return true;
+    }
+    if (document.querySelector(".rematch, .game__rematch")) return true;
+    return false;
+  }
+  return false;
+}
+
 function getBoardElement() {
   if (SITE === "chesscom") {
     // Prefer the web component (which has shadowRoot) over the outer .board div
@@ -1259,6 +1313,27 @@ function countPieces(boardFen) {
 
 function readAndSend() {
   if (!boardReady) return;
+
+  // Check if the game has ended — stop analyzing and auto-moving
+  if (detectGameOver()) {
+    if (!gameOver) {
+      gameOver = true;
+      console.log("[chessbot] game over detected — stopping analysis");
+      cancelAutoMove();
+      clearMoveIndicators();
+      pendingEval = false;
+      waitingForOpponent = false;
+      _skipNextBoardChange = false;
+      lastSentFen = "";
+    }
+    return;
+  }
+  // Game was over but now it's not (new game started on same page)
+  if (gameOver) {
+    gameOver = false;
+    console.log("[chessbot] game resumed / new game — re-enabling analysis");
+  }
+
   // Safety valve: if isDragging has been stuck for >5s, force-clear it
   if (isDragging && isDraggingSince && (Date.now() - isDraggingSince > 5000)) {
     console.log("[chessbot] isDragging stuck for >5s — force-clearing");
@@ -1368,6 +1443,7 @@ function readAndSend() {
   const pieceCountJump = prevPieceCount > 0 && pieceCount - prevPieceCount >= 10;
   if (isStartPos || pieceCountJump) {
     console.log("[chessbot] new game detected — resetting state");
+    gameOver = false;
     waitingForOpponent = false;
     lastSentFen = "";
     lastKnownTurn = null;
@@ -4688,6 +4764,12 @@ function scheduleAutoMove(moveUci, lines, fen) {
   // Don't auto-move in training mode
   if (trainingMode) return;
 
+  // Don't auto-move if the game is over
+  if (gameOver || detectGameOver()) {
+    console.log("[chessbot][auto-move] game is over — skipping");
+    return;
+  }
+
   // Don't schedule while waiting for the opponent — prevents premoves
   if (waitingForOpponent) {
     console.log("[chessbot][auto-move] waiting for opponent — skipping");
@@ -4751,6 +4833,12 @@ function scheduleAutoMove(moveUci, lines, fen) {
 
   autoMoveTimer = setTimeout(() => {
     autoMoveTimer = null;
+
+    // Check if game ended while we were waiting
+    if (gameOver || detectGameOver()) {
+      console.log("[chessbot][auto-move] game ended during delay — aborting");
+      return;
+    }
 
     // Re-verify it's still our turn at execution time using multiple methods.
     // This is critical to prevent premoves (making a move during opponent's turn).
