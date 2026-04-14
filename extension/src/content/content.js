@@ -1013,6 +1013,10 @@ function connectWS() {
       if (msg.type === "set_display_mode") {
         if (["arrow", "box", "both"].includes(msg.value)) {
           displayMode = msg.value;
+          // Persist for popup
+          if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+            chrome.storage.local.set({ chessbot_popup_displayMode: msg.value });
+          }
           resendCurrentPosition();
         }
         return;
@@ -5315,6 +5319,14 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       if (["arrow", "box", "both"].includes(val)) {
         displayMode = val;
         console.log(`[chessbot] display mode: ${displayMode}`);
+        // Sync to dashboard via WS
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_display_mode", value: val } }));
+        }
+        // Persist for popup
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ chessbot_popup_displayMode: val });
+        }
         // Re-draw with current data by re-sending position
         resendCurrentPosition();
       }

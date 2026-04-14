@@ -1827,6 +1827,11 @@ function connect() {
       if (chk) chk.checked = !!msg.value;
       saveSettings();
     }
+    if (msg.type === "set_display_mode") {
+      const radio = document.querySelector(`input[name="display-mode"][value="${msg.value}"]`);
+      if (radio) radio.checked = true;
+      saveSettings();
+    }
     if (msg.type === "training_stats_update") {
       const s = msg;
       document.getElementById("training-correct").textContent = s.correct || 0;
