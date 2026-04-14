@@ -7,6 +7,19 @@ function App() {
   const [copied, setCopied] = useState(false)
   const [displayMode, setDisplayMode] = useState('both')
 
+  // Query content script for actual enabled state on mount
+  useEffect(() => {
+    chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]?.id) {
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'get_status' }, (resp) => {
+          if (chrome.runtime.lastError || !resp) return
+          if (typeof resp.enabled === 'boolean') setEnabled(resp.enabled)
+          if (typeof resp.connected === 'boolean') setConnected(resp.connected)
+        })
+      }
+    })
+  }, [])
+
   useEffect(() => {
     let ws
     const check = () => {
@@ -76,7 +89,7 @@ function App() {
     <div className="popup">
       <header className="header">
         <div className="header-left">
-          <div className="logo-icon">♞</div>
+          <img className="logo-icon" src="icons/icon128.png" alt="ChessBot" />
           <span className="title">ChessBot</span>
         </div>
         <div className="status-badge">
