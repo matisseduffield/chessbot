@@ -4407,10 +4407,11 @@ function executeMoveChessCom(from, to, promo) {
 }
 
 /** Chess.com promotion: find and click the promotion piece in the popup. */
-function selectPromotionChessCom(promoChar) {
+function selectPromotionChessCom(promoChar, attempt = 0) {
   // Map promotion letter to class pattern used by chess.com
   const map = { q: "queen", r: "rook", b: "bishop", n: "knight" };
   const pieceName = map[promoChar.toLowerCase()] || "queen";
+  const promoLetter = promoChar.toLowerCase();
 
   // Look in document and shadow root
   const roots = [document];
@@ -4418,18 +4419,33 @@ function selectPromotionChessCom(promoChar) {
   if (board && board.shadowRoot) roots.push(board.shadowRoot);
 
   for (const root of roots) {
-    // chess.com uses .promotion-piece with data-piece or class containing piece name
+    // chess.com uses .promotion-piece with data-piece attribute (e.g. "wq", "br")
     const promoEls = root.querySelectorAll("[class*='promotion'] [class*='piece'], .promotion-piece");
     for (const el of promoEls) {
-      const cls = el.className.toLowerCase();
-      if (cls.includes(pieceName) || cls.includes(promoChar.toLowerCase())) {
+      // Prefer data-piece attribute (most reliable): e.g. "wq", "br"
+      const dataPiece = el.getAttribute("data-piece") || "";
+      if (dataPiece.endsWith(promoLetter)) {
+        el.click();
+        console.log(`[chessbot][auto-move] selected promotion: ${pieceName} (data-piece)`);
+        return;
+      }
+      // Fallback: match piece abbreviation as a class token (e.g. "wq", "bn")
+      // Use regex to avoid false matches like "r" in "promotion"
+      const cls = el.className || "";
+      const pieceAbbrRegex = new RegExp(`\\b[wb]${promoLetter}\\b`, "i");
+      if (cls.toLowerCase().includes(pieceName) || pieceAbbrRegex.test(cls)) {
         el.click();
         console.log(`[chessbot][auto-move] selected promotion: ${pieceName}`);
         return;
       }
     }
   }
-  console.warn(`[chessbot][auto-move] promotion popup not found for ${promoChar}`);
+  // Retry — popup may not have appeared yet
+  if (attempt < 5) {
+    setTimeout(() => selectPromotionChessCom(promoChar, attempt + 1), 150);
+  } else {
+    console.warn(`[chessbot][auto-move] promotion popup not found for ${promoChar}`);
+  }
 }
 
 /** Lichess / PlayStrategy (Chessground): select piece then click destination.
@@ -4489,7 +4505,7 @@ function executeMoveChessground(from, to, promo) {
 }
 
 /** Lichess / PlayStrategy promotion: click the correct piece in the promotion dialog. */
-function selectPromotionChessground(promoChar) {
+function selectPromotionChessground(promoChar, attempt = 0) {
   const roleMap = { q: "queen", r: "rook", b: "bishop", n: "knight" };
   const role = roleMap[promoChar.toLowerCase()] || "queen";
 
@@ -4514,7 +4530,12 @@ function selectPromotionChessground(promoChar) {
       return;
     }
   }
-  console.warn(`[chessbot][auto-move] promotion popup not found for ${promoChar}`);
+  // Retry — popup may not have appeared yet
+  if (attempt < 5) {
+    setTimeout(() => selectPromotionChessground(promoChar, attempt + 1), 150);
+  } else {
+    console.warn(`[chessbot][auto-move] promotion popup not found for ${promoChar}`);
+  }
 }
 
 /** ChessTempo: click source, then click target. */
