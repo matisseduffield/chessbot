@@ -86,6 +86,7 @@ let autoMoveHumanizeChance = 0.1; // probability (0–1) of picking suboptimal m
 let autoMoveTimer = null;    // pending auto-move timeout
 let autoMoveCooldownUntil = 0; // timestamp — block scheduling until this time
 let _skipNextBoardChange = false; // after auto-move, skip the first board change (our own move)
+let _autoMoveFailedFen = ""; // board FEN (position only) where auto-move last failed — skip re-scheduling
 let bulletMode = false; // bullet mode: zero delay, no humanize, fast search
 let variantSwitchUntil = 0; // timestamp — suppress auto-move after variant switch
 
@@ -876,7 +877,17 @@ function connectWS() {
         // Auto-move: schedule the move after drawing overlays (non-streaming only)
         // Suppress during variant switch cooldown — bestmove may be from old variant/engine
         if (autoMoveEnabled && !msg.streaming && msg.bestmove && msg.bestmove !== "(none)" && Date.now() >= variantSwitchUntil) {
-          scheduleAutoMove(msg.bestmove, lines, msg.fen || lastSentFen);
+          // Hard turn gate: verify it's actually our turn before scheduling.
+          // This catches cases where the FEN turn was incorrectly corrected
+          // (e.g. variant pages where turn detection failed and alternation guessed wrong).
+          const moveFen = msg.fen || lastSentFen;
+          const playerColor = getPlayerColor();
+          const fenTurn = moveFen ? moveFen.split(" ")[1] : null;
+          if (fenTurn && playerColor && fenTurn !== playerColor) {
+            console.log(`[chessbot][auto-move] bestmove handler: not our turn (fen=${fenTurn} player=${playerColor}) — skipping`);
+          } else {
+            scheduleAutoMove(msg.bestmove, lines, moveFen);
+          }
         }
       }
     } catch {
@@ -1304,6 +1315,9 @@ function readAndSend() {
     // If we're waiting for the opponent, don't re-analyze the same position
     if (waitingForOpponent || lastSentFen) return;
   } else {
+    // Board position changed — clear failed-move tracker so auto-move can try new positions
+    _autoMoveFailedFen = "";
+
     // Board actually changed. If we just auto-moved, the first board change
     // is our own move being applied — skip analysis and keep waiting.
     if (_skipNextBoardChange) {
@@ -1372,6 +1386,7 @@ function readAndSend() {
     trainingRevealActive = false;
     cancelAutoMove();
     autoMoveCooldownUntil = 0;
+    _autoMoveFailedFen = "";
     if (detectedVariant === "3check") threeCheckRemaining = { w: 3, b: 3 };
   }
 
@@ -4169,6 +4184,9 @@ function fireMouse(target, type, clientX, clientY, opts = {}) {
 /** Fire a synthetic pointer event (needed by some modern boards). */
 function firePointer(target, type, clientX, clientY, opts = {}) {
   if (typeof PointerEvent === "undefined") return;
+  // For mouse input, pressure should be 0.5 when buttons are pressed, 0 otherwise.
+  // Many boards check pressure > 0 to detect actual pointer contact.
+  const isPress = type !== "pointerup" && type !== "pointerleave" && type !== "pointercancel";
   const ev = new PointerEvent(type, {
     bubbles: true, cancelable: true, composed: true, view: window,
     clientX, clientY,
@@ -4177,6 +4195,8 @@ function firePointer(target, type, clientX, clientY, opts = {}) {
     button: 0, buttons: type === "pointerup" ? 0 : 1,
     pointerId: 1, pointerType: "mouse",
     isPrimary: true,
+    pressure: isPress ? 0.5 : 0,
+    width: 1, height: 1,
     ...opts,
   });
   target.dispatchEvent(ev);
@@ -4404,38 +4424,42 @@ function findPocketPieceChessCom(pieceLetter) {
  *  Primary strategy is drag (works on both standard and variant pages).
  *  Fallback is click-click for retry attempts. */
 function executeMoveChessCom(from, to, promo, attemptNum = 1) {
+  // Clear overlays BEFORE computing targets to avoid elementFromPoint hitting our SVGs
+  clearArrow();
+
   const src = getSquareTarget(from.file, from.rank);
   if (!src || !src.target) return false;
   const dst = getSquareTarget(to.file, to.rank);
   if (!dst || !dst.target) return false;
 
-  // Clear overlays before move execution to avoid interfering with event dispatch
-  clearArrow();
-
   try {
     if (attemptNum <= 2) {
       // Primary strategy: drag from source to destination.
-      // Drag is more reliable than click-click because:
-      // - Works on both standard (shadow DOM) and variant (Vue) pages
-      // - Doesn't depend on "selection" state between clicks
-      // All pointer events go to src.target (simulates pointer capture behavior).
+      // All pointer events simulate pointer capture (go to source element with varying coordinates).
       console.log(`[chessbot][auto-move] chess.com: trying drag approach (attempt ${attemptNum})`);
       firePointer(src.target, "pointerdown", src.clientX, src.clientY);
       fireMouse(src.target, "mousedown", src.clientX, src.clientY);
       setTimeout(() => {
         try {
-          firePointer(src.target, "pointermove", dst.clientX, dst.clientY);
+          // Re-query the source square element — Chess.com may re-render after pointerdown
+          // (e.g. piece selection highlight, legal move indicators). The original src.target
+          // may now be a detached DOM node that ignores dispatched events.
+          _geoCache = null;
+          const src2 = getSquareTarget(from.file, from.rank);
+          const moveEl = (src2 && src2.target) ? src2.target : src.target;
+          firePointer(moveEl, "pointermove", dst.clientX, dst.clientY);
           fireMouse(document, "mousemove", dst.clientX, dst.clientY);
           setTimeout(() => {
             try {
-              // pointerup goes to src (pointer capture) with dst coordinates
-              firePointer(src.target, "pointerup", dst.clientX, dst.clientY);
-              fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
+              // pointerup goes to same element (pointer capture) with destination coordinates
+              firePointer(moveEl, "pointerup", dst.clientX, dst.clientY);
+              const dst2 = getSquareTarget(to.file, to.rank);
+              fireMouse((dst2 && dst2.target) ? dst2.target : dst.target, "mouseup", dst.clientX, dst.clientY);
               if (promo) setTimeout(() => selectPromotionChessCom(promo), 200);
             } catch (e) { console.warn("[chessbot][auto-move] drag pointerup failed:", e.message); }
           }, 80);
         } catch (e) { console.warn("[chessbot][auto-move] drag pointermove failed:", e.message); }
-      }, 20);
+      }, 30);
       return true;
     }
 
@@ -4452,6 +4476,7 @@ function executeMoveChessCom(from, to, promo, attemptNum = 1) {
         setTimeout(() => {
           try {
             // Re-fetch destination target (selection may have changed the DOM)
+            _geoCache = null;
             const dst2 = getSquareTarget(to.file, to.rank);
             if (!dst2 || !dst2.target) return;
             firePointer(dst2.target, "pointerdown", dst2.clientX, dst2.clientY);
@@ -4465,7 +4490,7 @@ function executeMoveChessCom(from, to, promo, attemptNum = 1) {
               } catch (e) { console.warn("[chessbot][auto-move] click dst pointerup failed:", e.message); }
             }, 30);
           } catch (e) { console.warn("[chessbot][auto-move] click dst pointerdown failed:", e.message); }
-        }, 50);
+        }, 80);
       } catch (e) { console.warn("[chessbot][auto-move] click src pointerup failed:", e.message); }
     }, 30);
 
@@ -4685,6 +4710,17 @@ function scheduleAutoMove(moveUci, lines, fen) {
     }
   }
 
+  // Don't re-schedule auto-move for a position where all attempts already failed.
+  // This prevents the retry loop: fail → readAndSend → same bestmove → fail → ...
+  // The tracker is cleared when the board changes (new position).
+  if (fen) {
+    const fenBoard = fen.split(" ")[0];
+    if (fenBoard && fenBoard === _autoMoveFailedFen) {
+      console.log("[chessbot][auto-move] skipping — auto-move already failed for this position");
+      return;
+    }
+  }
+
   // Determine which move to actually play
   let finalMove = moveUci;
   if (!bulletMode && autoMoveHumanize && lines && lines.length > 1 && Math.random() < autoMoveHumanizeChance) {
@@ -4804,7 +4840,7 @@ function scheduleAutoMove(moveUci, lines, fen) {
         waitingForOpponent = false;
         _skipNextBoardChange = false;
         autoMoveCooldownUntil = 0;
-        readAndSend();
+        _autoMoveFailedFen = boardBefore; // prevent re-scheduling for this position
         return;
       }
 
@@ -4831,7 +4867,7 @@ function scheduleAutoMove(moveUci, lines, fen) {
           _skipNextBoardChange = false;
           waitingForOpponent = false;
           autoMoveCooldownUntil = 0;
-          readAndSend();
+          _autoMoveFailedFen = boardBefore; // prevent re-scheduling for this position
         }
       }, verifyDelay);
     }
@@ -4845,7 +4881,7 @@ function scheduleAutoMove(moveUci, lines, fen) {
         _skipNextBoardChange = false;
         waitingForOpponent = false;
         autoMoveCooldownUntil = 0;
-        readAndSend();
+        _autoMoveFailedFen = boardBefore; // prevent re-scheduling for this position
       }
     }, bulletMode ? 2000 : 5000);
   }, delay);
