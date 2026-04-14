@@ -1168,6 +1168,16 @@
           </label>
 
           <div id="auto-move-options" class="training-disabled-overlay">
+            <label class="toggle-row" style="margin-top:8px">
+              <span class="toggle-switch">
+                <input type="checkbox" id="chk-bullet-mode">
+                <span class="toggle-track"></span>
+              </span>
+              <span class="toggle-label">Bullet mode (Alt+B)</span>
+            </label>
+            <div class="sub-hint" style="font-size:11px;color:#888;margin:-4px 0 6px 44px">Zero delay, no humanize, fast search (500ms)</div>
+
+            <div id="bullet-dimmed-options">
             <div class="sub-label" style="margin-top:10px">Delay Range (ms)</div>
             <div class="setting-row">
               <span class="setting-label">Min</span>
@@ -1192,6 +1202,7 @@
               <span class="setting-label">Chance</span>
               <input type="range" id="auto-move-humanize-chance" min="0" max="0.5" step="0.05" value="0.1">
               <span class="range-value" id="auto-move-humanize-chance-value">10%</span>
+            </div>
             </div>
           </div>
         </div>
@@ -1343,6 +1354,7 @@ function saveSettings() {
     trainingSound: document.getElementById("chk-training-sound").checked,
     trainingStrict: document.getElementById("chk-training-strict").checked,
     autoMove: document.getElementById("chk-auto-move").checked,
+    bulletMode: document.getElementById("chk-bullet-mode").checked,
     autoMoveDelayMin: parseInt(document.getElementById("auto-move-delay-min").value),
     autoMoveDelayMax: parseInt(document.getElementById("auto-move-delay-max").value),
     autoMoveHumanize: document.getElementById("chk-auto-move-humanize").checked,
@@ -1643,6 +1655,13 @@ function connect() {
     if (msg.type === "set_auto_move") {
       const chk = document.getElementById("chk-auto-move");
       if (chk) chk.checked = !!msg.value;
+      saveSettings();
+    }
+    if (msg.type === "set_bullet_mode") {
+      const chk = document.getElementById("chk-bullet-mode");
+      if (chk) chk.checked = !!msg.value;
+      const dimmed = document.getElementById("bullet-dimmed-options");
+      if (dimmed) dimmed.style.opacity = msg.value ? "0.4" : "1";
       saveSettings();
     }
     if (msg.type === "set_training_mode") {
@@ -2319,6 +2338,15 @@ document.getElementById("chk-auto-move").addEventListener("change", (e) => {
   }
   saveSettings();
 });
+document.getElementById("chk-bullet-mode").addEventListener("change", (e) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_bullet_mode", value: e.target.checked } }));
+  }
+  // Visually dim delay/humanize controls when bullet mode is active
+  const delayHumanize = document.getElementById("bullet-dimmed-options");
+  if (delayHumanize) delayHumanize.style.opacity = e.target.checked ? "0.4" : "1";
+  saveSettings();
+});
 document.getElementById("auto-move-delay-min").addEventListener("input", (e) => {
   document.getElementById("auto-move-delay-min-value").textContent = e.target.value;
 });
@@ -2624,6 +2652,11 @@ function applySettings(msg) {
       const amOpts = document.getElementById("auto-move-options");
       if (saved.autoMove) { amOpts.classList.remove("training-disabled-overlay"); amOpts.classList.add("training-enabled"); }
     }
+    if (saved.bulletMode !== undefined) {
+      document.getElementById("chk-bullet-mode").checked = saved.bulletMode;
+      const dimmed = document.getElementById("bullet-dimmed-options");
+      if (dimmed) dimmed.style.opacity = saved.bulletMode ? "0.4" : "1";
+    }
     if (saved.autoMoveDelayMin !== undefined) {
       document.getElementById("auto-move-delay-min").value = saved.autoMoveDelayMin;
       document.getElementById("auto-move-delay-min-value").textContent = saved.autoMoveDelayMin;
@@ -2688,6 +2721,7 @@ function applySettings(msg) {
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_sound", value: saved.trainingSound !== undefined ? saved.trainingSound : true } }));
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_strict", value: !!saved.trainingStrict } }));
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move", value: !!saved.autoMove } }));
+    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_bullet_mode", value: !!saved.bulletMode } }));
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move_delay", min: saved.autoMoveDelayMin || 500, max: saved.autoMoveDelayMax || 2000 } }));
     ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move_humanize", value: saved.autoMoveHumanize !== undefined ? saved.autoMoveHumanize : true, chance: saved.autoMoveHumanizeChance || 0.1 } }));
     broadcastSearchLimits();

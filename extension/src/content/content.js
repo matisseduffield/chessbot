@@ -85,6 +85,8 @@ let autoMoveHumanize = true; // occasionally pick 2nd/3rd best move
 let autoMoveHumanizeChance = 0.1; // probability (0–1) of picking suboptimal move
 let autoMoveTimer = null;    // pending auto-move timeout
 let autoMoveCooldownUntil = 0; // timestamp — block scheduling until this time
+let _skipNextBoardChange = false; // after auto-move, skip the first board change (our own move)
+let bulletMode = false; // bullet mode: zero delay, no humanize, fast search
 
 // ── 3-check state tracking ───────────────────────────────────
 let threeCheckRemaining = { w: 3, b: 3 }; // checks each side still needs to GIVE to win
@@ -700,6 +702,12 @@ function connectWS() {
         console.log(`[chessbot] auto-move humanize: ${autoMoveHumanize} (chance: ${autoMoveHumanizeChance})`);
         return;
       }
+      if (msg.type === "set_bullet_mode") {
+        bulletMode = !!msg.value;
+        console.log(`[chessbot] bullet mode: ${bulletMode} (from panel)`);
+        if (bulletMode) resendCurrentPosition(); // re-send with fast movetime
+        return;
+      }
       if (msg.type === "set_depth") {
         currentDepth = Number(msg.value) || 15;
         console.log(`[chessbot] depth set to ${currentDepth} (from panel)`);
@@ -878,8 +886,9 @@ function sendFen(fen) {
       console.log(`[chessbot] injected 3check counters: ${counters}`);
     }
   }
-  const msg = { type: "fen", fen, depth: currentDepth };
-  if (searchMovetime) msg.movetime = searchMovetime;
+  const msg = { type: "fen", fen, depth: bulletMode ? 12 : currentDepth };
+  if (bulletMode) { msg.movetime = 500; }
+  else if (searchMovetime) msg.movetime = searchMovetime;
   if (searchNodes) msg.nodes = searchNodes;
   if (detectedVariant) msg.variant = detectedVariant;
   console.log(`[chessbot] → sendFen: ${fen.split(" ").slice(0,2).join(" ")} variant=${detectedVariant || "standard"} depth=${currentDepth}`);
@@ -1262,7 +1271,15 @@ function readAndSend() {
     // If we're waiting for the opponent, don't re-analyze the same position
     if (waitingForOpponent || lastSentFen) return;
   } else {
-    // Board actually changed — clear the opponent-wait flag
+    // Board actually changed. If we just auto-moved, the first board change
+    // is our own move being applied — skip analysis and keep waiting.
+    if (_skipNextBoardChange) {
+      _skipNextBoardChange = false;
+      console.log("[chessbot] board changed after auto-move — skipping own move, waiting for opponent");
+      lastBoardFen = boardPart;
+      lastPieceCount = countPieces(boardPart);
+      return;
+    }
     waitingForOpponent = false;
   }
 
@@ -1313,6 +1330,7 @@ function readAndSend() {
     _variantColorMapKey = null;
     _cachedPlayerColor = null; // reset so flip detection re-runs for new game
     _geoCache = null; // force geometry recomputation with fresh flip detection
+    _skipNextBoardChange = false;
     if (detectedVariant === "3check") threeCheckRemaining = { w: 3, b: 3 };
   }
 
@@ -4548,7 +4566,7 @@ function scheduleAutoMove(moveUci, lines, fen) {
 
   // Determine which move to actually play
   let finalMove = moveUci;
-  if (autoMoveHumanize && lines && lines.length > 1 && Math.random() < autoMoveHumanizeChance) {
+  if (!bulletMode && autoMoveHumanize && lines && lines.length > 1 && Math.random() < autoMoveHumanizeChance) {
     // Pick a random move from the top 3 (weighted toward better moves)
     const candidates = lines.slice(0, Math.min(3, lines.length));
     // Only pick suboptimal if it's not a blunder (within 100cp of best, no mate difference)
@@ -4568,8 +4586,8 @@ function scheduleAutoMove(moveUci, lines, fen) {
     }
   }
 
-  // Random delay within configured range
-  const delay = autoMoveDelayMin + Math.random() * (autoMoveDelayMax - autoMoveDelayMin);
+  // Random delay within configured range (bullet mode: zero delay)
+  const delay = bulletMode ? 0 : autoMoveDelayMin + Math.random() * (autoMoveDelayMax - autoMoveDelayMin);
   const scheduledFen = fen;
 
   console.log(`[chessbot][auto-move] scheduled ${finalMove} in ${Math.round(delay)}ms`);
@@ -4614,6 +4632,8 @@ function scheduleAutoMove(moveUci, lines, fen) {
     // Set cooldown to prevent re-scheduling from intermediate board states
     autoMoveCooldownUntil = Date.now() + 2000;
     waitingForOpponent = true;
+    _skipNextBoardChange = true; // skip analysis of our own move appearing on board
+    lastSentFen = ""; // clear so we don't re-analyze the current position
     executeMove(finalMove);
   }, delay);
 }
@@ -4709,6 +4729,15 @@ document.addEventListener("keydown", (e) => {
       ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move", value: autoMoveEnabled } }));
     }
     if (!autoMoveEnabled) cancelAutoMove();
+  } else if (code === "KeyB") {
+    e.preventDefault();
+    bulletMode = !bulletMode;
+    console.log(`[chessbot] bullet mode: ${bulletMode} (Alt+B)`);
+    showToast(`Bullet mode: ${bulletMode ? "ON" : "OFF"}`);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_bullet_mode", value: bulletMode } }));
+    }
+    if (bulletMode) resendCurrentPosition();
   }
 });
 
@@ -4857,7 +4886,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         `Dragging: ${isDragging}`,
         `Waiting for opponent: ${waitingForOpponent}`,
         `Voice: ${voiceEnabled}`,
-        `Auto-move: ${autoMoveEnabled} (delay: ${autoMoveDelayMin}–${autoMoveDelayMax}ms, humanize: ${autoMoveHumanize})`,
+        `Auto-move: ${autoMoveEnabled} (delay: ${autoMoveDelayMin}–${autoMoveDelayMax}ms, humanize: ${autoMoveHumanize}, bullet: ${bulletMode})`,
         "=== CONTENT SCRIPT LOGS ===",
       ].join("\n");
       sendResponse({ logs: header + "\n" + logBuffer.join("\n") });
@@ -4890,7 +4919,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         `Dragging: ${isDragging}`,
         `Waiting for opponent: ${waitingForOpponent}`,
         `Voice: ${voiceEnabled}`,
-        `Auto-move: ${autoMoveEnabled} (delay: ${autoMoveDelayMin}–${autoMoveDelayMax}ms, humanize: ${autoMoveHumanize})`,
+        `Auto-move: ${autoMoveEnabled} (delay: ${autoMoveDelayMin}–${autoMoveDelayMax}ms, humanize: ${autoMoveHumanize}, bullet: ${bulletMode})`,
         "=== CONTENT SCRIPT LOGS ===",
       ].join("\n");
       const csLogs = csHeader + "\n" + logBuffer.join("\n");
