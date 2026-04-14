@@ -904,8 +904,9 @@ function sendFen(fen) {
       console.log(`[chessbot] injected 3check counters: ${counters}`);
     }
   }
-  const msg = { type: "fen", fen, depth: bulletMode ? 18 : currentDepth };
-  if (!bulletMode && searchMovetime) msg.movetime = searchMovetime;
+  const msg = { type: "fen", fen, depth: bulletMode ? 15 : currentDepth };
+  if (bulletMode) { msg.movetime = 2000; }
+  else if (searchMovetime) msg.movetime = searchMovetime;
   if (searchNodes) msg.nodes = searchNodes;
   if (detectedVariant) msg.variant = detectedVariant;
   console.log(`[chessbot] → sendFen: ${fen.split(" ").slice(0,2).join(" ")} variant=${detectedVariant || "standard"} depth=${currentDepth}`);
@@ -4139,7 +4140,7 @@ function resendCurrentPosition() {
 /** Fire a synthetic mouse event on an element at page-relative coordinates. */
 function fireMouse(target, type, clientX, clientY, opts = {}) {
   const ev = new MouseEvent(type, {
-    bubbles: true, cancelable: true, view: window,
+    bubbles: true, cancelable: true, composed: true, view: window,
     clientX, clientY,
     button: 0, buttons: type === "mouseup" ? 0 : 1,
     ...opts,
@@ -4151,7 +4152,7 @@ function fireMouse(target, type, clientX, clientY, opts = {}) {
 function firePointer(target, type, clientX, clientY, opts = {}) {
   if (typeof PointerEvent === "undefined") return;
   const ev = new PointerEvent(type, {
-    bubbles: true, cancelable: true, view: window,
+    bubbles: true, cancelable: true, composed: true, view: window,
     clientX, clientY,
     button: 0, buttons: type === "pointerup" ? 0 : 1,
     pointerId: 1, pointerType: "mouse",
@@ -4174,13 +4175,12 @@ function getSquareTarget(file, rank) {
   // Determine the actual event target element
   let target;
   if (SITE === "chesscom") {
-    // chess.com: events go to the shadow root's internal board or the element itself
-    const sr = board.shadowRoot;
-    if (sr) {
-      target = sr.elementFromPoint ? sr.elementFromPoint(clientX, clientY) : board;
-    } else {
-      target = document.elementFromPoint(clientX, clientY) || board;
-    }
+    // Chess.com's board component uses coordinate-based hit detection (clientX/clientY),
+    // so the exact target element doesn't matter — only coordinates do.
+    // Using elementFromPoint is unreliable: it can return null when the shadow DOM
+    // hasn't rendered, during animations, or when overlays cover squares.
+    // Always target the board element itself for reliable event delivery.
+    target = board;
   } else {
     target = document.elementFromPoint(clientX, clientY) || board;
   }
@@ -4381,51 +4381,66 @@ function findPocketPieceChessCom(pieceLetter) {
  *  If attemptNum > 1, uses drag approach as alternative strategy. */
 function executeMoveChessCom(from, to, promo, attemptNum = 1) {
   const src = getSquareTarget(from.file, from.rank);
-  if (!src) return false;
+  if (!src || !src.target) return false;
   const dst = getSquareTarget(to.file, to.rank);
-  if (!dst) return false;
+  if (!dst || !dst.target) return false;
 
-  if (attemptNum > 1) {
-    // Alternative strategy: drag from source to destination
-    console.log("[chessbot][auto-move] chess.com: trying drag approach");
+  try {
+    if (attemptNum > 1) {
+      // Alternative strategy: drag from source to destination
+      console.log("[chessbot][auto-move] chess.com: trying drag approach");
+      firePointer(src.target, "pointerdown", src.clientX, src.clientY);
+      fireMouse(src.target, "mousedown", src.clientX, src.clientY);
+      setTimeout(() => {
+        try {
+          firePointer(src.target, "pointermove", dst.clientX, dst.clientY);
+          fireMouse(document, "mousemove", dst.clientX, dst.clientY);
+          setTimeout(() => {
+            try {
+              firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
+              fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
+              if (promo) setTimeout(() => selectPromotionChessCom(promo), 200);
+            } catch (e) { console.warn("[chessbot][auto-move] drag pointerup failed:", e.message); }
+          }, 80);
+        } catch (e) { console.warn("[chessbot][auto-move] drag pointermove failed:", e.message); }
+      }, 20);
+      return true;
+    }
+
+    // Primary strategy: click source, then click destination
     firePointer(src.target, "pointerdown", src.clientX, src.clientY);
     fireMouse(src.target, "mousedown", src.clientX, src.clientY);
     setTimeout(() => {
-      firePointer(src.target, "pointermove", dst.clientX, dst.clientY);
-      fireMouse(document, "mousemove", dst.clientX, dst.clientY);
-      setTimeout(() => {
-        firePointer(dst.target, "pointerup", dst.clientX, dst.clientY);
-        fireMouse(dst.target, "mouseup", dst.clientX, dst.clientY);
-        if (promo) setTimeout(() => selectPromotionChessCom(promo), 200);
-      }, 80);
-    }, 20);
+      try {
+        firePointer(src.target, "pointerup", src.clientX, src.clientY);
+        fireMouse(src.target, "mouseup", src.clientX, src.clientY);
+        fireMouse(src.target, "click", src.clientX, src.clientY);
+
+        setTimeout(() => {
+          try {
+            // Re-fetch destination target (selection may have changed the DOM)
+            const dst2 = getSquareTarget(to.file, to.rank);
+            if (!dst2 || !dst2.target) return;
+            firePointer(dst2.target, "pointerdown", dst2.clientX, dst2.clientY);
+            fireMouse(dst2.target, "mousedown", dst2.clientX, dst2.clientY);
+            setTimeout(() => {
+              try {
+                firePointer(dst2.target, "pointerup", dst2.clientX, dst2.clientY);
+                fireMouse(dst2.target, "mouseup", dst2.clientX, dst2.clientY);
+                fireMouse(dst2.target, "click", dst2.clientX, dst2.clientY);
+                if (promo) setTimeout(() => selectPromotionChessCom(promo), 200);
+              } catch (e) { console.warn("[chessbot][auto-move] click dst pointerup failed:", e.message); }
+            }, 30);
+          } catch (e) { console.warn("[chessbot][auto-move] click dst pointerdown failed:", e.message); }
+        }, 50);
+      } catch (e) { console.warn("[chessbot][auto-move] click src pointerup failed:", e.message); }
+    }, 30);
+
     return true;
+  } catch (e) {
+    console.warn("[chessbot][auto-move] executeMoveChessCom failed:", e.message);
+    return false;
   }
-
-  // Primary strategy: click source, then click destination
-  firePointer(src.target, "pointerdown", src.clientX, src.clientY);
-  fireMouse(src.target, "mousedown", src.clientX, src.clientY);
-  setTimeout(() => {
-    firePointer(src.target, "pointerup", src.clientX, src.clientY);
-    fireMouse(src.target, "mouseup", src.clientX, src.clientY);
-    fireMouse(src.target, "click", src.clientX, src.clientY);
-
-    setTimeout(() => {
-      // Re-fetch destination target (selection may have changed the DOM)
-      const dst2 = getSquareTarget(to.file, to.rank);
-      if (!dst2) return;
-      firePointer(dst2.target, "pointerdown", dst2.clientX, dst2.clientY);
-      fireMouse(dst2.target, "mousedown", dst2.clientX, dst2.clientY);
-      setTimeout(() => {
-        firePointer(dst2.target, "pointerup", dst2.clientX, dst2.clientY);
-        fireMouse(dst2.target, "mouseup", dst2.clientX, dst2.clientY);
-        fireMouse(dst2.target, "click", dst2.clientX, dst2.clientY);
-        if (promo) setTimeout(() => selectPromotionChessCom(promo), 200);
-      }, 30);
-    }, 50);
-  }, 30);
-
-  return true;
 }
 
 /** Chess.com promotion: find and click the promotion piece in the popup. */
@@ -4716,7 +4731,15 @@ function scheduleAutoMove(moveUci, lines, fen) {
     function attemptMove() {
       attempts++;
       console.log(`[chessbot][auto-move] attempt ${attempts}/${maxAttempts} for ${finalMove}`);
-      const moveOk = executeMove(finalMove, attempts);
+
+      let moveOk = false;
+      try {
+        // Clear geometry cache before each attempt to ensure fresh coordinates
+        _geoCache = null;
+        moveOk = executeMove(finalMove, attempts);
+      } catch (e) {
+        console.warn(`[chessbot][auto-move] executeMove threw (attempt ${attempts}):`, e.message);
+      }
 
       if (!moveOk) {
         console.warn(`[chessbot][auto-move] executeMove returned false (attempt ${attempts})`);
