@@ -253,10 +253,177 @@ function detectVariantFromLichessDOM() {
   return null;
 }
 
-/** Return fairy-stockfish 3-check counter string from tracked state. */
+/** Return fairy-stockfish 3-check counter string from tracked state.
+ *  Attempts DOM-based reading first (most reliable), falls back to manual tracking. */
 function getThreeCheckCounters() {
   if (detectedVariant !== "3check") return null;
+  // Prefer DOM-based counters — always up-to-date with the actual game state
+  if (SITE === "chesscom") {
+    const domCounters = readThreeCheckFromDOM();
+    if (domCounters) {
+      // Sync manual tracker so logs stay accurate
+      threeCheckRemaining.w = domCounters.w;
+      threeCheckRemaining.b = domCounters.b;
+    }
+  }
   return `${threeCheckRemaining.w}+${threeCheckRemaining.b}`;
+}
+
+/** Read 3-check remaining counters directly from Chess.com DOM.
+ *  Chess.com variant pages show check indicators as visual elements near the board.
+ *  Returns { w, b } (remaining checks each side needs to give) or null if not found.
+ *
+ *  Common DOM patterns on Chess.com variant pages:
+ *    - Check dots/icons with classes like "check-indicator", "checks", "score"
+ *    - Data attributes like data-checks, data-score
+ *    - SVG/text elements showing "✓✓" or check counts
+ *    - Elements near player clocks showing 0/3, 1/3, 2/3 etc.
+ */
+function readThreeCheckFromDOM() {
+  // Strategy 1: Look for elements with check-related classes or data attributes
+  const checkEls = document.querySelectorAll(
+    "[class*='check-indicator'], [class*='checkIndicator'], [class*='CheckIndicator'], " +
+    "[class*='check-count'], [class*='checkCount'], [class*='CheckCount'], " +
+    "[class*='checks-given'], [class*='checksGiven'], [class*='ChecksGiven'], " +
+    "[class*='three-check'], [class*='threeCheck'], [class*='ThreeCheck'], " +
+    "[data-checks], [data-check-count], [data-score]"
+  );
+  if (checkEls.length > 0) {
+    return parseCheckElements(checkEls);
+  }
+
+  // Strategy 2: Look for small indicator icons near the board (dots, checkmarks)
+  // Chess.com often uses SVG circles or icon fonts
+  const scoreEls = document.querySelectorAll(
+    "[class*='score'] [class*='check'], [class*='Score'] [class*='Check'], " +
+    "[class*='player'] [class*='check'], [class*='Player'] [class*='Check'], " +
+    "[class*='check-mark'], [class*='checkmark'], [class*='Checkmark']"
+  );
+  if (scoreEls.length > 0) {
+    return parseCheckElements(scoreEls);
+  }
+
+  // Strategy 3: Scan for text content patterns like "✓✓" or "2/3" near the board
+  const board = getBoardElement();
+  if (!board) return null;
+  const boardRect = board.getBoundingClientRect();
+  if (boardRect.width <= 0) return null;
+
+  // Look for small elements near the board edges that could be check indicators
+  const nearBoard = document.querySelectorAll("span, div, svg, i");
+  let topCheckCount = 0, bottomCheckCount = 0;
+  const boardMidY = boardRect.top + boardRect.height / 2;
+
+  for (const el of nearBoard) {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    // Must be near the board (within 100px horizontally, within board height vertically)
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    if (cx < boardRect.left - 100 || cx > boardRect.right + 100) continue;
+    if (cy < boardRect.top - 80 || cy > boardRect.bottom + 80) continue;
+
+    const text = el.textContent.trim();
+    const cls = typeof el.className === "string" ? el.className.toLowerCase() : "";
+
+    // Check marks: ✓, ✔, ☑, or CSS-styled dots/circles used as check indicators
+    const checkMarks = (text.match(/[✓✔☑✦✧●]/g) || []).length;
+    if (checkMarks > 0) {
+      if (cy > boardMidY) bottomCheckCount += checkMarks;
+      else topCheckCount += checkMarks;
+      continue;
+    }
+
+    // Numeric patterns: "2/3", "1 / 3", etc.
+    const fracMatch = text.match(/^(\d)\s*\/\s*3$/);
+    if (fracMatch) {
+      const given = parseInt(fracMatch[1]);
+      if (cy > boardMidY) bottomCheckCount = given;
+      else topCheckCount = given;
+      continue;
+    }
+
+    // Class-based indicators: filled/active dots
+    if ((cls.includes("check") || cls.includes("dot") || cls.includes("indicator")) &&
+        (cls.includes("active") || cls.includes("filled") || cls.includes("given"))) {
+      if (cy > boardMidY) bottomCheckCount++;
+      else topCheckCount++;
+    }
+  }
+
+  if (topCheckCount > 0 || bottomCheckCount > 0) {
+    const flipped = board ? isChesscomFlipped(board) : false;
+    // Bottom = our side, top = opponent
+    const wGiven = flipped ? topCheckCount : bottomCheckCount;
+    const bGiven = flipped ? bottomCheckCount : topCheckCount;
+    const result = { w: Math.max(0, 3 - wGiven), b: Math.max(0, 3 - bGiven) };
+    console.log(`[chessbot] 3check DOM read: wGiven=${wGiven} bGiven=${bGiven} → remaining w=${result.w} b=${result.b}`);
+    return result;
+  }
+
+  return null;
+}
+
+/** Parse check indicator elements to extract check counts. */
+function parseCheckElements(elements) {
+  const board = getBoardElement();
+  const flipped = board ? isChesscomFlipped(board) : false;
+  const boardRect = board ? board.getBoundingClientRect() : null;
+  const boardMidY = boardRect ? boardRect.top + boardRect.height / 2 : window.innerHeight / 2;
+
+  let topChecks = 0, bottomChecks = 0;
+  for (const el of elements) {
+    const r = el.getBoundingClientRect();
+    if (r.height === 0) continue;
+    const cy = r.top + r.height / 2;
+
+    // Try data attributes first
+    const dc = el.getAttribute("data-checks") || el.getAttribute("data-check-count") || el.getAttribute("data-score");
+    if (dc !== null) {
+      const val = parseInt(dc);
+      if (!isNaN(val)) {
+        if (cy > boardMidY) bottomChecks = val;
+        else topChecks = val;
+        continue;
+      }
+    }
+
+    // Count children (each child = one check indicator dot)
+    const children = el.children.length;
+    if (children > 0) {
+      // Count "active" or "filled" children
+      let active = 0;
+      for (const child of el.children) {
+        const ccls = typeof child.className === "string" ? child.className.toLowerCase() : "";
+        if (ccls.includes("active") || ccls.includes("filled") || ccls.includes("given") ||
+            ccls.includes("checked") || child.getAttribute("data-active") === "true") {
+          active++;
+        }
+      }
+      const count = active > 0 ? active : children;
+      if (cy > boardMidY) bottomChecks = count;
+      else topChecks = count;
+    } else {
+      // Single element — count as 1 check or parse text
+      const text = el.textContent.trim();
+      const num = parseInt(text);
+      if (!isNaN(num)) {
+        if (cy > boardMidY) bottomChecks = num;
+        else topChecks = num;
+      } else {
+        if (cy > boardMidY) bottomChecks++;
+        else topChecks++;
+      }
+    }
+  }
+
+  if (topChecks > 0 || bottomChecks > 0) {
+    // bottom = player's checks given, top = opponent's checks given
+    const wGiven = flipped ? topChecks : bottomChecks;
+    const bGiven = flipped ? bottomChecks : topChecks;
+    return { w: Math.max(0, 3 - wGiven), b: Math.max(0, 3 - bGiven) };
+  }
+  return null;
 }
 
 /** Check if the king of `kingColor` ("w" or "b") is in check on the given board. */
@@ -313,10 +480,27 @@ function isKingInCheck(boardPart, kingColor) {
 function initThreeCheckFromMoveList() {
   if (detectedVariant !== "3check") return;
   threeCheckRemaining = { w: 3, b: 3 };
-  // Gather move text from all known move list selectors
+
+  // Method 1: Read check indicators directly from Chess.com DOM (variant pages).
+  // Chess.com shows check dots/icons near the board or player area.
+  // Look for elements whose visual appearance or text indicate delivered checks.
+  if (SITE === "chesscom") {
+    const domCounters = readThreeCheckFromDOM();
+    if (domCounters) {
+      threeCheckRemaining.w = domCounters.w;
+      threeCheckRemaining.b = domCounters.b;
+      console.log(`[chessbot] 3check init from DOM: w=${threeCheckRemaining.w} b=${threeCheckRemaining.b}`);
+      return;
+    }
+  }
+
+  // Method 2: Parse move list text for check symbols (+, #)
   const selectors = SITE === "chesscom"
-    ? [".main-line-ply, [data-ply], move-list-ply", ".move-text-component",
-       ".move-list .move, [class*='move-list'] [class*='move']"]
+    ? [".main-line-ply, [data-ply], .move-list-ply", ".move-text-component",
+       ".move-list .move, [class*='move-list'] [class*='move']",
+       // Chess.com variant pages (Vue-based) — broader selectors
+       "[class*='move-text'], [class*='MoveText'], [class*='moveText']",
+       "[class*='notation'] [class*='move'], [class*='Notation'] [class*='Move']"]
     : IS_CHESSGROUND
       ? ["move, m2, .moves kwdb"]
       : [];
@@ -343,6 +527,36 @@ function initThreeCheckFromMoveList() {
     threeCheckRemaining.b = Math.max(0, 3 - bChecks);
   }
   console.log(`[chessbot] 3check init: w=${threeCheckRemaining.w} b=${threeCheckRemaining.b} (from ${moveTexts.length} moves, wChecks=${wChecks} bChecks=${bChecks})`);
+}
+
+/** Re-count checks from the move list DOM. Returns { w, b } remaining or null if move list not found.
+ *  Unlike initThreeCheckFromMoveList(), this doesn't reset counters — just returns the calculated values. */
+function countChecksFromMoveList() {
+  const selectors = SITE === "chesscom"
+    ? [".main-line-ply, [data-ply], .move-list-ply", ".move-text-component",
+       ".move-list .move, [class*='move-list'] [class*='move']",
+       "[class*='move-text'], [class*='MoveText'], [class*='moveText']",
+       "[class*='notation'] [class*='move'], [class*='Notation'] [class*='Move']"]
+    : IS_CHESSGROUND
+      ? ["move, m2, .moves kwdb"]
+      : [];
+  for (const sel of selectors) {
+    const nodes = document.querySelectorAll(sel);
+    const filtered = Array.from(nodes).filter(el => {
+      const t = el.textContent.trim();
+      return t && /[a-hNBRQKO]/.test(t) && !/^\d+\.?$/.test(t);
+    });
+    if (filtered.length > 0) {
+      let wChecks = 0, bChecks = 0;
+      for (let i = 0; i < filtered.length; i++) {
+        if (/[+#]/.test(filtered[i].textContent.trim())) {
+          if (i % 2 === 0) wChecks++; else bChecks++;
+        }
+      }
+      return { w: Math.max(0, 3 - wChecks), b: Math.max(0, 3 - bChecks) };
+    }
+  }
+  return null;
 }
 
 /** Detect if the current page is a puzzle/training page. */
@@ -1465,12 +1679,31 @@ function readAndSend() {
   if (turn) lastKnownTurn = turn;
 
   // 3-check: track check counts by detecting king-in-check from FEN
+  // Also re-read from DOM whenever the board changes (DOM counters are most reliable)
   if (detectedVariant === "3check" && prevBoard && boardPart !== prevBoard) {
-    // effectiveTurn = side that now has to move (their king may be in check)
-    if (isKingInCheck(boardPart, effectiveTurn)) {
-      const checker = effectiveTurn === "w" ? "b" : "w";
-      threeCheckRemaining[checker] = Math.max(0, threeCheckRemaining[checker] - 1);
-      console.log(`[chessbot] 3check: ${checker} gave check! remaining: w=${threeCheckRemaining.w} b=${threeCheckRemaining.b}`);
+    // Prefer DOM-based check counters (always accurate, no tracking drift)
+    const domCounters = SITE === "chesscom" ? readThreeCheckFromDOM() : null;
+    if (domCounters) {
+      if (domCounters.w !== threeCheckRemaining.w || domCounters.b !== threeCheckRemaining.b) {
+        console.log(`[chessbot] 3check: DOM counters updated w=${domCounters.w} b=${domCounters.b} (was w=${threeCheckRemaining.w} b=${threeCheckRemaining.b})`);
+        threeCheckRemaining.w = domCounters.w;
+        threeCheckRemaining.b = domCounters.b;
+      }
+    } else {
+      // Fallback 1: Re-count checks from move list (more reliable than incremental tracking)
+      const mlCounters = countChecksFromMoveList();
+      if (mlCounters) {
+        threeCheckRemaining.w = mlCounters.w;
+        threeCheckRemaining.b = mlCounters.b;
+      } else {
+        // Fallback 2: detect check from FEN diff (incremental tracking)
+        // effectiveTurn = side that now has to move (their king may be in check)
+        if (isKingInCheck(boardPart, effectiveTurn)) {
+          const checker = effectiveTurn === "w" ? "b" : "w";
+          threeCheckRemaining[checker] = Math.max(0, threeCheckRemaining[checker] - 1);
+          console.log(`[chessbot] 3check: ${checker} gave check! remaining: w=${threeCheckRemaining.w} b=${threeCheckRemaining.b}`);
+        }
+      }
     }
   }
 
