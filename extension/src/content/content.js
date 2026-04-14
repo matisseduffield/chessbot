@@ -414,6 +414,8 @@ function onPossibleNavigation() {
   // Notify server of variant change if it changed
   if (newVariant !== oldVariant && ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "switch_variant", variant: newVariant || "chess" }));
+    const label = (newVariant || "standard").replace(/\b\w/g, c => c.toUpperCase());
+    showToast(`Variant: ${label}`);
   }
 
   // Reset board state and re-find the board
@@ -447,7 +449,11 @@ let boardReady = false;
 
 function init() {
   detectedVariant = detectVariant();
-  if (detectedVariant) console.log(`[chessbot] detected variant: ${detectedVariant}`);
+  if (detectedVariant) {
+    console.log(`[chessbot] detected variant: ${detectedVariant}`);
+    const label = detectedVariant.replace(/\b\w/g, c => c.toUpperCase());
+    showToast(`Variant: ${label}`);
+  }
 
   function startAfterRestore() {
     connectWS();
@@ -538,6 +544,8 @@ function initialRead() {
     if (domVariant) {
       detectedVariant = domVariant;
       console.log(`[chessbot] late variant detection from DOM: ${domVariant}`);
+      const label = domVariant.replace(/\b\w/g, c => c.toUpperCase());
+      showToast(`Variant: ${label}`);
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "switch_variant", variant: domVariant }));
       }
