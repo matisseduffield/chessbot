@@ -450,6 +450,27 @@
     color: var(--accent-hover);
     min-width: 30px;
     text-align: right;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: background 0.15s;
+  }
+  .range-value:hover {
+    background: var(--accent-muted);
+  }
+  .range-value input {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent-hover);
+    background: var(--bg-800);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    outline: none;
+    width: 52px;
+    text-align: right;
+    padding: 1px 4px;
+    box-shadow: 0 0 0 3px var(--accent-muted);
   }
 
   /* ── Radio Group (Segmented Control) ── */
@@ -1302,6 +1323,55 @@ let searchNodes = null;    // null = disabled
 function escHtml(s) {
   if (!s) return "";
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// ── Click-to-edit for range value labels ─────────────────
+function makeRangeEditable(sliderId, valueId, opts = {}) {
+  const slider = document.getElementById(sliderId);
+  const valueEl = document.getElementById(valueId);
+  if (!slider || !valueEl) return;
+  const formatFn = opts.format || (v => String(v));
+  const parseFn  = opts.parse  || (v => parseFloat(v));
+  const step = parseFloat(slider.step) || 1;
+
+  valueEl.addEventListener("click", () => {
+    if (valueEl.querySelector("input")) return;
+    // Get current raw numeric value from slider
+    const raw = parseFloat(slider.value);
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.inputMode = "decimal";
+    inp.value = opts.editFormat ? opts.editFormat(raw) : raw;
+    inp.setAttribute("autocomplete", "off");
+    valueEl.textContent = "";
+    valueEl.appendChild(inp);
+    inp.focus();
+    inp.select();
+
+    function commit() {
+      let v = parseFn(inp.value);
+      const min = parseFloat(slider.min);
+      const max = parseFloat(slider.max);
+      if (isNaN(v)) v = raw;
+      v = Math.max(min, Math.min(max, v));
+      // Snap to step
+      v = Math.round(v / step) * step;
+      // Round to avoid floating point noise
+      v = parseFloat(v.toFixed(6));
+      slider.value = v;
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      slider.dispatchEvent(new Event("change", { bubbles: true }));
+      valueEl.textContent = formatFn(v);
+    }
+    function cancel() {
+      valueEl.textContent = formatFn(raw);
+    }
+    inp.addEventListener("blur", commit);
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); inp.removeEventListener("blur", commit); commit(); }
+      if (e.key === "Escape") { e.preventDefault(); inp.removeEventListener("blur", commit); cancel(); }
+    });
+  });
 }
 
 // ── SVG Piece Paths (cburnett style) ─────────────────────
@@ -2484,6 +2554,24 @@ document.getElementById("btn-clear-hash").addEventListener("click", () => {
     ws.send(JSON.stringify({ type: "clear_hash" }));
   }
 });
+
+// ── Make range-value labels click-to-edit ────────────────
+makeRangeEditable("depth-slider", "depth-value", {
+  format: v => (v === 0 ? "∞" : String(v)),
+  editFormat: v => v,
+});
+makeRangeEditable("multipv-slider", "multipv-value");
+makeRangeEditable("time-slider", "time-value");
+makeRangeEditable("threads-slider", "threads-value");
+makeRangeEditable("skill-slider", "skill-value");
+makeRangeEditable("auto-move-delay-min", "auto-move-delay-min-value");
+makeRangeEditable("auto-move-delay-max", "auto-move-delay-max-value");
+makeRangeEditable("auto-move-humanize-chance", "auto-move-humanize-chance-value", {
+  format: v => Math.round(v * 100) + "%",
+  editFormat: v => Math.round(v * 100),
+  parse: v => parseFloat(v) / 100,
+});
+makeRangeEditable("voice-speed-slider", "voice-speed-value");
 
 // ── Sync settings from server ────────────────────────────
 // All engines from the server (unfiltered)
