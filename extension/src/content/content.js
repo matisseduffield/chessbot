@@ -905,8 +905,7 @@ function sendFen(fen) {
     }
   }
   const msg = { type: "fen", fen, depth: bulletMode ? 18 : currentDepth };
-  if (bulletMode) { msg.movetime = 1500; }
-  else if (searchMovetime) msg.movetime = searchMovetime;
+  if (!bulletMode && searchMovetime) msg.movetime = searchMovetime;
   if (searchNodes) msg.nodes = searchNodes;
   if (detectedVariant) msg.variant = detectedVariant;
   console.log(`[chessbot] → sendFen: ${fen.split(" ").slice(0,2).join(" ")} variant=${detectedVariant || "standard"} depth=${currentDepth}`);
