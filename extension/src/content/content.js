@@ -414,6 +414,7 @@ function findBoard() {
   _initialStableAttempts = 0;
   _variantColorMap = null;
   _variantColorMapKey = null;
+  _cachedPlayerColor = null;
   lastKnownTurn = null;
   nullFenCount = 0;
   observedBoardEl = null;
@@ -472,6 +473,10 @@ function initialRead() {
       }
     }
   }
+
+  // Lock player color now — the board has all pieces, giving reliable flip detection.
+  // Must happen AFTER variant detection (which may affect the board element found).
+  lockPlayerColor();
 
   // Initialize 3-check counters from move list (for page refresh mid-game)
   initThreeCheckFromMoveList();
@@ -1209,6 +1214,8 @@ function readAndSend() {
   const animThreshold = detectedVariant === "atomic" ? 10 : 2;
   if (lastPieceCount > 0 && pieceCount < lastPieceCount - animThreshold) {
     console.log(`[chessbot] piece count dropped ${lastPieceCount}→${pieceCount}, likely mid-animation — skipping`);
+    // DON'T update lastBoardFen here — we want the next stable read to see
+    // the real diff from the last confirmed position (prevents double-alternation)
     lastPieceCount = pieceCount;
     return;
   }
@@ -1244,6 +1251,8 @@ function readAndSend() {
     lastSpokenOpening = "";
     _variantColorMap = null;
     _variantColorMapKey = null;
+    _cachedPlayerColor = null; // reset so flip detection re-runs for new game
+    _geoCache = null; // force geometry recomputation with fresh flip detection
     if (detectedVariant === "3check") threeCheckRemaining = { w: 3, b: 3 };
   }
 
@@ -1562,6 +1571,11 @@ function chesscomBoardToFen() {
 }
 
 function isChesscomFlipped(board) {
+  // If player color was already locked (reliable detection at game start),
+  // derive flip state from it — avoids unreliable piece-position heuristics
+  // in endgames with few pieces (e.g. giveaway with 3 pieces left).
+  if (_cachedPlayerColor) return _cachedPlayerColor === "b";
+
   // Method 1: JS property on the custom element (wc-chess-board exposes this)
   try {
     if (board.isFlipped === true || board.flipped === true) return true;
@@ -2468,10 +2482,14 @@ function detectTurnFromClocks() {
   return null; // couldn't determine — let caller decide
 }
 
+let _cachedPlayerColor = null; // locked after first reliable detection
+
 function getPlayerColor() {
-  // Always detect from current board state — no caching.
-  // Chess.com flips the board AFTER rendering the start position,
-  // so caching during transitions produces stale values.
+  // Once locked (after initial board read with enough pieces), return cached value.
+  // This prevents mid-game flips when piece-position heuristics become unreliable
+  // (e.g. giveaway endgame with 3 pieces left).
+  if (_cachedPlayerColor) return _cachedPlayerColor;
+
   let color = "w";
   if (IS_CHESSGROUND) {
     color = isLichessFlipped() ? "b" : "w";
@@ -2482,6 +2500,14 @@ function getPlayerColor() {
     color = isChesstempFlipped() ? "b" : "w";
   }
   return color;
+}
+
+/** Lock player color after a reliable detection (many pieces on board). */
+function lockPlayerColor() {
+  if (_cachedPlayerColor) return; // already locked
+  const color = getPlayerColor();
+  _cachedPlayerColor = color;
+  console.log(`[chessbot] player color locked: ${color}`);
 }
 
 // ── FEN helpers ──────────────────────────────────────────────
