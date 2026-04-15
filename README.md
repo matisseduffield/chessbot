@@ -2,7 +2,7 @@
 
 Real-time chess analysis overlay for online chess sites. A Chrome extension reads the board, sends positions to a local Stockfish backend, and draws best-move arrows directly on the board.
 
-![Dashboard Overview](screenshots/dashboard.png)
+![Dashboard Overview](screenshots/dashboard.png?v=2)
 
 ## Supported Sites
 
