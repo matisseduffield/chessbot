@@ -17,7 +17,7 @@ Real-time chess analysis overlay for online chess sites. A Chrome extension read
 
 ### Board Analysis
 
-![Best-move arrows on Chess.com](screenshots/arrows.png)
+![Best-move arrows on Chess.com](screenshots/arrows.png?v=2)
 
 - **Best-move arrows** — green (engine), gold (opening book), blue (Lichess Masters DB); **red arrows** for losing lines
 - **Multi-PV** — up to 8 candidate lines with eval badges, depth, nodes/NPS
