@@ -3174,52 +3174,53 @@ function drawArrowOnBoard(svg, fromFile, fromRank, toFile, toRank, sqSize, flipp
   const from = squareCenter(fromFile, fromRank, sqSize, flipped);
   const to = squareCenter(toFile, toRank, sqSize, flipped);
 
-  let x2 = to.x, y2 = to.y;
-  const dx = x2 - from.x, dy = y2 - from.y;
+  const dx = to.x - from.x, dy = to.y - from.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 1) return;
+  const ux = dx / dist, uy = dy / dist; // unit vector along arrow
+  const px = -uy, py = ux;              // perpendicular unit vector
 
-  // Shorten line so arrowhead sits near target square edge
-  const shorten = sqSize * 0.35;
-  if (dist > shorten) {
-    const scale = (dist - shorten) / dist;
-    x2 = from.x + dx * scale;
-    y2 = from.y + dy * scale;
-  }
-
-  const strokeW = sqSize / 5;
   const op = opacity || 0.85;
+  const shaftW = sqSize * 0.1;   // half-width of shaft
+  const headW = sqSize * 0.25;   // half-width of arrowhead base
+  const headLen = sqSize * 0.35; // length of arrowhead
 
-  // Line
-  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-  line.setAttribute("x1", from.x);
-  line.setAttribute("y1", from.y);
-  line.setAttribute("x2", x2);
-  line.setAttribute("y2", y2);
-  line.setAttribute("stroke", color);
-  line.setAttribute("stroke-width", strokeW);
-  line.setAttribute("stroke-linecap", "round");
-  line.setAttribute("opacity", op);
-  svg.appendChild(line);
+  // Tip of the arrow (shortened so it doesn't overshoot the square)
+  const tipDist = dist - sqSize * 0.12;
+  const tipX = from.x + ux * tipDist;
+  const tipY = from.y + uy * tipDist;
 
-  // Arrowhead polygon (avoids marker url(#) CSP issues)
-  const adx = x2 - from.x, ady = y2 - from.y;
-  const len = Math.sqrt(adx * adx + ady * ady);
-  if (len < 1) return;
-  const ux = adx / len, uy = ady / len;
-  const headLen = sqSize * 0.38;
-  const headW = sqSize * 0.28;
-  const tipX = x2 + ux * headLen * 0.3;
-  const tipY = y2 + uy * headLen * 0.3;
-  const baseX = x2 - ux * headLen * 0.5;
-  const baseY = y2 - uy * headLen * 0.5;
-  const px = -uy * headW, py = ux * headW;
+  // Where the arrowhead base meets the shaft
+  const neckDist = tipDist - headLen;
+  const neckX = from.x + ux * neckDist;
+  const neckY = from.y + uy * neckDist;
 
-  const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-  polygon.setAttribute("points",
-    `${tipX},${tipY} ${baseX + px},${baseY + py} ${baseX - px},${baseY - py}`);
-  polygon.setAttribute("fill", color);
-  polygon.setAttribute("opacity", op);
-  svg.appendChild(polygon);
+  // Build a single closed path: shaft rectangle + arrowhead triangle
+  const points = [
+    // Start at shaft back-left
+    from.x + px * shaftW, from.y + py * shaftW,
+    // Shaft front-left (neck)
+    neckX + px * shaftW, neckY + py * shaftW,
+    // Arrowhead base left
+    neckX + px * headW, neckY + py * headW,
+    // Tip
+    tipX, tipY,
+    // Arrowhead base right
+    neckX - px * headW, neckY - py * headW,
+    // Shaft front-right (neck)
+    neckX - px * shaftW, neckY - py * shaftW,
+    // Shaft back-right
+    from.x - px * shaftW, from.y - py * shaftW,
+  ];
+
+  const d = `M${points[0]},${points[1]} L${points[2]},${points[3]} L${points[4]},${points[5]} L${points[6]},${points[7]} L${points[8]},${points[9]} L${points[10]},${points[11]} L${points[12]},${points[13]}Z`;
+
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", d);
+  path.setAttribute("fill", color);
+  path.setAttribute("opacity", op);
+  path.setAttribute("filter", "drop-shadow(0 1px 3px rgba(0,0,0,0.4))");
+  svg.appendChild(path);
 }
 
 /** Draw a drop marker on a destination square for drop moves (e.g. P@e4).

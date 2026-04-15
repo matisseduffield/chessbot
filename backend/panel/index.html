@@ -2150,50 +2150,44 @@ function drawArrow(svg, uci, isOurMove, numFiles, numRanks) {
 
   const x1 = fromF * sqSize + sqSize / 2;
   const y1 = fromR * sqSize + sqSize / 2;
-  let x2 = toF * sqSize + sqSize / 2;
-  let y2 = toR * sqSize + sqSize / 2;
+  const x2t = toF * sqSize + sqSize / 2;
+  const y2t = toR * sqSize + sqSize / 2;
 
-  // Shorten so arrowhead sits near target square edge
-  const dx = x2 - x1;
-  const dy = y2 - y1;
+  const dx = x2t - x1, dy = y2t - y1;
   const dist = Math.sqrt(dx * dx + dy * dy);
-  const shorten = sqSize * 0.35;
-  if (dist > shorten) {
-    const scale = (dist - shorten) / dist;
-    x2 = x1 + dx * scale;
-    y2 = y1 + dy * scale;
-  }
+  if (dist < 1) return;
+  const ux = dx / dist, uy = dy / dist;
+  const px = -uy, py = ux;
 
   const color = isOurMove ? "hsla(145,100%,50%,0.8)" : "hsla(350,100%,50%,0.7)";
+  const shaftW = sqSize * 0.1;
+  const headW = sqSize * 0.25;
+  const headLen = sqSize * 0.35;
 
-  const adx = x2 - x1, ady = y2 - y1;
-  const len = Math.sqrt(adx * adx + ady * ady);
-  if (len < 1) return;
-  const ux = adx / len, uy = ady / len;
-  const headLen = sqSize * 0.38;
-  const headW = sqSize * 0.28;
-  const tipX = x2 + ux * headLen * 0.3;
-  const tipY = y2 + uy * headLen * 0.3;
-  const baseX = x2 - ux * headLen * 0.5;
-  const baseY = y2 - uy * headLen * 0.5;
-  const px = -uy * headW, py = ux * headW;
+  const tipDist = dist - sqSize * 0.12;
+  const tipX = x1 + ux * tipDist;
+  const tipY = y1 + uy * tipDist;
+  const neckDist = tipDist - headLen;
+  const neckX = x1 + ux * neckDist;
+  const neckY = y1 + uy * neckDist;
 
-  const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-  polygon.setAttribute("points",
-    `${tipX},${tipY} ${baseX + px},${baseY + py} ${baseX - px},${baseY - py}`);
-  polygon.setAttribute("fill", color);
+  const points = [
+    x1 + px * shaftW, y1 + py * shaftW,
+    neckX + px * shaftW, neckY + py * shaftW,
+    neckX + px * headW, neckY + py * headW,
+    tipX, tipY,
+    neckX - px * headW, neckY - py * headW,
+    neckX - px * shaftW, neckY - py * shaftW,
+    x1 - px * shaftW, y1 - py * shaftW,
+  ];
 
-  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-  line.setAttribute("x1", x1);
-  line.setAttribute("y1", y1);
-  line.setAttribute("x2", x2);
-  line.setAttribute("y2", y2);
-  line.setAttribute("stroke", color);
-  line.setAttribute("stroke-width", sqSize / 5);
-  line.setAttribute("stroke-linecap", "round");
+  const d = `M${points[0]},${points[1]} L${points[2]},${points[3]} L${points[4]},${points[5]} L${points[6]},${points[7]} L${points[8]},${points[9]} L${points[10]},${points[11]} L${points[12]},${points[13]}Z`;
 
-  svg.appendChild(line);
-  svg.appendChild(polygon);
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", d);
+  path.setAttribute("fill", color);
+  path.setAttribute("filter", "drop-shadow(0 1px 3px rgba(0,0,0,0.4))");
+  svg.appendChild(path);
 }
 
 // ── PV Cards ─────────────────────────────────────────────
