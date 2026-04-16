@@ -386,6 +386,22 @@ async function main() {
   }
 
   const app = express();
+
+  // ── CORS / Private Network Access ──────────────────────
+  // Chrome requires a preflight response with Access-Control-Allow-Private-Network
+  // before allowing WebSocket connections from HTTPS pages to localhost.
+  app.use((req, res, next) => {
+    const origin = req.headers.origin || "*";
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
+    next();
+  });
+
   app.use(express.static(path.join(__dirname, "panel")));
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
