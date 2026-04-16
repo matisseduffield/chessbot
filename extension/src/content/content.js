@@ -840,7 +840,49 @@ function initialRead() {
 function connectWS() {
   if (ws && ws.readyState <= 1) return; // CONNECTING or OPEN
 
-  ws = new WebSocket(WS_URL);
+  // Route WebSocket through the background service worker to bypass
+  // Chrome's Private Network Access restrictions (ws://localhost from HTTPS).
+  const port = chrome.runtime.connect({ name: "chessbot-ws" });
+
+  ws = {
+    readyState: 0, // CONNECTING
+    OPEN: 1,
+    CONNECTING: 0,
+    CLOSING: 2,
+    CLOSED: 3,
+    send(data) { try { port.postMessage({ _type: "ws_send", data }); } catch {} },
+    close() { try { port.disconnect(); } catch {} },
+    onopen: null,
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+  };
+
+  port.onMessage.addListener((msg) => {
+    switch (msg._type) {
+      case "ws_open":
+        ws.readyState = 1;
+        if (ws.onopen) ws.onopen();
+        break;
+      case "ws_msg":
+        if (ws.onmessage) ws.onmessage({ data: msg.data });
+        break;
+      case "ws_close":
+        ws.readyState = 3;
+        if (ws.onclose) ws.onclose();
+        break;
+      case "ws_error":
+        if (ws.onerror) ws.onerror({ readyState: ws.readyState });
+        break;
+    }
+  });
+
+  port.onDisconnect.addListener(() => {
+    if (ws.readyState !== 3) {
+      ws.readyState = 3;
+      if (ws.onclose) ws.onclose();
+    }
+  });
 
   ws.onopen = () => {
     console.log(`[chessbot] connected to backend (variant=${detectedVariant || "standard"}, site=${SITE}, url=${location.pathname})`);
