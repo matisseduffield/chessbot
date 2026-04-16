@@ -10,6 +10,7 @@ class StockfishBridge {
     this._stopping = false; // set when stop() is called to suppress exit error
     this._pendingResolve = null;
     this._handleLine = this._defaultLineHandler.bind(this);
+    this._supportedOptions = new Set(); // populated during UCI handshake
     this._settings = {
       Threads: 1,
       Hash: 16,
@@ -73,9 +74,13 @@ class StockfishBridge {
       this._send("uci");
 
       // Wait for "uciok"
+      this._supportedOptions = new Set();
       const onLine = this._handleLine.bind(this);
       this._handleLine = (line) => {
         console.log(`[stockfish] ${line}`);
+        // Collect supported option names during handshake
+        const optMatch = line.match(/^option name (.+?) type /);
+        if (optMatch) this._supportedOptions.add(optMatch[1]);
         if (line === "uciok") {
           this.ready = true;
           this._handleLine = onLine; // restore
@@ -94,8 +99,10 @@ class StockfishBridge {
             console.log(`[stockfish] ${l}`);
             if (l === "readyok") {
               this._handleLine = this._defaultLineHandler.bind(this);
-              // Enable WDL by default
-              this._send("setoption name UCI_ShowWDL value true");
+              // Enable WDL by default (only if engine supports it)
+              if (this._supportedOptions.has("UCI_ShowWDL")) {
+                this._send("setoption name UCI_ShowWDL value true");
+              }
               console.log("[stockfish] engine ready");
               resolve();
             }
@@ -211,6 +218,11 @@ class StockfishBridge {
     ];
     if (!allowed.includes(name)) {
       console.warn(`[stockfish] option "${name}" not in whitelist, ignoring`);
+      return;
+    }
+    // Skip options not supported by the current engine
+    if (this._supportedOptions.size > 0 && !this._supportedOptions.has(name)) {
+      console.log(`[stockfish] option "${name}" not supported by this engine, skipping`);
       return;
     }
     // Sanitize value to prevent UCI command injection via newlines
