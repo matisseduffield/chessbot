@@ -124,14 +124,17 @@ class StockfishBridge {
     return new Promise((resolve, reject) => {
       if (!this.ready) return reject(new Error("Engine not ready"));
 
-      const isInfinite = options.infinite || depth === 0;
+      const hasTimeOrNodeLimit = !!(options.movetime || options.nodes);
+      const isInfinite = (options.infinite || depth === 0) && !hasTimeOrNodeLimit;
       const goParams = [];
       if (isInfinite) {
         goParams.push("infinite");
       } else {
         if (options.movetime) goParams.push(`movetime ${options.movetime}`);
         else if (options.nodes) goParams.push(`nodes ${options.nodes}`);
-        if (depth) goParams.push(`depth ${depth}`);
+        // Only add depth when there's no time/node limit, so the engine
+        // can search as deep as possible within the allotted time.
+        if (!hasTimeOrNodeLimit && depth) goParams.push(`depth ${depth}`);
         // If no limit specified at all, use depth as fallback
         if (!goParams.length) goParams.push(`depth 15`);
       }

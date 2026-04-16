@@ -38,7 +38,11 @@ let evalSentAt = 0;     // timestamp when last eval was sent — for client-side
 const EVAL_TIMEOUT_BASE_MS = 25000; // base timeout for depth ≤15
 /** Dynamic eval timeout: scales with depth (min 25s, +3s per depth above 15, max 180s) */
 function getEvalTimeout() {
-  if (currentDepth === 0) return Infinity; // infinite analysis — no timeout
+  if (currentDepth === 0) {
+    // Infinite depth: if a time limit is set, use that + generous buffer; otherwise no timeout
+    if (searchMovetime) return searchMovetime + 15000;
+    return Infinity;
+  }
   return Math.min(180000, Math.max(EVAL_TIMEOUT_BASE_MS, EVAL_TIMEOUT_BASE_MS + (currentDepth - 15) * 3000));
 }
 let lastPieceCount = 0;  // to detect animation mid-flight (piece count changes)

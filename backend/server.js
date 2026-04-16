@@ -658,8 +658,9 @@ async function main() {
                 }
               };
 
-              // For infinite analysis (depth=0), stream intermediate results
-              if (depth === 0) {
+              // For infinite analysis (depth=0), stream intermediate results.
+              // Only set infinite if there's no movetime/nodes limit.
+              if (depth === 0 && !searchOptions.movetime && !searchOptions.nodes) {
                 searchOptions.infinite = true;
               }
               const result = await engine.evaluate(fen, depth, searchOptions);
