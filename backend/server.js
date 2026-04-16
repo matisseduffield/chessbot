@@ -404,7 +404,21 @@ async function main() {
 
   app.use(express.static(path.join(__dirname, "panel")));
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ server });
+
+  // Handle PNA preflight at the raw HTTP level (before ws upgrade intercepts)
+  server.on("upgrade", (req, socket, head) => {
+    // Log all upgrade attempts for debugging
+    console.log(`[server] WS upgrade from origin=${req.headers.origin || "none"} ip=${req.socket.remoteAddress}`);
+  });
+
+  const wss = new WebSocketServer({
+    server,
+    // Accept connections from any origin
+    verifyClient: (info) => {
+      console.log(`[server] WS verifyClient origin=${info.origin || "none"} secure=${info.secure}`);
+      return true;
+    },
+  });
 
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
