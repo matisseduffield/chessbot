@@ -110,6 +110,14 @@ function setCachedEval(fen, variant, depth, multiPV, result) {
   _evalCache.set(key, { result, ts: Date.now() });
 }
 
+// Periodically purge expired cache entries to prevent memory buildup
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of _evalCache) {
+    if (now - entry.ts > EVAL_CACHE_TTL) _evalCache.delete(key);
+  }
+}, 60_000);
+
 async function main() {
   // ── 0. Load ECO opening database ──────────────────────
   eco.loadEco(path.join(__dirname, "eco"));
@@ -390,9 +398,18 @@ async function main() {
   // ── CORS / Private Network Access ──────────────────────
   // Chrome requires a preflight response with Access-Control-Allow-Private-Network
   // before allowing WebSocket connections from HTTPS pages to localhost.
+  const ALLOWED_ORIGINS = new Set([
+    `http://localhost:${config.port}`,
+    "https://www.chess.com",
+    "https://lichess.org",
+    "https://playstrategy.org",
+    "https://chesstempo.com",
+  ]);
   app.use((req, res, next) => {
-    const origin = req.headers.origin || "*";
-    res.setHeader("Access-Control-Allow-Origin", origin);
+    const origin = req.headers.origin;
+    if (origin && ALLOWED_ORIGINS.has(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+    }
     res.setHeader("Access-Control-Allow-Private-Network", "true");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");

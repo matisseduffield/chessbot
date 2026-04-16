@@ -8,30 +8,46 @@ chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "chessbot-ws") return;
 
   let ws = null;
+  let alive = true; // port still connected
+  let reconnectTimer = null;
+  let backoff = 1000;
 
-  try {
-    ws = new WebSocket(WS_URL);
-  } catch (e) {
-    port.postMessage({ _type: "ws_error" });
-    port.postMessage({ _type: "ws_close" });
-    return;
+  function connect() {
+    if (!alive) return;
+    try {
+      ws = new WebSocket(WS_URL);
+    } catch (e) {
+      scheduleReconnect();
+      return;
+    }
+
+    ws.onopen = () => {
+      backoff = 1000; // reset on success
+      try { port.postMessage({ _type: "ws_open" }); } catch {}
+    };
+
+    ws.onmessage = (e) => {
+      try { port.postMessage({ _type: "ws_msg", data: e.data }); } catch {}
+    };
+
+    ws.onclose = () => {
+      try { port.postMessage({ _type: "ws_close" }); } catch {}
+      scheduleReconnect();
+    };
+
+    ws.onerror = () => {
+      try { port.postMessage({ _type: "ws_error" }); } catch {}
+    };
   }
 
-  ws.onopen = () => {
-    try { port.postMessage({ _type: "ws_open" }); } catch {}
-  };
-
-  ws.onmessage = (e) => {
-    try { port.postMessage({ _type: "ws_msg", data: e.data }); } catch {}
-  };
-
-  ws.onclose = () => {
-    try { port.postMessage({ _type: "ws_close" }); } catch {}
-  };
-
-  ws.onerror = () => {
-    try { port.postMessage({ _type: "ws_error" }); } catch {}
-  };
+  function scheduleReconnect() {
+    if (!alive || reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, backoff);
+    backoff = Math.min(backoff * 1.5, 10000);
+  }
 
   port.onMessage.addListener((msg) => {
     if (msg._type === "ws_send" && ws && ws.readyState === 1) {
@@ -40,10 +56,14 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 
   port.onDisconnect.addListener(() => {
+    alive = false;
+    clearTimeout(reconnectTimer);
     if (ws) {
       ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
       ws.close();
       ws = null;
     }
   });
+
+  connect();
 });

@@ -1167,7 +1167,7 @@ function connectWS() {
     waitingForOpponent = false; // unblock board change detection
     _skipNextBoardChange = false;
     setTimeout(connectWS, wsBackoff);
-    wsBackoff = Math.min(wsBackoff * 1.5, 30000); // exponential backoff, max 30s
+    wsBackoff = Math.min(wsBackoff * 1.5, 10000); // exponential backoff, max 10s
   };
 
   ws.onerror = (e) => {
@@ -1599,8 +1599,8 @@ function readAndSend() {
         console.log("[chessbot] getBoardElement() also returned null");
       }
     }
-    if (nullFenCount >= 15) {
-      console.log("[chessbot] boardToFen() null for 15 cycles — re-finding board");
+    if (nullFenCount >= 8) {
+      console.log("[chessbot] boardToFen() null for 8 cycles — re-finding board");
       nullFenCount = 0;
       boardReady = false;
       observedBoardEl = null;
