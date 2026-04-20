@@ -844,7 +844,18 @@ function initialRead() {
 
 // ── WebSocket ────────────────────────────────────────────────
 function connectWS() {
+  if (contextInvalidated) return;
   if (ws && ws.readyState <= 1) return; // CONNECTING or OPEN
+
+  // Check if extension context is still valid before attempting connect
+  if (!chrome.runtime?.id) {
+    if (!contextInvalidated) {
+      contextInvalidated = true;
+      console.log("[chessbot] extension context invalidated — please refresh the page");
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+    return;
+  }
 
   // Route WebSocket through the background service worker to bypass
   // Chrome's Private Network Access restrictions (ws://localhost from HTTPS).
@@ -853,10 +864,9 @@ function connectWS() {
     port = chrome.runtime.connect({ name: "chessbot-ws" });
   } catch (err) {
     // Extension was reloaded/updated — this content script is orphaned.
-    // Stop all polling/reconnect loops; user needs to refresh the page.
     if (!contextInvalidated) {
       contextInvalidated = true;
-      console.warn("[chessbot] extension context invalidated — please refresh the page");
+      console.log("[chessbot] extension context invalidated — please refresh the page");
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     }
     return;
