@@ -72,6 +72,7 @@
     background: var(--bg-900);
     border-right: 1px solid var(--bg-700);
     overflow: hidden;
+    min-width: 0;
   }
   #board-area {
     padding: 16px 20px;
@@ -1248,11 +1249,17 @@
   #eval-graph-wrap {
     padding: 0 20px;
     flex-shrink: 0;
+    overflow: hidden;
+    max-width: 100%;
+    box-sizing: border-box;
   }
   #eval-graph {
     border-radius: 4px;
     background: var(--bg-800);
     border: 1px solid var(--bg-700);
+    display: block;
+    width: 100%;
+    max-width: 100%;
   }
 
   /* ── Shortcuts Modal ── */
@@ -1328,8 +1335,8 @@
 <div id="layout">
   <!-- Left: Board + PV cards -->
   <div id="left-col">
-    <div id="eval-graph-wrap" style="padding:0 20px;">
-      <canvas id="eval-graph" height="48" style="width:100%;display:block;border-radius:4px;background:var(--bg-800);cursor:crosshair;"></canvas>
+    <div id="eval-graph-wrap">
+      <canvas id="eval-graph" height="48"></canvas>
     </div>
     <div id="board-area">
       <div id="eval-bar-wrap">
