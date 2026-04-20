@@ -339,27 +339,23 @@
     50% { opacity: 0.4; }
   }
 
-  /* Settings grid: 3-column grid of draggable cards */
+  /* Settings container: scrollable with JS masonry positioning */
   .settings-body {
     flex: 1;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-auto-rows: min-content;
-    align-items: start;
-    gap: 0;
+    position: relative;
     overflow-y: auto;
     overflow-x: hidden;
     min-height: 0;
     padding: 0;
   }
 
-  /* Each draggable settings card */
+  /* Each draggable settings card — positioned by layoutMasonry() */
   .settings-group {
+    position: absolute;
     box-sizing: border-box;
     padding: 14px 20px;
     border-bottom: 1px solid var(--bg-750);
     border-right: 1px solid var(--bg-750);
-    position: relative;
     transition: box-shadow 0.2s, background 0.15s;
   }
   .settings-group:hover { background: rgba(255,255,255,0.015); }
@@ -3508,6 +3504,52 @@ document.getElementById("btn-copy-logs").addEventListener("click", async () => {
   }
 });
 
+// ── Masonry Layout ────────────────────────────────────────
+const MASONRY_COLS = 3;
+let _masonryRAF = null;
+
+function layoutMasonry() {
+  const body = document.getElementById("settings-body");
+  if (!body) return;
+  const sections = Array.from(body.querySelectorAll(".settings-group[data-section-id]"));
+  if (!sections.length) return;
+
+  const bodyWidth = body.clientWidth;
+  const colWidth = Math.floor(bodyWidth / MASONRY_COLS);
+  const colHeights = new Array(MASONRY_COLS).fill(0);
+
+  // Measure each section at column width, then position
+  sections.forEach(section => {
+    section.style.width = colWidth + "px";
+    section.style.visibility = "hidden";
+    section.style.position = "absolute";
+    section.style.left = "0";
+    section.style.top = "0";
+  });
+  // Force reflow so heights are measurable
+  body.offsetHeight;
+
+  sections.forEach(section => {
+    const h = section.offsetHeight;
+    const minCol = colHeights.indexOf(Math.min(...colHeights));
+    section.style.left = (minCol * colWidth) + "px";
+    section.style.top = colHeights[minCol] + "px";
+    section.style.visibility = "";
+    colHeights[minCol] += h;
+  });
+
+  // Set container scroll height
+  body.style.minHeight = Math.max(...colHeights) + "px";
+}
+
+function requestMasonryLayout() {
+  if (_masonryRAF) cancelAnimationFrame(_masonryRAF);
+  _masonryRAF = requestAnimationFrame(layoutMasonry);
+}
+
+// Re-layout on resize
+window.addEventListener("resize", requestMasonryLayout);
+
 // ── Drag-and-Drop Section Reorder ─────────────────────────
 const SECTION_ORDER_KEY = "chessbot_section_order";
 let draggedSection = null;
@@ -3597,6 +3639,7 @@ function initDragAndDrop() {
     });
 
     saveSectionOrder();
+    layoutMasonry();
   });
 }
 
@@ -3638,6 +3681,7 @@ function restoreSectionOrder() {
 initThemeGrid();
 initPieceSetSelect();
 initDragAndDrop();
+layoutMasonry();
 connect();
 </script>
 </body>
