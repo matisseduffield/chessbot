@@ -59,7 +59,7 @@
   /* ── Layout: board left, settings right ── */
   #layout {
     display: grid;
-    grid-template-columns: auto 1fr;
+    grid-template-columns: minmax(0, auto) 1fr;
     grid-template-rows: 1fr;
     height: 100vh;
     background: var(--bg-950);
@@ -72,7 +72,8 @@
     background: var(--bg-900);
     border-right: 1px solid var(--bg-700);
     overflow: hidden;
-    min-width: 0;
+    width: min-content;
+    max-width: 620px;
   }
   #board-area {
     padding: 16px 20px;
@@ -1247,10 +1248,9 @@
 
   /* ── Eval Graph ── */
   #eval-graph-wrap {
-    padding: 0 20px;
+    padding: 8px 20px 0;
     flex-shrink: 0;
     overflow: hidden;
-    max-width: 100%;
     box-sizing: border-box;
   }
   #eval-graph {
@@ -1259,7 +1259,7 @@
     border: 1px solid var(--bg-700);
     display: block;
     width: 100%;
-    max-width: 100%;
+    height: 48px;
   }
 
   /* ── Shortcuts Modal ── */
