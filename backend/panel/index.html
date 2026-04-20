@@ -59,7 +59,7 @@
   /* ── Layout: board left, settings right ── */
   #layout {
     display: grid;
-    grid-template-columns: minmax(0, auto) 1fr;
+    grid-template-columns: 480px 1fr;
     grid-template-rows: 1fr;
     height: 100vh;
     overflow: hidden;
@@ -72,9 +72,11 @@
     flex-direction: column;
     background: var(--bg-900);
     border-right: 1px solid var(--bg-700);
-    overflow: hidden;
-    width: min-content;
-    max-width: 620px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    width: 480px;
+    min-width: 480px;
+    flex-shrink: 0;
   }
   #board-area {
     padding: 16px 20px;
@@ -155,14 +157,14 @@
     min-height: 20px;
   }
   #board-svg-container {
-    width: 100%;
-    aspect-ratio: var(--board-aspect, 1);
-    max-width: min(calc(100vh - 160px), 560px);
+    width: 420px;
+    height: 420px;
     position: relative;
     background: var(--bg-700);
     border-radius: var(--radius-md);
     overflow: hidden;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+    flex-shrink: 0;
   }
   #board-svg { width: 100%; height: 100%; display: block; }
 
@@ -1829,13 +1831,16 @@ function renderEvalGraph() {
 
   const n = evalHistory.length;
   const toY = (cp) => {
-    const clamped = Math.max(-clamp, Math.min(clamp, cp));
+    // When flipped (user is black), negate so positive = user's advantage
+    const userCp = (currentData.flipped) ? -cp : cp;
+    const clamped = Math.max(-clamp, Math.min(clamp, userCp));
     return midY - (clamped / clamp) * midY;
   };
 
   if (n === 1) {
     const y = toY(evalHistory[0].cp);
-    const color = evalHistory[0].cp >= 0 ? green : red;
+    const adjCp = currentData.flipped ? -evalHistory[0].cp : evalHistory[0].cp;
+    const color = adjCp >= 0 ? green : red;
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -1848,7 +1853,7 @@ function renderEvalGraph() {
   const step = cw / (n - 1);
   const points = evalHistory.map((e, i) => ({ x: i * step, y: toY(e.cp) }));
 
-  // Green fill (above zero = white advantage)
+  // Green fill (above zero = user's advantage)
   ctx.beginPath();
   ctx.moveTo(points[0].x, midY);
   for (const p of points) {
@@ -1860,7 +1865,7 @@ function renderEvalGraph() {
   ctx.fillStyle = green + "33";
   ctx.fill();
 
-  // Red fill (below zero = black advantage)
+  // Red fill (below zero = opponent's advantage)
   ctx.beginPath();
   ctx.moveTo(points[0].x, midY);
   for (const p of points) {
@@ -1878,7 +1883,8 @@ function renderEvalGraph() {
   for (let i = 1; i < n; i++) {
     ctx.lineTo(points[i].x, points[i].y);
   }
-  ctx.strokeStyle = evalHistory[n - 1].cp >= 0 ? green : red;
+  const lastCp = currentData.flipped ? -evalHistory[n - 1].cp : evalHistory[n - 1].cp;
+  ctx.strokeStyle = lastCp >= 0 ? green : red;
   ctx.lineWidth = 1.5;
   ctx.stroke();
 }
@@ -2429,6 +2435,18 @@ function renderEvalBar() {
   topEl.style.background = "#333";
   scoreEl.style.transform = "";
 
+  // Flip eval bar colors when board is flipped (user plays black)
+  const boardFlipped = currentData.flipped || false;
+  const evalBarTop = document.getElementById("eval-bar-top");
+  const evalBarBot = document.getElementById("eval-bar-bot");
+  if (boardFlipped) {
+    evalBarTop.style.background = "#e8e8e8";
+    evalBarBot.style.background = "#333";
+  } else {
+    evalBarTop.style.background = "#333";
+    evalBarBot.style.background = "#e8e8e8";
+  }
+
   const lines = currentData.lines || [];
   if (!lines.length) {
     topEl.style.height = "50%";
@@ -2450,16 +2468,44 @@ function renderEvalBar() {
     whitePct = Math.min(95, Math.max(5, 50 + cpWhite / 10));
   }
 
-  topEl.style.height = `${100 - whitePct}%`;
-  const scoreText = formatScore(best);
+  // When flipped, white is at top of bar, so top height = whitePct
+  // When not flipped, black is at top, so top height = 100 - whitePct
+  topEl.style.height = boardFlipped ? `${whitePct}%` : `${100 - whitePct}%`;
+  // Show score from user's perspective
+  const turn = currentData.fen ? currentData.fen.split(" ")[1] : "w";
+  let userScore = { ...best };
+  if (boardFlipped) {
+    // User is black — negate score to show from their perspective
+    if (userScore.score !== undefined && userScore.score !== null) {
+      const cpWhiteScore = turn === "w" ? userScore.score : -userScore.score;
+      userScore = { ...userScore, score: -cpWhiteScore };
+    }
+    if (userScore.mate !== undefined && userScore.mate !== null) {
+      const mateWhite = turn === "w" ? userScore.mate : -userScore.mate;
+      userScore = { ...userScore, mate: -mateWhite };
+    }
+  }
+  const scoreText = formatScore(userScore);
   scoreEl.textContent = scoreText;
 
-  if (whitePct > 50) {
-    scoreEl.style.bottom = "4px"; scoreEl.style.top = "auto";
-    scoreEl.style.color = "#333";
+  // Position score label near the side that's winning
+  if (boardFlipped) {
+    if (whitePct > 50) {
+      // White winning, white is at top when flipped
+      scoreEl.style.top = "4px"; scoreEl.style.bottom = "auto";
+      scoreEl.style.color = "#333";
+    } else {
+      scoreEl.style.bottom = "4px"; scoreEl.style.top = "auto";
+      scoreEl.style.color = "#ccc";
+    }
   } else {
-    scoreEl.style.top = "4px"; scoreEl.style.bottom = "auto";
-    scoreEl.style.color = "#ccc";
+    if (whitePct > 50) {
+      scoreEl.style.bottom = "4px"; scoreEl.style.top = "auto";
+      scoreEl.style.color = "#333";
+    } else {
+      scoreEl.style.top = "4px"; scoreEl.style.bottom = "auto";
+      scoreEl.style.color = "#ccc";
+    }
   }
 
   // WDL bar — show win/draw/loss percentages if available
@@ -2468,10 +2514,14 @@ function renderEvalBar() {
     const total = best.wdl.win + best.wdl.draw + best.wdl.loss;
     if (total > 0) {
       const turn = currentData.fen ? currentData.fen.split(" ")[1] : "w";
-      // WDL is from side-to-move; show from white's perspective
-      const w = turn === "w" ? best.wdl.win : best.wdl.loss;
-      const d = best.wdl.draw;
-      const l = turn === "w" ? best.wdl.loss : best.wdl.win;
+      // WDL is from side-to-move; show from user's perspective
+      const wWhite = turn === "w" ? best.wdl.win : best.wdl.loss;
+      const dWhite = best.wdl.draw;
+      const lWhite = turn === "w" ? best.wdl.loss : best.wdl.win;
+      // If board is flipped, user is black — swap win/loss
+      const w = boardFlipped ? lWhite : wWhite;
+      const d = dWhite;
+      const l = boardFlipped ? wWhite : lWhite;
       const wPct = (w / total * 100).toFixed(1);
       const dPct = (d / total * 100).toFixed(1);
       const lPct = (l / total * 100).toFixed(1);
@@ -2545,7 +2595,8 @@ function renderBoard() {
 
   const theme = getBoardColors();
 
-  // Draw squares
+  // Draw squares — flip when user plays black
+  const flipped = currentData.flipped || false;
   for (let r = 0; r < numRanks; r++) {
     for (let f = 0; f < numFiles; f++) {
       const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -2553,12 +2604,15 @@ function renderBoard() {
       rect.setAttribute("y", r * sqSize);
       rect.setAttribute("width", sqSize);
       rect.setAttribute("height", sqSize);
-      rect.setAttribute("fill", (r + f) % 2 === 0 ? theme.light : theme.dark);
+      // Use actual board square color (not visual position)
+      const actualR = flipped ? (numRanks - 1 - r) : r;
+      const actualF = flipped ? (numFiles - 1 - f) : f;
+      rect.setAttribute("fill", (actualR + actualF) % 2 === 0 ? theme.light : theme.dark);
       svg.appendChild(rect);
     }
   }
 
-  // Draw pieces
+  // Draw pieces — flip when user plays black
   const pieceSet = PIECE_SETS[currentPieceSet] || PIECE_SETS.classic;
   const rows = boardPart.split("/");
   for (let r = 0; r < rows.length; r++) {
@@ -2575,8 +2629,11 @@ function renderBoard() {
       }
       if (ch === "+" || ch === "~") continue;
 
-      const tx = f * sqSize;
-      const ty = r * sqSize;
+      // Map FEN position to visual position
+      const visR = flipped ? (numRanks - 1 - r) : r;
+      const visF = flipped ? (numFiles - 1 - f) : f;
+      const tx = visF * sqSize;
+      const ty = visR * sqSize;
 
       if (pieceSet.type === "image") {
         const pieceImg = PIECE_IMG[ch];
