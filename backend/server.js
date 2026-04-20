@@ -97,6 +97,9 @@ function getCachedEval(fen, variant, depth, multiPV) {
   const entry = _evalCache.get(key);
   if (!entry) return null;
   if (Date.now() - entry.ts > EVAL_CACHE_TTL) { _evalCache.delete(key); return null; }
+  // Move to end of Map for LRU eviction
+  _evalCache.delete(key);
+  _evalCache.set(key, entry);
   return entry.result;
 }
 
@@ -501,7 +504,8 @@ async function main() {
         // Basic FEN validation (relaxed for variants like crazyhouse which append [] to board)
         const fenParts = fen.split(" ");
         const boardPart = fenParts[0].replace(/\[.*?\]/, ""); // strip crazyhouse pocket
-        if (fenParts.length < 2 || boardPart.split("/").length !== 8) {
+        const rankCount = boardPart.split("/").length;
+        if (fenParts.length < 2 || rankCount < 1 || rankCount > 16) {
           console.warn(`[server] invalid FEN rejected: ${fen}`);
           safeSend(ws, { type: "error", message: "Invalid FEN" });
           return;
@@ -536,19 +540,19 @@ async function main() {
         else if (config.searchNodes) searchOptions.nodes = Number(config.searchNodes);
         const gen = ++evalGeneration;
         const variantGen = globalVariantGen; // snapshot for staleness check
-        console.log(`[server] ← FEN (gen ${gen}): ${fen} [variant: ${currentVariant}]`);
-
-        // Abort any in-progress evaluation so Stockfish responds immediately
-        const abortDone = engine.abort();
+        const evalVariant = currentVariant; // snapshot variant for this eval (prevents stale reads)
+        console.log(`[server] ← FEN (gen ${gen}): ${fen} [variant: ${evalVariant}]`);
 
         // Queue the evaluation so requests are processed one at a time.
         // acquireEvalLock() serializes access to the shared engine across all clients.
         evaluationQueue = evaluationQueue
-          .then(() => abortDone) // wait for abort to fully complete
           .then(async () => {
             // If client disconnected, bail — prevents stale queue handlers
             // from racing with a new client's evaluations on the shared engine.
             if (ws.readyState !== ws.OPEN) return;
+
+            // Abort any in-progress evaluation now that we own the queue slot
+            await engine.abort();
 
             // If an engine/variant switch is in progress, wait for it
             if (engineSwitchPromise) {
@@ -563,7 +567,7 @@ async function main() {
             }
 
             // Look up ECO for current position (standard chess only)
-            const isStandard = currentVariant === "chess" || currentVariant === "chess960";
+            const isStandard = evalVariant === "chess" || evalVariant === "chess960";
             const posEco = isStandard ? getEco(fen) : null;
 
             // Try opening book first (standard chess only, skip for deep positions)
@@ -578,7 +582,7 @@ async function main() {
                   bestmove: bookMove,
                   source: "book",
                   fen,
-                  variant: currentVariant,
+                  variant: evalVariant,
                   eco: posEco ? posEco.name : null,
                   ecoCode: posEco ? posEco.code : null,
                 };
@@ -597,7 +601,7 @@ async function main() {
                   bestmove: lichessMove,
                   source: "lichess",
                   fen,
-                  variant: currentVariant,
+                  variant: evalVariant,
                   eco: posEco ? posEco.name : null,
                   ecoCode: posEco ? posEco.code : null,
                 };
@@ -610,7 +614,7 @@ async function main() {
             // Fall back to Stockfish — check eval cache first (skip for infinite analysis)
             const multiPV = Number(engine.getSettings().MultiPV) || 1;
             if (depth > 0) {
-              const cached = getCachedEval(fen, currentVariant, depth, multiPV);
+              const cached = getCachedEval(fen, evalVariant, depth, multiPV);
               if (cached) {
                 console.log(`[server] → bestmove (cache): ${cached.bestmove}`);
                 const cacheMsg = {
@@ -619,7 +623,7 @@ async function main() {
                   lines: cached.lines,
                   source: "engine",
                   fen,
-                  variant: currentVariant,
+                  variant: evalVariant,
                   eco: posEco ? posEco.name : null,
                   ecoCode: posEco ? posEco.code : null,
                   tablebase: cached.tablebase,
@@ -651,7 +655,7 @@ async function main() {
                     source: "engine",
                     depth: d,
                     fen,
-                    variant: currentVariant,
+                    variant: evalVariant,
                     eco: posEco ? posEco.name : null,
                     ecoCode: posEco ? posEco.code : null,
                     streaming: true,
@@ -713,14 +717,14 @@ async function main() {
                 lines: enrichedLines,
                 source: "engine",
                 fen,
-                variant: currentVariant,
+                variant: evalVariant,
                 eco: posEco ? posEco.name : null,
                 ecoCode: posEco ? posEco.code : null,
                 tablebase: tbResult,
               };
               // Cache the result for future lookups (skip infinite analysis)
               if (depth > 0 && result.bestmove) {
-                setCachedEval(fen, currentVariant, depth, multiPV, {
+                setCachedEval(fen, evalVariant, depth, multiPV, {
                   bestmove: result.bestmove,
                   lines: enrichedLines,
                   tablebase: tbResult,
@@ -868,6 +872,9 @@ async function main() {
           return;
         }
         console.log(`[server] switching engine to: ${found.name}`);
+        const prevPath = config.stockfishPath;
+        const prevType = currentEngineType;
+        engineSwitchLock = true;
         try {
           // Preserve user settings across engine switch
           const savedSettings = engine.getSettings();
@@ -891,7 +898,19 @@ async function main() {
           safeSend(ws, { type: "engine_switched", name: found.name });
         } catch (err) {
           console.error(`[server] failed to switch engine: ${err.message}`);
+          // Rollback: restore previous engine
+          config.stockfishPath = prevPath;
+          currentEngineType = prevType;
+          try {
+            engine = new StockfishBridge();
+            await engine.start();
+            console.log("[server] rolled back to previous engine successfully");
+          } catch (rollbackErr) {
+            console.error("[server] CRITICAL: rollback also failed:", rollbackErr.message);
+          }
           safeSend(ws, { type: "error", message: `Failed to start ${msg.name}: ${err.message}` });
+        } finally {
+          engineSwitchLock = false;
         }
       }
 
@@ -960,6 +979,10 @@ async function main() {
       console.log(`[server] client disconnected (${remote})`);
       evalGeneration++; // discard any in-flight evals for this client
     });
+
+    ws.on("error", (err) => {
+      console.error(`[server] WebSocket error (${remote}):`, err.message);
+    });
   });
 
   // ── 4. Graceful shutdown ───────────────────────────────
@@ -968,6 +991,11 @@ async function main() {
     engine.stop();
     book.close();
     wss.close(() => process.exit(0));
+    // Force exit after 5s if graceful close hangs
+    setTimeout(() => {
+      console.error("[server] shutdown timeout — forcing exit");
+      process.exit(1);
+    }, 5000).unref();
   }
 
   process.on("SIGINT", shutdown);

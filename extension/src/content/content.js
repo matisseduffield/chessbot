@@ -846,7 +846,17 @@ function connectWS() {
 
   // Route WebSocket through the background service worker to bypass
   // Chrome's Private Network Access restrictions (ws://localhost from HTTPS).
-  const port = chrome.runtime.connect({ name: "chessbot-ws" });
+  let port;
+  try {
+    port = chrome.runtime.connect({ name: "chessbot-ws" });
+  } catch (err) {
+    // Extension was reloaded/updated — this content script is orphaned.
+    // Stop retrying; user needs to refresh the page.
+    console.warn("[chessbot] extension context invalidated — please refresh the page");
+    return;
+  }
+
+  const _listeners = {}; // event name → Set of handlers
 
   ws = {
     readyState: 0, // CONNECTING
@@ -860,6 +870,16 @@ function connectWS() {
     onmessage: null,
     onclose: null,
     onerror: null,
+    addEventListener(type, handler) {
+      if (!_listeners[type]) _listeners[type] = new Set();
+      _listeners[type].add(handler);
+    },
+    removeEventListener(type, handler) {
+      if (_listeners[type]) _listeners[type].delete(handler);
+    },
+    _emit(type, event) {
+      if (_listeners[type]) for (const fn of _listeners[type]) { try { fn(event); } catch {} }
+    },
   };
 
   port.onMessage.addListener((msg) => {
@@ -867,17 +887,25 @@ function connectWS() {
       case "ws_open":
         ws.readyState = 1;
         if (ws.onopen) ws.onopen();
+        ws._emit("open", {});
         break;
-      case "ws_msg":
-        if (ws.onmessage) ws.onmessage({ data: msg.data });
+      case "ws_msg": {
+        const evt = { data: msg.data };
+        if (ws.onmessage) ws.onmessage(evt);
+        ws._emit("message", evt);
         break;
+      }
       case "ws_close":
         ws.readyState = 3;
         if (ws.onclose) ws.onclose();
+        ws._emit("close", {});
         break;
-      case "ws_error":
-        if (ws.onerror) ws.onerror({ readyState: ws.readyState });
+      case "ws_error": {
+        const errEvt = { readyState: ws.readyState };
+        if (ws.onerror) ws.onerror(errEvt);
+        ws._emit("error", errEvt);
         break;
+      }
     }
   });
 
@@ -885,6 +913,7 @@ function connectWS() {
     if (ws.readyState !== 3) {
       ws.readyState = 3;
       if (ws.onclose) ws.onclose();
+      ws._emit("close", {});
     }
   });
 
@@ -990,7 +1019,6 @@ function connectWS() {
       if (msg.type === "set_bullet_mode") {
         bulletMode = !!msg.value;
         console.log(`[chessbot] bullet mode: ${bulletMode} (from panel)`);
-        if (bulletMode) resendCurrentPosition(); // re-send with fast movetime
         return;
       }
       if (msg.type === "set_depth") {
@@ -1194,9 +1222,8 @@ function sendFen(fen) {
       console.log(`[chessbot] injected 3check counters: ${counters}`);
     }
   }
-  const msg = { type: "fen", fen, depth: bulletMode ? 15 : currentDepth };
-  if (bulletMode) { msg.movetime = 2000; }
-  else if (searchMovetime) msg.movetime = searchMovetime;
+  const msg = { type: "fen", fen, depth: currentDepth };
+  if (searchMovetime) msg.movetime = searchMovetime;
   if (searchNodes) msg.nodes = searchNodes;
   if (detectedVariant) msg.variant = detectedVariant;
   console.log(`[chessbot] → sendFen: ${fen.split(" ").slice(0,2).join(" ")} variant=${detectedVariant || "standard"} depth=${currentDepth}`);
@@ -1372,7 +1399,7 @@ function observeBoard(boardEl) {
     if (dominated) return;
     lastMutationTime = Date.now();
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(readAndSend, bulletMode ? 150 : 400);
+    debounceTimer = setTimeout(readAndSend, bulletMode ? 100 : 400);
   });
 
   // Observe the board element AND its shadow root if available
@@ -1469,7 +1496,7 @@ function observeBoard(boardEl) {
           if (dominated) return;
           lastMutationTime = Date.now();
           clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(readAndSend, bulletMode ? 150 : 400);
+          debounceTimer = setTimeout(readAndSend, bulletMode ? 100 : 400);
         });
         const targets = [currentBoard];
         if (currentBoard.shadowRoot) targets.push(currentBoard.shadowRoot);
@@ -2438,7 +2465,7 @@ function lichessBoardToFen() {
     if (piece.classList.contains("ghost")) continue;
     // Lichess uses CSS transform: translate(…) for positioning
     const transform = piece.style.transform;
-    const match = transform && transform.match(/translate\((\d+(?:\.\d+)?)px\s*,\s*(\d+(?:\.\d+)?)px\)/);
+    const match = transform && transform.match(/translate\((-?\d+(?:\.\d+)?)px\s*,\s*(-?\d+(?:\.\d+)?)px\)/);
     if (!match) continue;
 
     const px = parseFloat(match[1]);
@@ -2505,7 +2532,7 @@ function playstrategyBoardToFen() {
   for (const piece of pieces) {
     if (piece.classList.contains("ghost")) continue;
     const transform = piece.style.transform;
-    const match = transform && transform.match(/translate\((\d+(?:\.\d+)?)px\s*,\s*(\d+(?:\.\d+)?)px\)/);
+    const match = transform && transform.match(/translate\((-?\d+(?:\.\d+)?)px\s*,\s*(-?\d+(?:\.\d+)?)px\)/);
     if (!match) continue;
 
     const px = parseFloat(match[1]);
@@ -5084,7 +5111,7 @@ function scheduleAutoMove(moveUci, lines, fen) {
   }
 
   // Random delay within configured range (bullet mode: small delay to let DOM settle)
-  const delay = bulletMode ? 150 : autoMoveDelayMin + Math.random() * (autoMoveDelayMax - autoMoveDelayMin);
+  const delay = bulletMode ? 100 : autoMoveDelayMin + Math.random() * (autoMoveDelayMax - autoMoveDelayMin);
   const scheduledFen = fen;
 
   console.log(`[chessbot][auto-move] scheduled ${finalMove} in ${Math.round(delay)}ms`);
@@ -5150,7 +5177,7 @@ function scheduleAutoMove(moveUci, lines, fen) {
     }
 
     // Set cooldown to prevent re-scheduling from intermediate board states
-    autoMoveCooldownUntil = Date.now() + (bulletMode ? 500 : 2000);
+    autoMoveCooldownUntil = Date.now() + (bulletMode ? 300 : 2000);
     waitingForOpponent = true;
     _skipNextBoardChange = true; // skip analysis of our own move appearing on board
     lastSentFen = ""; // clear so we don't re-analyze the current position
@@ -5332,7 +5359,6 @@ document.addEventListener("keydown", (e) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_bullet_mode", value: bulletMode } }));
     }
-    if (bulletMode) resendCurrentPosition();
   }
 });
 
@@ -5346,7 +5372,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       if (enabled) readAndSend();
     }
     if (msg.type === "set_voice") {
-      voiceEnabled = !!msg.enabled;
+      voiceEnabled = !!msg.enabled || !!msg.value;
       console.log(`[chessbot] voice ${voiceEnabled ? "enabled" : "disabled"}`);
     }
     if (msg.type === "set_run_engine_for") {
@@ -5382,10 +5408,6 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       showOpponentResponse = !!msg.value;
       console.log(`[chessbot] show opponent response: ${showOpponentResponse}`);
       resendCurrentPosition();
-    }
-    if (msg.type === "set_voice") {
-      voiceEnabled = !!msg.value;
-      console.log(`[chessbot] voice: ${voiceEnabled}`);
     }
     if (msg.type === "set_voice_eval") {
       voiceEvalEnabled = !!msg.value;

@@ -6,9 +6,12 @@ class StockfishBridge {
   constructor() {
     this.process = null;
     this.ready = false;
+    this._processGen = 0; // incremented on each spawn to discard stale exit events
     this._restartPromise = null; // set while engine is restarting
+    this._stopped = false; // set by stop() to prevent _restart() from reviving
     this._stopping = false; // set when stop() is called to suppress exit error
     this._pendingResolve = null;
+    this._pendingReject = null;
     this._handleLine = this._defaultLineHandler.bind(this);
     this._supportedOptions = new Set(); // populated during UCI handshake
     this._settings = {
@@ -22,26 +25,46 @@ class StockfishBridge {
 
   /** Spawn Stockfish and wait for the initial UCI handshake. */
   start() {
+    this._stopped = false;
+    const gen = ++this._processGen;
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = (fn, val) => { if (!settled) { settled = true; fn(val); } };
+
       console.log(`[stockfish] spawning: ${config.stockfishPath}`);
       this.process = spawn(config.stockfishPath);
 
+      // Catch EPIPE / broken pipe on stdin to prevent crashing Node
+      this.process.stdin.on("error", (err) => {
+        console.error("[stockfish] stdin error:", err.message);
+      });
+
       this.process.on("error", (err) => {
         console.error("[stockfish] failed to start:", err.message);
-        reject(err);
+        settle(reject, err);
       });
 
       this.process.on("exit", (code, signal) => {
+        // Discard exit events from old processes (race with _restart)
+        if (gen !== this._processGen) return;
         if (this._stopping) {
           this._stopping = false;
           return; // Expected exit from stop()
         }
         console.error(`[stockfish] process exited unexpectedly (code=${code}, signal=${signal})`);
         this.ready = false;
+        this.process = null;
+        // Clear any in-flight timers to prevent them firing on a dead process
+        clearTimeout(this._evalTimeout);
+        clearTimeout(this._stopFallback);
+        clearTimeout(this._abortTimeout);
+        // If we were still in the handshake, reject the start() promise
+        settle(reject, new Error(`Engine exited during startup (code=${code})`));
         // Force-resolve any pending evaluation so the queue doesn't deadlock
         if (this._pendingResolve) {
           const res = this._pendingResolve;
           this._pendingResolve = null;
+          this._pendingReject = null;
           this._pendingPV = null;
           res({ bestmove: null, lines: [] });
         }
@@ -49,6 +72,8 @@ class StockfishBridge {
           this._abortResolve();
           this._abortResolve = null;
         }
+        // Auto-restart the engine so subsequent evaluations work
+        if (!this._stopped) this._restart();
       });
 
       this.process.stderr.on("data", (data) => {
@@ -58,6 +83,8 @@ class StockfishBridge {
       let buffer = "";
 
       this.process.stdout.on("data", (chunk) => {
+        // Discard stdout from old processes
+        if (gen !== this._processGen) return;
         buffer += chunk.toString();
         const lines = buffer.split("\n");
         // Keep the last (possibly incomplete) line in the buffer
@@ -70,12 +97,21 @@ class StockfishBridge {
         }
       });
 
+      // Handshake timeout: if engine never responds, reject after 15s
+      const handshakeTimeout = setTimeout(() => {
+        if (!settled) {
+          console.error("[stockfish] UCI handshake timeout (15s) — killing engine");
+          try { if (this.process) this.process.kill("SIGKILL"); } catch {}
+          settle(reject, new Error("UCI handshake timeout"));
+        }
+      }, 15_000);
+
       // Kick off UCI handshake
       this._send("uci");
 
       // Wait for "uciok"
       this._supportedOptions = new Set();
-      const onLine = this._handleLine.bind(this);
+      const onLine = this._handleLine;
       this._handleLine = (line) => {
         console.log(`[stockfish] ${line}`);
         // Collect supported option names during handshake
@@ -98,13 +134,14 @@ class StockfishBridge {
           this._handleLine = (l) => {
             console.log(`[stockfish] ${l}`);
             if (l === "readyok") {
+              clearTimeout(handshakeTimeout);
               this._handleLine = this._defaultLineHandler.bind(this);
               // Enable WDL by default (only if engine supports it)
               if (this._supportedOptions.has("UCI_ShowWDL")) {
                 this._send("setoption name UCI_ShowWDL value true");
               }
               console.log("[stockfish] engine ready");
-              resolve();
+              settle(resolve);
             }
           };
         }
@@ -124,6 +161,15 @@ class StockfishBridge {
     return new Promise((resolve, reject) => {
       if (!this.ready) return reject(new Error("Engine not ready"));
 
+      // Reject any previously pending evaluation to prevent promise leaks
+      if (this._pendingResolve) {
+        const oldReject = this._pendingReject;
+        this._pendingResolve = null;
+        this._pendingReject = null;
+        this._pendingPV = null;
+        if (oldReject) oldReject(new Error("Superseded by new evaluation"));
+      }
+
       const hasTimeOrNodeLimit = !!(options.movetime || options.nodes);
       const isInfinite = (options.infinite || depth === 0) && !hasTimeOrNodeLimit;
       const goParams = [];
@@ -132,9 +178,9 @@ class StockfishBridge {
       } else {
         if (options.movetime) goParams.push(`movetime ${options.movetime}`);
         else if (options.nodes) goParams.push(`nodes ${options.nodes}`);
-        // Only add depth when there's no time/node limit, so the engine
-        // can search as deep as possible within the allotted time.
-        if (!hasTimeOrNodeLimit && depth) goParams.push(`depth ${depth}`);
+        // Always send depth when set — Stockfish respects whichever
+        // limit (depth OR time/nodes) is reached first.
+        if (depth) goParams.push(`depth ${depth}`);
         // If no limit specified at all, use depth as fallback
         if (!goParams.length) goParams.push(`depth 15`);
       }
@@ -145,6 +191,7 @@ class StockfishBridge {
       const pvLines = {}; // multipv index → latest info at highest depth
 
       this._pendingResolve = resolve;
+      this._pendingReject = reject;
       this._pendingPV = pvLines;
       this._pendingMultiPV = multiPV;
       this._pendingTargetDepth = depth;
@@ -184,6 +231,8 @@ class StockfishBridge {
   /** Abort the current evaluation. Stockfish will emit bestmove immediately.
    *  Returns a promise that resolves once the bestmove response is consumed. */
   abort() {
+    // Clear stale abort timeout from a previous abort call
+    clearTimeout(this._abortTimeout);
     // Resolve any previously pending abort promise to prevent queue deadlock.
     if (this._abortResolve) {
       this._abortResolve();
@@ -250,6 +299,7 @@ class StockfishBridge {
 
   /** Stop the engine process. */
   stop() {
+    this._stopped = true; // prevent _restart() from reviving
     // Clear any in-flight timers to prevent them firing on a dead process
     clearTimeout(this._evalTimeout);
     clearTimeout(this._stopFallback);
@@ -257,6 +307,7 @@ class StockfishBridge {
     if (this._pendingResolve) {
       const res = this._pendingResolve;
       this._pendingResolve = null;
+      this._pendingReject = null;
       this._pendingPV = null;
       res({ bestmove: null, lines: [] });
     }
@@ -266,15 +317,21 @@ class StockfishBridge {
     }
     if (this.process) {
       this._stopping = true;
+      const proc = this.process;
       this._send("quit");
       this.process = null;
       this.ready = false;
+      // Force-kill fallback if quit doesn't work within 2s
+      setTimeout(() => {
+        try { if (!proc.killed) proc.kill("SIGKILL"); } catch {}
+      }, 2000);
       console.log("[stockfish] stopped");
     }
   }
 
   /** Kill and restart the engine after it becomes unresponsive. */
   _restart() {
+    if (this._stopped) return Promise.resolve(); // stop() was called, don't revive
     if (this._restartPromise) return this._restartPromise;
     this._restartPromise = (async () => {
       console.log("[stockfish] restarting engine...");
@@ -290,11 +347,15 @@ class StockfishBridge {
           this._send(`setoption name ${name} value ${value}`);
         }
         // Wait for engine to acknowledge all options before declaring ready
-        await new Promise((resolve) => {
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error("isready timeout during restart"));
+          }, 10_000);
           this._send("isready");
           const prev = this._handleLine;
           this._handleLine = (line) => {
             if (line === "readyok") {
+              clearTimeout(timeout);
               this._handleLine = prev;
               resolve();
             } else {
@@ -317,7 +378,11 @@ class StockfishBridge {
   _send(cmd) {
     if (!this.process) return;
     console.log(`[stockfish] >>> ${cmd}`);
-    this.process.stdin.write(cmd + "\n");
+    try {
+      this.process.stdin.write(cmd + "\n");
+    } catch (err) {
+      console.error("[stockfish] stdin write error:", err.message);
+    }
   }
 
   _defaultLineHandler(line) {

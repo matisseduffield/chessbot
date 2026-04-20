@@ -8,11 +8,15 @@ function loadEco(dir) {
     console.log("[eco] directory not found:", dir);
     return;
   }
+  openings.clear(); // clear previous entries on reload
   let count = 0;
   for (const file of fs.readdirSync(dir)) {
     if (!file.endsWith(".tsv")) continue;
     const full = path.join(dir, file);
-    const lines = fs.readFileSync(full, "utf-8").split("\n");
+    let content = fs.readFileSync(full, "utf-8");
+    // Strip BOM prefix that prevents first entry from matching
+    if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
+    const lines = content.split("\n");
     for (let i = 1; i < lines.length; i++) {
       const parts = lines[i].split("\t");
       if (parts.length >= 3) {
