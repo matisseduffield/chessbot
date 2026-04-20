@@ -145,6 +145,8 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+    min-width: 0;
+    overflow: hidden;
   }
   #eco-label {
     font-size: 13px;
@@ -1158,6 +1160,8 @@
     background: var(--bg-800);
     border: 1px solid var(--bg-700);
     gap: 8px;
+    overflow: hidden;
+    max-width: 100%;
   }
   .player-bar-name {
     font-weight: 700;
@@ -1169,11 +1173,7 @@
     flex: 1;
   }
   .player-bar-material {
-    display: flex;
-    align-items: center;
-    gap: 1px;
-    font-size: 13px;
-    flex-shrink: 0;
+    display: none;
   }
   .player-bar-material .mat-adv {
     font-size: 10px;
@@ -3889,6 +3889,8 @@ function layoutColumns(skipId, placeholder) {
   const colHeights = new Array(NUM_COLS).fill(0);
 
   for (let c = 0; c < NUM_COLS; c++) {
+    // Last column takes remaining width to avoid overflow
+    const thisWidth = (c === NUM_COLS - 1) ? bodyWidth - (c * colWidth) : colWidth;
     for (const id of _colLayout[c]) {
       let el;
       if (id === "__placeholder__") {
@@ -3899,7 +3901,7 @@ function layoutColumns(skipId, placeholder) {
         if (!el || id === skipId) continue;
       }
       el.style.position = "absolute";
-      el.style.width = colWidth + "px";
+      el.style.width = thisWidth + "px";
       el.style.left = (c * colWidth) + "px";
       el.style.top = colHeights[c] + "px";
       el.style.visibility = "";
