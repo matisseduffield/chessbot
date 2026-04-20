@@ -377,15 +377,24 @@
 
   /* Dragging state */
   .settings-group.dragging {
-    opacity: 0.4;
-    box-shadow: inset 0 0 0 2px var(--accent);
+    z-index: 100;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.45), 0 0 0 2px var(--accent);
+    opacity: 0.95;
+    pointer-events: none;
+    transition: box-shadow 0.15s, opacity 0.15s;
+    cursor: grabbing;
+  }
+  .settings-group:not(.dragging) {
+    transition: left 0.25s ease, top 0.25s ease, box-shadow 0.2s, background 0.15s;
+  }
+  .drag-placeholder {
+    position: absolute;
+    border: 2px dashed var(--accent);
+    border-radius: 6px;
     background: var(--accent-muted);
-  }
-  .settings-group.drag-over-top {
-    box-shadow: inset 0 3px 0 0 var(--accent);
-  }
-  .settings-group.drag-over-bottom {
-    box-shadow: inset 0 -3px 0 0 var(--accent);
+    opacity: 0.4;
+    pointer-events: none;
+    transition: left 0.2s ease, top 0.2s ease, height 0.2s ease;
   }
 
   /* Accent color picker inline (in Appearance section) */
@@ -1221,7 +1230,7 @@
 
     <div class="settings-body" id="settings-body">
       <!-- 1. Analysis -->
-      <div class="settings-group" data-section-id="analysis" draggable="true">
+      <div class="settings-group" data-section-id="analysis">
         <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Analysis</div>
         <div class="variant-picker" id="variant-picker">
           <div class="variant-picker-selected" id="variant-picker-btn" tabindex="0">
@@ -1254,7 +1263,7 @@
       </div>
 
       <!-- 2. Search Limits -->
-      <div class="settings-group" data-section-id="search-limits" draggable="true">
+      <div class="settings-group" data-section-id="search-limits">
         <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Search Limits</div>
         <div class="setting-row">
           <span class="setting-label">Time</span>
@@ -1276,7 +1285,7 @@
       </div>
 
       <!-- 3. Engine -->
-      <div class="settings-group" data-section-id="engine" draggable="true">
+      <div class="settings-group" data-section-id="engine">
         <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Engine</div>
         <select id="engine-select" class="panel-select" style="margin-bottom:10px">
           <option value="">—</option>
@@ -1307,7 +1316,7 @@
       </div>
 
       <!-- 4. Resources -->
-      <div class="settings-group" data-section-id="resources" draggable="true">
+      <div class="settings-group" data-section-id="resources">
         <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Resources</div>
         <div class="sub-label">Opening Book</div>
         <select id="book-select" class="panel-select" multiple size="3" style="margin-bottom:10px">
@@ -1326,7 +1335,7 @@
       </div>
 
       <!-- 5. Auto-Move -->
-      <div class="settings-group" data-section-id="auto-move" draggable="true">
+      <div class="settings-group" data-section-id="auto-move">
         <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Auto-Move</div>
         <label class="toggle-row">
           <span class="toggle-switch">
@@ -1377,7 +1386,7 @@
       </div>
 
       <!-- 6. Training -->
-      <div class="settings-group" data-section-id="training" draggable="true">
+      <div class="settings-group" data-section-id="training">
         <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Training</div>
         <label class="toggle-row">
           <span class="toggle-switch">
@@ -1441,7 +1450,7 @@
       </div>
 
       <!-- 7. Appearance -->
-      <div class="settings-group" data-section-id="appearance" draggable="true">
+      <div class="settings-group" data-section-id="appearance">
         <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Appearance</div>
         <div class="sub-label">Board Theme</div>
         <div class="theme-grid" id="theme-grid"></div>
@@ -1460,7 +1469,7 @@
       </div>
 
       <!-- 8. Display -->
-      <div class="settings-group" data-section-id="display" draggable="true">
+      <div class="settings-group" data-section-id="display">
         <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Display</div>
         <div class="toggle-grid">
           <label class="toggle-row">
@@ -1494,7 +1503,7 @@
       </div>
 
       <!-- 9. Voice -->
-      <div class="settings-group" data-section-id="voice" draggable="true">
+      <div class="settings-group" data-section-id="voice">
         <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Voice</div>
         <label class="toggle-row">
           <span class="toggle-switch">
@@ -1525,7 +1534,7 @@
       </div>
 
       <!-- 10. Position -->
-      <div class="settings-group" data-section-id="position" draggable="true">
+      <div class="settings-group" data-section-id="position">
         <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Position</div>
         <div id="fen-display">—</div>
       </div>
@@ -3550,97 +3559,178 @@ function requestMasonryLayout() {
 // Re-layout on resize
 window.addEventListener("resize", requestMasonryLayout);
 
-// ── Drag-and-Drop Section Reorder ─────────────────────────
+// ── Pointer-Based Drag-and-Drop Section Reorder ──────────
 const SECTION_ORDER_KEY = "chessbot_section_order";
-let draggedSection = null;
-let _lastMouseDownTarget = null;
+let _drag = null; // active drag state
 
 function initDragAndDrop() {
   const body = document.getElementById("settings-body");
   if (!body) return;
-
-  // Restore saved order
   restoreSectionOrder();
 
-  // Track which element was actually clicked (dragstart e.target is always the draggable element)
-  body.addEventListener("mousedown", (e) => {
-    _lastMouseDownTarget = e.target;
-  }, true);
-
-  body.addEventListener("dragstart", (e) => {
-    const group = e.target.closest(".settings-group[draggable]");
+  body.addEventListener("pointerdown", (e) => {
+    const handle = e.target.closest(".drag-handle");
+    if (!handle) return;
+    const group = handle.closest(".settings-group[data-section-id]");
     if (!group) return;
-    // Only allow drag when initiated from the drag handle
-    const handle = group.querySelector(".drag-handle");
-    if (handle && _lastMouseDownTarget && !handle.contains(_lastMouseDownTarget)) {
-      e.preventDefault();
-      return;
-    }
-    draggedSection = group;
+
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+
+    const groupRect = group.getBoundingClientRect();
+    const bodyRect = body.getBoundingClientRect();
+
+    // Create placeholder
+    const placeholder = document.createElement("div");
+    placeholder.className = "drag-placeholder";
+    placeholder.style.width = groupRect.width + "px";
+    placeholder.style.height = groupRect.height + "px";
+    body.appendChild(placeholder);
+
+    // Lift card: fix its size and position so it follows cursor
     group.classList.add("dragging");
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", group.dataset.sectionId);
+    group.style.width = groupRect.width + "px";
+    group.style.left = (groupRect.left - bodyRect.left + body.scrollLeft) + "px";
+    group.style.top = (groupRect.top - bodyRect.top + body.scrollTop) + "px";
+
+    _drag = {
+      group,
+      placeholder,
+      body,
+      offsetX: e.clientX - groupRect.left,
+      offsetY: e.clientY - groupRect.top,
+      scrollTop0: body.scrollTop,
+      pointerId: e.pointerId,
+      insertBeforeEl: null
+    };
+
+    // Initial layout with placeholder in dragged card's DOM position
+    layoutMasonryWithPlaceholder();
   });
 
-  body.addEventListener("dragend", (e) => {
-    if (draggedSection) {
-      draggedSection.classList.remove("dragging");
-      draggedSection = null;
+  body.addEventListener("pointermove", (e) => {
+    if (!_drag) return;
+    const { group, body } = _drag;
+    const bodyRect = body.getBoundingClientRect();
+
+    // Move the dragged card to follow cursor
+    const x = e.clientX - _drag.offsetX - bodyRect.left + body.scrollLeft;
+    const y = e.clientY - _drag.offsetY - bodyRect.top + body.scrollTop;
+    group.style.left = x + "px";
+    group.style.top = y + "px";
+
+    // Auto-scroll when near edges
+    const edgeZone = 40;
+    const scrollSpeed = 8;
+    if (e.clientY - bodyRect.top < edgeZone) {
+      body.scrollTop -= scrollSpeed;
+    } else if (bodyRect.bottom - e.clientY < edgeZone) {
+      body.scrollTop += scrollSpeed;
     }
-    body.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach(el => {
-      el.classList.remove("drag-over-top", "drag-over-bottom");
-    });
+
+    // Find nearest drop target based on mouse position vs section centers
+    findDropTarget(e.clientX, e.clientY);
   });
 
-  body.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const group = e.target.closest(".settings-group[draggable]");
-    if (!group || group === draggedSection) return;
+  body.addEventListener("pointerup", (e) => {
+    if (!_drag) return;
+    finishDrag();
+  });
 
-    // Clear all indicators
-    body.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach(el => {
-      el.classList.remove("drag-over-top", "drag-over-bottom");
-    });
+  body.addEventListener("pointercancel", (e) => {
+    if (!_drag) return;
+    finishDrag();
+  });
+}
 
-    // Determine if we're in the top or bottom half
-    const rect = group.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    if (e.clientY < midY) {
-      group.classList.add("drag-over-top");
+function findDropTarget(mx, my) {
+  if (!_drag) return;
+  const { group, placeholder, body } = _drag;
+  const sections = Array.from(body.querySelectorAll(".settings-group[data-section-id]"))
+    .filter(s => s !== group);
+
+  let bestEl = null;
+  let bestDist = Infinity;
+  let insertBefore = true;
+
+  for (const s of sections) {
+    const r = s.getBoundingClientRect();
+    const cy = r.top + r.height / 2;
+    const cx = r.left + r.width / 2;
+    const dist = Math.hypot(mx - cx, my - cy);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestEl = s;
+      insertBefore = my < cy;
+    }
+  }
+
+  if (!bestEl) return;
+
+  const targetRef = insertBefore ? bestEl : bestEl.nextElementSibling;
+  if (_drag.insertBeforeEl === targetRef) return; // no change
+  _drag.insertBeforeEl = targetRef;
+
+  // Move placeholder in DOM (this determines where the dragged card will be inserted)
+  if (targetRef && targetRef !== placeholder) {
+    body.insertBefore(placeholder, targetRef);
+  } else if (!targetRef) {
+    body.appendChild(placeholder);
+  }
+
+  layoutMasonryWithPlaceholder();
+}
+
+function layoutMasonryWithPlaceholder() {
+  const body = document.getElementById("settings-body");
+  if (!body || !_drag) return;
+
+  const { group, placeholder } = _drag;
+  // Get all items in DOM order including placeholder, excluding dragged card
+  const items = Array.from(body.children).filter(el =>
+    el !== group && (el.classList.contains("settings-group") || el === placeholder)
+  );
+
+  const bodyWidth = body.clientWidth;
+  const colWidth = Math.floor(bodyWidth / MASONRY_COLS);
+  const colHeights = new Array(MASONRY_COLS).fill(0);
+
+  items.forEach(item => {
+    if (item === placeholder) {
+      item.style.width = colWidth + "px";
     } else {
-      group.classList.add("drag-over-bottom");
+      item.style.width = colWidth + "px";
     }
   });
+  body.offsetHeight;
 
-  body.addEventListener("dragleave", (e) => {
-    const group = e.target.closest(".settings-group[draggable]");
-    if (group) {
-      group.classList.remove("drag-over-top", "drag-over-bottom");
-    }
+  items.forEach(item => {
+    const h = item.offsetHeight;
+    const minCol = colHeights.indexOf(Math.min(...colHeights));
+    item.style.left = (minCol * colWidth) + "px";
+    item.style.top = colHeights[minCol] + "px";
+    if (item !== placeholder) item.style.visibility = "";
+    colHeights[minCol] += h;
   });
 
-  body.addEventListener("drop", (e) => {
-    e.preventDefault();
-    const group = e.target.closest(".settings-group[draggable]");
-    if (!group || !draggedSection || group === draggedSection) return;
+  body.style.minHeight = Math.max(...colHeights) + "px";
+}
 
-    const rect = group.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    if (e.clientY < midY) {
-      body.insertBefore(draggedSection, group);
-    } else {
-      body.insertBefore(draggedSection, group.nextSibling);
-    }
+function finishDrag() {
+  if (!_drag) return;
+  const { group, placeholder, body } = _drag;
 
-    // Clear indicators
-    body.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach(el => {
-      el.classList.remove("drag-over-top", "drag-over-bottom");
-    });
+  // Insert the dragged card where the placeholder is
+  body.insertBefore(group, placeholder);
+  placeholder.remove();
 
-    saveSectionOrder();
-    layoutMasonry();
-  });
+  group.classList.remove("dragging");
+  group.style.width = "";
+
+  _drag = null;
+
+  saveSectionOrder();
+  layoutMasonry();
 }
 
 function saveSectionOrder() {
