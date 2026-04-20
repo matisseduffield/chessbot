@@ -690,7 +690,7 @@ function init() {
     chrome.storage.local.get([
       "chessbot_trainingMode", "chessbot_trainingDifficulty",
       "chessbot_trainingStrict", "chessbot_trainingAutoReveal", "chessbot_trainingSound",
-      "chessbot_autoMove"
+      "chessbot_autoMove", "chessbot_bulletMode"
     ], (result) => {
       if (result.chessbot_trainingMode) { trainingMode = true; console.log("[chessbot] training mode restored from storage"); }
       if (result.chessbot_trainingDifficulty) trainingDifficulty = result.chessbot_trainingDifficulty;
@@ -698,6 +698,7 @@ function init() {
       if (result.chessbot_trainingAutoReveal !== undefined) trainingAutoReveal = !!result.chessbot_trainingAutoReveal;
       if (result.chessbot_trainingSound !== undefined) trainingSound = !!result.chessbot_trainingSound;
       if (result.chessbot_autoMove) { autoMoveEnabled = true; console.log("[chessbot] auto-move restored from storage"); }
+      if (result.chessbot_bulletMode) { bulletMode = true; console.log("[chessbot] bullet mode restored from storage"); }
       startAfterRestore();
     });
   } else {
@@ -1019,6 +1020,9 @@ function connectWS() {
       if (msg.type === "set_bullet_mode") {
         bulletMode = !!msg.value;
         console.log(`[chessbot] bullet mode: ${bulletMode} (from panel)`);
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ chessbot_bulletMode: bulletMode });
+        }
         return;
       }
       if (msg.type === "set_depth") {
@@ -5295,6 +5299,9 @@ document.addEventListener("keydown", (e) => {
       enabled = true;
       console.log("[chessbot] resumed via hotkey (Alt+A)");
       showToast("Analysis resumed");
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_enabled", value: true } }));
+      }
       readAndSend();
     }
   } else if (code === "KeyS") {
@@ -5303,6 +5310,9 @@ document.addEventListener("keydown", (e) => {
       enabled = false;
       console.log("[chessbot] stopped via hotkey (Alt+S)");
       showToast("Analysis stopped");
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_enabled", value: false } }));
+      }
       clearArrow();
     }
   } else if (code === "KeyW") {
@@ -5313,6 +5323,9 @@ document.addEventListener("keydown", (e) => {
     pendingEval = false;
     console.log("[chessbot] hotkey: analyze for Me (Alt+W)");
     showToast("Analyzing for Me");
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_run_engine_for", value: "me" } }));
+    }
     readAndSend();
   } else if (code === "KeyQ") {
     e.preventDefault();
@@ -5322,6 +5335,9 @@ document.addEventListener("keydown", (e) => {
     pendingEval = false;
     console.log("[chessbot] hotkey: analyze for Opponent (Alt+Q)");
     showToast("Analyzing for Opponent");
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_run_engine_for", value: "opponent" } }));
+    }
     readAndSend();
   } else if (code === "KeyT") {
     e.preventDefault();
@@ -5356,6 +5372,9 @@ document.addEventListener("keydown", (e) => {
     bulletMode = !bulletMode;
     console.log(`[chessbot] bullet mode: ${bulletMode} (Alt+B)`);
     showToast(`Bullet mode: ${bulletMode ? "ON" : "OFF"}`);
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ chessbot_bulletMode: bulletMode });
+    }
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_bullet_mode", value: bulletMode } }));
     }
