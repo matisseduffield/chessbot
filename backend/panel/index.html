@@ -217,15 +217,26 @@
     margin-bottom: 6px;
   }
   .pv-moves {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1px 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1px 3px;
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
+    line-height: 1.6;
   }
-  .pv-moves span { white-space: nowrap; }
-  .pv-moves span:nth-child(odd) { color: var(--text-100); font-weight: 600; }
-  .pv-moves span:nth-child(even) { color: var(--text-400); }
+  .pv-movenum {
+    color: var(--text-500);
+    font-size: 10px;
+    margin-left: 2px;
+  }
+  .pv-move {
+    color: var(--text-200);
+    font-weight: 500;
+  }
+  .pv-piece {
+    font-size: 12px;
+    margin-right: 1px;
+  }
   .pv-source {
     display: inline-block;
     font-size: 9px;
@@ -428,6 +439,30 @@
     letter-spacing: 0.1em;
     color: var(--text-400);
     margin-bottom: 10px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+  }
+  .group-title::after {
+    content: "";
+    display: inline-block;
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid var(--text-500);
+    margin-left: auto;
+    transition: transform 0.2s ease;
+  }
+  .settings-group.collapsed .group-title::after {
+    transform: rotate(-90deg);
+  }
+  .settings-group.collapsed .group-title {
+    margin-bottom: 0;
+  }
+  .settings-group.collapsed > *:not(.group-title) {
+    display: none;
   }
 
   /* ── Setting Rows ── */
@@ -1208,12 +1243,94 @@
     transition: opacity 0.2s;
   }
   .training-enabled { opacity: 1; pointer-events: auto; }
+
+  /* ── Eval Graph ── */
+  #eval-graph-wrap {
+    padding: 0 20px;
+    flex-shrink: 0;
+  }
+  #eval-graph {
+    border-radius: 4px;
+    background: var(--bg-800);
+    border: 1px solid var(--bg-700);
+  }
+
+  /* ── Shortcuts Modal ── */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.15s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .modal-content {
+    background: var(--bg-800);
+    border: 1px solid var(--bg-600);
+    border-radius: var(--radius-md);
+    box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+    width: 320px;
+    max-width: 90%;
+  }
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--bg-700);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-200);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--text-400);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0 4px;
+    transition: color 0.15s;
+  }
+  .modal-close:hover { color: var(--text-100); }
+  .modal-body {
+    padding: 12px 18px 18px;
+  }
+  .shortcut-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    font-size: 12px;
+    color: var(--text-300);
+  }
+  .shortcut-row + .shortcut-row {
+    border-top: 1px solid var(--bg-750);
+  }
+  kbd {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--bg-700);
+    border: 1px solid var(--bg-600);
+    color: var(--accent);
+  }
 </style>
 </head>
 <body>
 <div id="layout">
   <!-- Left: Board + PV cards -->
   <div id="left-col">
+    <div id="eval-graph-wrap" style="padding:0 20px;">
+      <canvas id="eval-graph" height="48" style="width:100%;display:block;border-radius:4px;background:var(--bg-800);cursor:crosshair;"></canvas>
+    </div>
     <div id="board-area">
       <div id="eval-bar-wrap">
         <div id="eval-bar" style="display:flex">
@@ -1271,6 +1388,7 @@
         </svg>
         <span>Copy Logs</span>
       </button>
+      <button class="header-btn" id="shortcuts-btn" title="Keyboard shortcuts" style="font-size:14px;padding:4px 8px;min-width:28px;">?</button>
       </div>
     </div>
 
@@ -1588,6 +1706,23 @@
   </div>
 </div>
 
+<div id="shortcuts-modal" class="modal-overlay" style="display:none;">
+  <div class="modal-content">
+    <div class="modal-header">
+      <span>Keyboard Shortcuts</span>
+      <button class="modal-close" id="shortcuts-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="shortcut-row"><kbd>Alt+M</kbd><span>Toggle auto-move</span></div>
+      <div class="shortcut-row"><kbd>Alt+B</kbd><span>Toggle bullet mode</span></div>
+      <div class="shortcut-row"><kbd>Alt+A</kbd><span>Analyze for me</span></div>
+      <div class="shortcut-row"><kbd>Alt+S</kbd><span>Analyze for opponent</span></div>
+      <div class="shortcut-row"><kbd>Alt+W</kbd><span>Analyze for both</span></div>
+      <div class="shortcut-row"><kbd>Alt+Q</kbd><span>Toggle eval bar</span></div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── Accent color picker ──────────────────────────────────
 (function() {
@@ -1640,10 +1775,126 @@ let voiceEnabled = false;
 let lastSpoken = "";
 let searchMovetime = null; // null = disabled
 let searchNodes = null;    // null = disabled
+let evalHistory = [];
 
 function escHtml(s) {
   if (!s) return "";
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// ── Eval History Sparkline ───────────────────────────────
+function renderEvalGraph() {
+  const canvas = document.getElementById("eval-graph");
+  if (!canvas || !evalHistory.length) return;
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth * dpr;
+  const h = 48 * dpr;
+  canvas.width = w;
+  canvas.height = h;
+  ctx.scale(dpr, dpr);
+  const cw = canvas.clientWidth;
+  const ch = 48;
+
+  ctx.clearRect(0, 0, cw, ch);
+
+  const style = getComputedStyle(document.documentElement);
+  const green = style.getPropertyValue("--green").trim() || "#22c55e";
+  const red = style.getPropertyValue("--red").trim() || "#ef4444";
+
+  const midY = ch / 2;
+  const clamp = 800;
+
+  // Dashed zero line
+  ctx.save();
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, midY);
+  ctx.lineTo(cw, midY);
+  ctx.stroke();
+  ctx.restore();
+
+  const n = evalHistory.length;
+  const toY = (cp) => {
+    const clamped = Math.max(-clamp, Math.min(clamp, cp));
+    return midY - (clamped / clamp) * midY;
+  };
+
+  if (n === 1) {
+    const y = toY(evalHistory[0].cp);
+    const color = evalHistory[0].cp >= 0 ? green : red;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(cw, y);
+    ctx.stroke();
+    return;
+  }
+
+  const step = cw / (n - 1);
+  const points = evalHistory.map((e, i) => ({ x: i * step, y: toY(e.cp) }));
+
+  // Green fill (above zero = white advantage)
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, midY);
+  for (const p of points) {
+    const y = Math.min(p.y, midY);
+    ctx.lineTo(p.x, y);
+  }
+  ctx.lineTo(points[n - 1].x, midY);
+  ctx.closePath();
+  ctx.fillStyle = green + "33";
+  ctx.fill();
+
+  // Red fill (below zero = black advantage)
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, midY);
+  for (const p of points) {
+    const y = Math.max(p.y, midY);
+    ctx.lineTo(p.x, y);
+  }
+  ctx.lineTo(points[n - 1].x, midY);
+  ctx.closePath();
+  ctx.fillStyle = red + "33";
+  ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < n; i++) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.strokeStyle = evalHistory[n - 1].cp >= 0 ? green : red;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+// ── PV Move Formatting ───────────────────────────────────
+function formatPVMoves(moves, fen) {
+  if (!moves.length) return "";
+  const parts = fen ? fen.split(" ") : [];
+  let moveNum = parseInt(parts[5]) || 1;
+  let isBlack = parts[1] === "b";
+
+  let html = "";
+  for (let i = 0; i < moves.length; i++) {
+    const m = moves[i];
+    if (!isBlack || i === 0) {
+      html += `<span class="pv-movenum">${moveNum}${isBlack && i === 0 ? "..." : "."}</span>`;
+    }
+    html += `<span class="pv-move">${decorateMove(escHtml(m))}</span>`;
+    if (isBlack) moveNum++;
+    isBlack = !isBlack;
+  }
+  return html;
+}
+
+function decorateMove(san) {
+  const pieces = { K: "\u2654", Q: "\u2655", R: "\u2656", B: "\u2657", N: "\u2658" };
+  return san.replace(/^([KQRBN])/, (_, p) => `<span class="pv-piece">${pieces[p]}</span>`);
 }
 
 // ── Click-to-edit for range value labels ─────────────────
@@ -2039,6 +2290,17 @@ function connect() {
       if (msg.lines && !Array.isArray(msg.lines)) return;
       currentData = msg;
       selectedPV = 1;
+      // Track eval history for sparkline
+      if (msg.lines && msg.lines.length) {
+        const best = msg.lines[0];
+        const turn = msg.fen ? msg.fen.split(" ")[1] : "w";
+        let cp = best.score ?? 0;
+        if (turn === "b") cp = -cp;
+        if (best.mate !== undefined && best.mate !== null) cp = best.mate > 0 ? 1500 : -1500;
+        evalHistory.push({ move: evalHistory.length + 1, cp, fen: msg.fen });
+        if (evalHistory.length > 200) evalHistory.shift();
+        renderEvalGraph();
+      }
       // Clear progress indicator on final result
       const progEl = document.getElementById("eval-progress");
       if (progEl && !msg.streaming) progEl.style.display = "none";
@@ -2700,7 +2962,7 @@ function renderPVs() {
         <span class="pv-score" style="color:${scoreColor}">${escHtml(scoreText)}</span>
       </div>
       <div class="pv-eco" title="${escHtml(eco)}">${escHtml(eco)}</div>
-      <div class="pv-moves">${sanMoves.slice(0, 16).map((m, j) => `<span>${escHtml(m)}</span>`).join("")}</div>
+      <div class="pv-moves">${formatPVMoves(sanMoves.slice(0, 16), currentData.fen)}</div>
       ${metricsHtml}
     `;
     container.appendChild(card);
@@ -3826,9 +4088,59 @@ function onPointerUp(e) {
   layoutColumns();
 }
 
+// ── Collapsible Sections ─────────────────────────────────
+const COLLAPSE_KEY = "chessbot_collapsed_sections";
+
+function restoreCollapseState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "[]");
+    if (!Array.isArray(saved)) return;
+    saved.forEach(id => {
+      const el = document.querySelector(`.settings-group[data-section-id="${id}"]`);
+      if (el) el.classList.add("collapsed");
+    });
+  } catch {}
+}
+
+function saveCollapseState() {
+  const collapsed = Array.from(document.querySelectorAll(".settings-group.collapsed"))
+    .map(el => el.dataset.sectionId)
+    .filter(Boolean);
+  localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsed));
+}
+
+function initCollapsible() {
+  restoreCollapseState();
+  document.querySelectorAll(".group-title").forEach(title => {
+    title.addEventListener("click", (e) => {
+      if (e.target.closest(".drag-handle")) return;
+      const group = title.closest(".settings-group");
+      if (!group) return;
+      group.classList.toggle("collapsed");
+      saveCollapseState();
+      layoutColumns();
+    });
+  });
+}
+
+// ── Shortcuts Modal ──────────────────────────────────────
+function initShortcutsModal() {
+  document.getElementById("shortcuts-btn").addEventListener("click", () => {
+    document.getElementById("shortcuts-modal").style.display = "flex";
+  });
+  document.getElementById("shortcuts-close").addEventListener("click", () => {
+    document.getElementById("shortcuts-modal").style.display = "none";
+  });
+  document.getElementById("shortcuts-modal").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) e.currentTarget.style.display = "none";
+  });
+}
+
 // ── Init ─────────────────────────────────────────────────
 initThemeGrid();
 initPieceSetSelect();
+initCollapsible();
+initShortcutsModal();
 initDragAndDrop();
 renderBoard();
 connect();
