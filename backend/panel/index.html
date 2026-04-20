@@ -1635,7 +1635,7 @@
 let ws = null;
 let wsBackoff = 1000;
 let selectedPV = 1;
-let currentData = null; // last bestmove response
+let currentData = { fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", lines: [] };
 let voiceEnabled = false;
 let lastSpoken = "";
 let searchMovetime = null; // null = disabled
@@ -3830,6 +3830,7 @@ function onPointerUp(e) {
 initThemeGrid();
 initPieceSetSelect();
 initDragAndDrop();
+renderBoard();
 connect();
 </script>
 </body>
