@@ -67,6 +67,7 @@ let showOpponentResponse = true; // show predicted opponent reply (red arrow/box
 let searchMovetime = null; // null = disabled, else ms
 let searchNodes = null; // null = disabled, else node count
 let wsBackoff = 3000; // WebSocket reconnect backoff (ms), resets on connect
+let contextInvalidated = false; // true once extension context is orphaned
 let detectedVariant = null; // chess variant detected from URL
 let trainingMode = false; // progressive hint mode
 let trainingStage = 0; // 0=piece hint, 1=zone hint, 2=full reveal
@@ -852,8 +853,12 @@ function connectWS() {
     port = chrome.runtime.connect({ name: "chessbot-ws" });
   } catch (err) {
     // Extension was reloaded/updated — this content script is orphaned.
-    // Stop retrying; user needs to refresh the page.
-    console.warn("[chessbot] extension context invalidated — please refresh the page");
+    // Stop all polling/reconnect loops; user needs to refresh the page.
+    if (!contextInvalidated) {
+      contextInvalidated = true;
+      console.warn("[chessbot] extension context invalidated — please refresh the page");
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
     return;
   }
 
@@ -1210,6 +1215,7 @@ function connectWS() {
   };
 
   ws.onclose = () => {
+    if (contextInvalidated) return; // don't reconnect if orphaned
     console.log(`[chessbot] disconnected — retrying in ${Math.min(wsBackoff / 1000, 30)}s`);
     pendingEval = false; // unblock so we can resend on reconnect
     waitingForOpponent = false; // unblock board change detection
@@ -1531,6 +1537,7 @@ function observeBoard(boardEl) {
   // Polling fallback — skip if mutations are actively firing, use longer interval
   let pollCount = 0;
   pollTimer = setInterval(() => {
+    if (contextInvalidated) { clearInterval(pollTimer); pollTimer = null; return; }
     if (!enabled || !boardReady) return;
     // Skip poll if a recent mutation already triggered readAndSend
     if (Date.now() - lastMutationTime < 300) return;
