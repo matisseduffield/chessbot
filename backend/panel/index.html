@@ -339,33 +339,83 @@
     50% { opacity: 0.4; }
   }
 
-  /* Settings grid: 3 columns of groups */
+  /* Settings grid: masonry-like multi-column flow of draggable cards */
   .settings-body {
     flex: 1;
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 0;
-    overflow: hidden;
-    min-height: 0;
-  }
-
-  /* Each column */
-  .settings-col {
     display: flex;
-    flex-direction: column;
-    padding: 0;
-    border-right: 1px solid var(--bg-750);
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 0;
     overflow-y: auto;
+    overflow-x: hidden;
     min-height: 0;
+    padding: 0;
   }
-  .settings-col:last-child { border-right: none; }
 
-  /* Groups inside columns */
+  /* Each draggable settings card */
   .settings-group {
+    width: 33.333%;
+    box-sizing: border-box;
     padding: 14px 20px;
     border-bottom: 1px solid var(--bg-750);
+    border-right: 1px solid var(--bg-750);
+    position: relative;
+    transition: box-shadow 0.2s, background 0.15s;
   }
-  .settings-group:last-child { border-bottom: none; }
+  .settings-group:hover { background: rgba(255,255,255,0.015); }
+
+  /* Drag handle */
+  .drag-handle {
+    cursor: grab;
+    font-size: 14px;
+    color: var(--text-600);
+    margin-right: 6px;
+    user-select: none;
+    opacity: 0.4;
+    transition: opacity 0.15s, color 0.15s;
+    vertical-align: middle;
+    letter-spacing: 1px;
+  }
+  .settings-group:hover .drag-handle { opacity: 0.8; color: var(--text-400); }
+  .drag-handle:active { cursor: grabbing; }
+
+  /* Dragging state */
+  .settings-group.dragging {
+    opacity: 0.4;
+    box-shadow: inset 0 0 0 2px var(--accent);
+    background: var(--accent-muted);
+  }
+  .settings-group.drag-over-top {
+    box-shadow: inset 0 3px 0 0 var(--accent);
+  }
+  .settings-group.drag-over-bottom {
+    box-shadow: inset 0 -3px 0 0 var(--accent);
+  }
+
+  /* Accent color picker inline (in Appearance section) */
+  .accent-picker-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .accent-picker-inline input[type="color"] {
+    width: 32px;
+    height: 24px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 0;
+    border-radius: 4px;
+  }
+  .accent-swatch-inline {
+    display: inline-block;
+    width: 50px;
+    height: 20px;
+    border-radius: 4px;
+    background: var(--accent);
+    border: 1px solid var(--bg-600);
+  }
   .group-title {
     font-size: 10px;
     font-weight: 700;
@@ -1163,13 +1213,6 @@
         <span id="status-text">Disconnected</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
-      <div class="accent-picker-wrapper" title="Change accent color">
-        <input type="color" id="accent-color-picker" value="#6366f1">
-        <div class="accent-picker-btn">
-          <span class="accent-swatch" id="accent-swatch"></span>
-          <span>Color</span>
-        </div>
-      </div>
       <button id="btn-copy-logs" class="header-btn" title="Copy diagnostic logs to clipboard">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -1180,305 +1223,315 @@
       </div>
     </div>
 
-    <div class="settings-body">
-      <!-- Column 1: Analysis -->
-      <div class="settings-col">
-        <div class="settings-group">
-          <div class="group-title">Variant</div>
-          <div class="variant-picker" id="variant-picker">
-            <div class="variant-picker-selected" id="variant-picker-btn" tabindex="0">
-              <span id="variant-picker-label">Standard</span>
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 5l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-            </div>
-            <div class="variant-picker-dropdown" id="variant-picker-dropdown">
-              <input type="text" class="variant-picker-search" id="variant-picker-search" placeholder="Search variants…" autocomplete="off" spellcheck="false">
-              <div class="variant-picker-list" id="variant-picker-list"></div>
-            </div>
+    <div class="settings-body" id="settings-body">
+      <!-- 1. Analysis -->
+      <div class="settings-group" data-section-id="analysis" draggable="true">
+        <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Analysis</div>
+        <div class="variant-picker" id="variant-picker">
+          <div class="variant-picker-selected" id="variant-picker-btn" tabindex="0">
+            <span id="variant-picker-label">Standard</span>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 5l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </div>
-          <input type="hidden" id="variant-select" value="chess">
-          <div id="variant-engine-hint" class="sub-label" style="margin-top:4px;color:var(--accent);display:none"></div>
-        </div>
-
-        <div class="settings-group">
-          <div class="group-title">Analysis</div>
-          <div class="setting-row">
-            <span class="setting-label">Depth</span>
-            <input type="range" id="depth-slider" min="0" max="30" value="15">
-            <span class="range-value" id="depth-value">15</span>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">PVs</span>
-            <input type="range" id="multipv-slider" min="1" max="8" value="1">
-            <span class="range-value" id="multipv-value">1</span>
-          </div>
-          <div class="sub-label">Analyze For</div>
-          <div class="radio-group">
-            <label><input type="radio" name="run-for" value="me" checked><span>Me</span></label>
-            <label><input type="radio" name="run-for" value="opponent"><span>Opponent</span></label>
-            <label><input type="radio" name="run-for" value="both"><span>Both</span></label>
+          <div class="variant-picker-dropdown" id="variant-picker-dropdown">
+            <input type="text" class="variant-picker-search" id="variant-picker-search" placeholder="Search variants…" autocomplete="off" spellcheck="false">
+            <div class="variant-picker-list" id="variant-picker-list"></div>
           </div>
         </div>
-
-        <div class="settings-group">
-          <div class="group-title">Search Limits</div>
-          <div class="setting-row">
-            <span class="setting-label">Time</span>
-            <label class="toggle-inline">
-              <input type="checkbox" id="chk-time-limit">
-              <span class="toggle-track"></span>
-            </label>
-            <input type="range" id="time-slider" min="100" max="30000" step="100" value="1000" disabled>
-            <span class="range-value" id="time-value">1000</span>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">Nodes</span>
-            <label class="toggle-inline">
-              <input type="checkbox" id="chk-nodes-limit">
-              <span class="toggle-track"></span>
-            </label>
-            <input type="number" id="nodes-input" class="num-input" min="1000" max="100000000" step="1000" value="100000" disabled>
-          </div>
+        <input type="hidden" id="variant-select" value="chess">
+        <div id="variant-engine-hint" class="sub-label" style="margin-top:4px;color:var(--accent);display:none"></div>
+        <div class="setting-row" style="margin-top:10px">
+          <span class="setting-label">Depth</span>
+          <input type="range" id="depth-slider" min="0" max="30" value="15">
+          <span class="range-value" id="depth-value">15</span>
         </div>
-
-        <div class="settings-group">
-          <div class="group-title">Position</div>
-          <div id="fen-display">—</div>
+        <div class="setting-row">
+          <span class="setting-label">PVs</span>
+          <input type="range" id="multipv-slider" min="1" max="8" value="1">
+          <span class="range-value" id="multipv-value">1</span>
+        </div>
+        <div class="sub-label">Analyze For</div>
+        <div class="radio-group">
+          <label><input type="radio" name="run-for" value="me" checked><span>Me</span></label>
+          <label><input type="radio" name="run-for" value="opponent"><span>Opponent</span></label>
+          <label><input type="radio" name="run-for" value="both"><span>Both</span></label>
         </div>
       </div>
 
-      <!-- Column 2: Engine -->
-      <div class="settings-col">
-        <div class="settings-group">
-          <div class="group-title">Engine</div>
-          <select id="engine-select" class="panel-select" style="margin-bottom:10px">
-            <option value="">—</option>
-          </select>
-          <div class="setting-row">
-            <span class="setting-label">Threads</span>
-            <input type="range" id="threads-slider" min="1" max="16" value="1">
-            <span class="range-value" id="threads-value">1</span>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">Hash</span>
-            <select id="hash-select" class="panel-select">
-              <option value="16">16 MB</option>
-              <option value="32">32 MB</option>
-              <option value="64">64 MB</option>
-              <option value="128">128 MB</option>
-              <option value="256">256 MB</option>
-              <option value="512">512 MB</option>
-              <option value="1024">1024 MB</option>
-            </select>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">Skill</span>
-            <input type="range" id="skill-slider" min="0" max="20" value="20">
-            <span class="range-value" id="skill-value">20</span>
-          </div>
-          <button id="btn-clear-hash" class="panel-btn" style="margin-top:8px">Clear Hash</button>
+      <!-- 2. Search Limits -->
+      <div class="settings-group" data-section-id="search-limits" draggable="true">
+        <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Search Limits</div>
+        <div class="setting-row">
+          <span class="setting-label">Time</span>
+          <label class="toggle-inline">
+            <input type="checkbox" id="chk-time-limit">
+            <span class="toggle-track"></span>
+          </label>
+          <input type="range" id="time-slider" min="100" max="30000" step="100" value="1000" disabled>
+          <span class="range-value" id="time-value">1000</span>
         </div>
+        <div class="setting-row">
+          <span class="setting-label">Nodes</span>
+          <label class="toggle-inline">
+            <input type="checkbox" id="chk-nodes-limit">
+            <span class="toggle-track"></span>
+          </label>
+          <input type="number" id="nodes-input" class="num-input" min="1000" max="100000000" step="1000" value="100000" disabled>
+        </div>
+      </div>
 
-        <div class="settings-group">
-          <div class="group-title">Training</div>
-          <label class="toggle-row">
+      <!-- 3. Engine -->
+      <div class="settings-group" data-section-id="engine" draggable="true">
+        <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Engine</div>
+        <select id="engine-select" class="panel-select" style="margin-bottom:10px">
+          <option value="">—</option>
+        </select>
+        <div class="setting-row">
+          <span class="setting-label">Threads</span>
+          <input type="range" id="threads-slider" min="1" max="16" value="1">
+          <span class="range-value" id="threads-value">1</span>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">Hash</span>
+          <select id="hash-select" class="panel-select">
+            <option value="16">16 MB</option>
+            <option value="32">32 MB</option>
+            <option value="64">64 MB</option>
+            <option value="128">128 MB</option>
+            <option value="256">256 MB</option>
+            <option value="512">512 MB</option>
+            <option value="1024">1024 MB</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">Skill</span>
+          <input type="range" id="skill-slider" min="0" max="20" value="20">
+          <span class="range-value" id="skill-value">20</span>
+        </div>
+        <button id="btn-clear-hash" class="panel-btn" style="margin-top:8px">Clear Hash</button>
+      </div>
+
+      <!-- 4. Resources -->
+      <div class="settings-group" data-section-id="resources" draggable="true">
+        <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Resources</div>
+        <div class="sub-label">Opening Book</div>
+        <select id="book-select" class="panel-select" multiple size="3" style="margin-bottom:10px">
+        </select>
+        <label class="toggle-row" style="margin-bottom:10px">
+          <span class="toggle-switch">
+            <input type="checkbox" id="chk-lichess-book">
+            <span class="toggle-track"></span>
+          </span>
+          <span class="toggle-label">Lichess Masters DB</span>
+        </label>
+        <div class="sub-label">Endgame Tables</div>
+        <select id="syzygy-select" class="panel-select">
+          <option value="">None</option>
+        </select>
+      </div>
+
+      <!-- 5. Auto-Move -->
+      <div class="settings-group" data-section-id="auto-move" draggable="true">
+        <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Auto-Move</div>
+        <label class="toggle-row">
+          <span class="toggle-switch">
+            <input type="checkbox" id="chk-auto-move">
+            <span class="toggle-track"></span>
+          </span>
+          <span class="toggle-label">Enable auto-move (Alt+M)</span>
+        </label>
+
+        <div id="auto-move-options" class="training-disabled-overlay">
+          <label class="toggle-row" style="margin-top:8px">
             <span class="toggle-switch">
-              <input type="checkbox" id="chk-training-mode">
+              <input type="checkbox" id="chk-bullet-mode">
               <span class="toggle-track"></span>
             </span>
-            <span class="toggle-label">Training mode</span>
+            <span class="toggle-label">Bullet mode (Alt+B)</span>
           </label>
+          <div class="sub-hint" style="font-size:11px;color:#888;margin:-4px 0 6px 44px">Zero delay, no humanize (uses your search settings)</div>
 
-          <div id="training-options" class="training-disabled-overlay">
-            <div class="sub-label" style="margin-top:10px">Difficulty</div>
-            <div class="radio-group">
-              <label><input type="radio" name="training-difficulty" value="easy"><span>Easy</span></label>
-              <label><input type="radio" name="training-difficulty" value="medium" checked><span>Medium</span></label>
-              <label><input type="radio" name="training-difficulty" value="hard"><span>Hard</span></label>
-            </div>
+          <div id="bullet-dimmed-options">
+          <div class="sub-label" style="margin-top:10px">Delay Range (ms)</div>
+          <div class="setting-row">
+            <span class="setting-label">Min</span>
+            <input type="range" id="auto-move-delay-min" min="0" max="5000" step="100" value="500">
+            <span class="range-value" id="auto-move-delay-min-value">500</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Max</span>
+            <input type="range" id="auto-move-delay-max" min="0" max="10000" step="100" value="2000">
+            <span class="range-value" id="auto-move-delay-max-value">2000</span>
+          </div>
 
-            <div class="sub-label" style="margin-top:12px">Live Stats</div>
-            <div class="training-stats">
-              <div class="stat-row">
-                <span class="stat-label">Accuracy</span>
-                <div class="accuracy-bar-wrap">
-                  <div class="accuracy-bar-fill" id="training-accuracy-bar" style="width:0%"></div>
-                </div>
-                <span class="stat-value" id="training-accuracy-pct">0%</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">Streak</span>
-                <span><span class="streak-fire" id="training-streak-icon" style="display:none">🔥</span> <span class="stat-value" id="training-streak">0</span></span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">Score</span>
-                <span class="stat-value"><span id="training-correct">0</span> / <span id="training-total">0</span></span>
-              </div>
-            </div>
-            <button id="btn-reset-training" class="panel-btn" style="margin-top:6px;font-size:11px">Reset Stats</button>
-
-            <div class="sub-label" style="margin-top:12px">Options</div>
-            <label class="toggle-row">
-              <span class="toggle-switch">
-                <input type="checkbox" id="chk-training-auto-reveal">
-                <span class="toggle-track"></span>
-              </span>
-              <span class="toggle-label">Auto-reveal after move</span>
-            </label>
-            <label class="toggle-row">
-              <span class="toggle-switch">
-                <input type="checkbox" id="chk-training-sound" checked>
-                <span class="toggle-track"></span>
-              </span>
-              <span class="toggle-label">Sound effects</span>
-            </label>
-            <label class="toggle-row">
-              <span class="toggle-switch">
-                <input type="checkbox" id="chk-training-strict">
-                <span class="toggle-track"></span>
-              </span>
-              <span class="toggle-label">Strict (top move only)</span>
-            </label>
+          <div class="sub-label" style="margin-top:12px">Humanization</div>
+          <label class="toggle-row">
+            <span class="toggle-switch">
+              <input type="checkbox" id="chk-auto-move-humanize" checked>
+              <span class="toggle-track"></span>
+            </span>
+            <span class="toggle-label">Occasional suboptimal move</span>
+          </label>
+          <div class="setting-row">
+            <span class="setting-label">Chance</span>
+            <input type="range" id="auto-move-humanize-chance" min="0" max="0.5" step="0.05" value="0.1">
+            <span class="range-value" id="auto-move-humanize-chance-value">10%</span>
+          </div>
           </div>
         </div>
       </div>
 
-      <!-- Column 3: Display + Auto-Move + Resources -->
-      <div class="settings-col">
-        <div class="settings-group">
-          <div class="group-title">Auto-Move</div>
+      <!-- 6. Training -->
+      <div class="settings-group" data-section-id="training" draggable="true">
+        <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Training</div>
+        <label class="toggle-row">
+          <span class="toggle-switch">
+            <input type="checkbox" id="chk-training-mode">
+            <span class="toggle-track"></span>
+          </span>
+          <span class="toggle-label">Training mode</span>
+        </label>
+
+        <div id="training-options" class="training-disabled-overlay">
+          <div class="sub-label" style="margin-top:10px">Difficulty</div>
+          <div class="radio-group">
+            <label><input type="radio" name="training-difficulty" value="easy"><span>Easy</span></label>
+            <label><input type="radio" name="training-difficulty" value="medium" checked><span>Medium</span></label>
+            <label><input type="radio" name="training-difficulty" value="hard"><span>Hard</span></label>
+          </div>
+
+          <div class="sub-label" style="margin-top:12px">Live Stats</div>
+          <div class="training-stats">
+            <div class="stat-row">
+              <span class="stat-label">Accuracy</span>
+              <div class="accuracy-bar-wrap">
+                <div class="accuracy-bar-fill" id="training-accuracy-bar" style="width:0%"></div>
+              </div>
+              <span class="stat-value" id="training-accuracy-pct">0%</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Streak</span>
+              <span><span class="streak-fire" id="training-streak-icon" style="display:none">🔥</span> <span class="stat-value" id="training-streak">0</span></span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Score</span>
+              <span class="stat-value"><span id="training-correct">0</span> / <span id="training-total">0</span></span>
+            </div>
+          </div>
+          <button id="btn-reset-training" class="panel-btn" style="margin-top:6px;font-size:11px">Reset Stats</button>
+
+          <div class="sub-label" style="margin-top:12px">Options</div>
           <label class="toggle-row">
             <span class="toggle-switch">
-              <input type="checkbox" id="chk-auto-move">
+              <input type="checkbox" id="chk-training-auto-reveal">
               <span class="toggle-track"></span>
             </span>
-            <span class="toggle-label">Enable auto-move (Alt+M)</span>
+            <span class="toggle-label">Auto-reveal after move</span>
           </label>
-
-          <div id="auto-move-options" class="training-disabled-overlay">
-            <label class="toggle-row" style="margin-top:8px">
-              <span class="toggle-switch">
-                <input type="checkbox" id="chk-bullet-mode">
-                <span class="toggle-track"></span>
-              </span>
-              <span class="toggle-label">Bullet mode (Alt+B)</span>
-            </label>
-            <div class="sub-hint" style="font-size:11px;color:#888;margin:-4px 0 6px 44px">Zero delay, no humanize (uses your search settings)</div>
-
-            <div id="bullet-dimmed-options">
-            <div class="sub-label" style="margin-top:10px">Delay Range (ms)</div>
-            <div class="setting-row">
-              <span class="setting-label">Min</span>
-              <input type="range" id="auto-move-delay-min" min="0" max="5000" step="100" value="500">
-              <span class="range-value" id="auto-move-delay-min-value">500</span>
-            </div>
-            <div class="setting-row">
-              <span class="setting-label">Max</span>
-              <input type="range" id="auto-move-delay-max" min="0" max="10000" step="100" value="2000">
-              <span class="range-value" id="auto-move-delay-max-value">2000</span>
-            </div>
-
-            <div class="sub-label" style="margin-top:12px">Humanization</div>
-            <label class="toggle-row">
-              <span class="toggle-switch">
-                <input type="checkbox" id="chk-auto-move-humanize" checked>
-                <span class="toggle-track"></span>
-              </span>
-              <span class="toggle-label">Occasional suboptimal move</span>
-            </label>
-            <div class="setting-row">
-              <span class="setting-label">Chance</span>
-              <input type="range" id="auto-move-humanize-chance" min="0" max="0.5" step="0.05" value="0.1">
-              <span class="range-value" id="auto-move-humanize-chance-value">10%</span>
-            </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="settings-group">
-          <div class="group-title">Display</div>
-          <div class="toggle-grid">
-            <label class="toggle-row">
-              <span class="toggle-switch">
-                <input type="checkbox" id="chk-voice">
-                <span class="toggle-track"></span>
-              </span>
-              <span class="toggle-label">Voice</span>
-            </label>
-            <label class="toggle-row">
-              <span class="toggle-switch">
-                <input type="checkbox" id="chk-voice-eval">
-                <span class="toggle-track"></span>
-              </span>
-              <span class="toggle-label">Speak eval</span>
-            </label>
-            <label class="toggle-row">
-              <span class="toggle-switch">
-                <input type="checkbox" id="chk-voice-opening">
-                <span class="toggle-track"></span>
-              </span>
-              <span class="toggle-label">Speak opening</span>
-            </label>
-            <label class="toggle-row">
-              <span class="toggle-switch">
-                <input type="checkbox" id="chk-evalbar" checked>
-                <span class="toggle-track"></span>
-              </span>
-              <span class="toggle-label">Eval bar</span>
-            </label>
-            <label class="toggle-row">
-              <span class="toggle-switch">
-                <input type="checkbox" id="chk-pvs" checked>
-                <span class="toggle-track"></span>
-              </span>
-              <span class="toggle-label">PV cards</span>
-            </label>
-            <label class="toggle-row">
-              <span class="toggle-switch">
-                <input type="checkbox" id="chk-opponent-response" checked>
-                <span class="toggle-track"></span>
-              </span>
-              <span class="toggle-label">Opponent reply</span>
-            </label>
-          </div>
-          <div class="sub-label" style="margin-top:10px">Move Display</div>
-          <div class="radio-group">
-            <label><input type="radio" name="display-mode" value="arrow"><span>Arrow</span></label>
-            <label><input type="radio" name="display-mode" value="box"><span>Box</span></label>
-            <label><input type="radio" name="display-mode" value="both" checked><span>Both</span></label>
-          </div>
-          <div class="sub-label" style="margin-top:10px">Voice Speed</div>
-          <div class="setting-row">
-            <input type="range" id="voice-speed-slider" min="0.5" max="2" step="0.1" value="1.1">
-            <span class="range-value" id="voice-speed-value">1.1</span>
-          </div>
-          <div class="sub-label" style="margin-top:10px">Board Theme</div>
-          <div class="theme-grid" id="theme-grid"></div>
-          <div class="sub-label" style="margin-top:10px">Piece Set</div>
-          <select id="piece-set-select" class="panel-select">
-            <option value="classic">Classic</option>
-            <option value="neo">Neo</option>
-            <option value="minimalist">Minimal</option>
-            <option value="letters">Letters</option>
-          </select>
-        </div>
-
-        <div class="settings-group">
-          <div class="group-title">Resources</div>
-          <div class="sub-label">Opening Book</div>
-          <select id="book-select" class="panel-select" multiple size="3" style="margin-bottom:10px">
-          </select>
-          <label class="toggle-row" style="margin-bottom:10px">
+          <label class="toggle-row">
             <span class="toggle-switch">
-              <input type="checkbox" id="chk-lichess-book">
+              <input type="checkbox" id="chk-training-sound" checked>
               <span class="toggle-track"></span>
             </span>
-            <span class="toggle-label">Lichess Masters DB</span>
+            <span class="toggle-label">Sound effects</span>
           </label>
-          <div class="sub-label">Endgame Tables</div>
-          <select id="syzygy-select" class="panel-select">
-            <option value="">None</option>
-          </select>
+          <label class="toggle-row">
+            <span class="toggle-switch">
+              <input type="checkbox" id="chk-training-strict">
+              <span class="toggle-track"></span>
+            </span>
+            <span class="toggle-label">Strict (top move only)</span>
+          </label>
         </div>
+      </div>
+
+      <!-- 7. Appearance -->
+      <div class="settings-group" data-section-id="appearance" draggable="true">
+        <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Appearance</div>
+        <div class="sub-label">Board Theme</div>
+        <div class="theme-grid" id="theme-grid"></div>
+        <div class="sub-label" style="margin-top:10px">Piece Set</div>
+        <select id="piece-set-select" class="panel-select">
+          <option value="classic">Classic</option>
+          <option value="neo">Neo</option>
+          <option value="minimalist">Minimal</option>
+          <option value="letters">Letters</option>
+        </select>
+        <div class="sub-label" style="margin-top:10px">Accent Color</div>
+        <div class="accent-picker-inline" id="accent-picker-inline">
+          <input type="color" id="accent-color-picker-inline" value="#6366f1">
+          <span class="accent-swatch-inline" id="accent-swatch-inline"></span>
+        </div>
+      </div>
+
+      <!-- 8. Display -->
+      <div class="settings-group" data-section-id="display" draggable="true">
+        <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Display</div>
+        <div class="toggle-grid">
+          <label class="toggle-row">
+            <span class="toggle-switch">
+              <input type="checkbox" id="chk-evalbar" checked>
+              <span class="toggle-track"></span>
+            </span>
+            <span class="toggle-label">Eval bar</span>
+          </label>
+          <label class="toggle-row">
+            <span class="toggle-switch">
+              <input type="checkbox" id="chk-pvs" checked>
+              <span class="toggle-track"></span>
+            </span>
+            <span class="toggle-label">PV cards</span>
+          </label>
+          <label class="toggle-row">
+            <span class="toggle-switch">
+              <input type="checkbox" id="chk-opponent-response" checked>
+              <span class="toggle-track"></span>
+            </span>
+            <span class="toggle-label">Opponent reply</span>
+          </label>
+        </div>
+        <div class="sub-label" style="margin-top:10px">Move Display</div>
+        <div class="radio-group">
+          <label><input type="radio" name="display-mode" value="arrow"><span>Arrow</span></label>
+          <label><input type="radio" name="display-mode" value="box"><span>Box</span></label>
+          <label><input type="radio" name="display-mode" value="both" checked><span>Both</span></label>
+        </div>
+      </div>
+
+      <!-- 9. Voice -->
+      <div class="settings-group" data-section-id="voice" draggable="true">
+        <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Voice</div>
+        <label class="toggle-row">
+          <span class="toggle-switch">
+            <input type="checkbox" id="chk-voice">
+            <span class="toggle-track"></span>
+          </span>
+          <span class="toggle-label">Enable voice</span>
+        </label>
+        <label class="toggle-row">
+          <span class="toggle-switch">
+            <input type="checkbox" id="chk-voice-eval">
+            <span class="toggle-track"></span>
+          </span>
+          <span class="toggle-label">Speak eval</span>
+        </label>
+        <label class="toggle-row">
+          <span class="toggle-switch">
+            <input type="checkbox" id="chk-voice-opening">
+            <span class="toggle-track"></span>
+          </span>
+          <span class="toggle-label">Speak opening</span>
+        </label>
+        <div class="sub-label" style="margin-top:10px">Voice Speed</div>
+        <div class="setting-row">
+          <input type="range" id="voice-speed-slider" min="0.5" max="2" step="0.1" value="1.1">
+          <span class="range-value" id="voice-speed-value">1.1</span>
+        </div>
+      </div>
+
+      <!-- 10. Position -->
+      <div class="settings-group" data-section-id="position" draggable="true">
+        <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Position</div>
+        <div id="fen-display">—</div>
       </div>
     </div>
   </div>
@@ -1511,8 +1564,8 @@
   const saved = localStorage.getItem('chessbot_accent');
   if (saved) applyAccent(saved);
   document.addEventListener('DOMContentLoaded', () => {
-    const picker = document.getElementById('accent-color-picker');
-    const swatch = document.getElementById('accent-swatch');
+    const picker = document.getElementById('accent-color-picker-inline');
+    const swatch = document.getElementById('accent-swatch-inline');
     if (saved) {
       picker.value = saved;
       swatch.style.background = saved;
@@ -3455,9 +3508,130 @@ document.getElementById("btn-copy-logs").addEventListener("click", async () => {
   }
 });
 
+// ── Drag-and-Drop Section Reorder ─────────────────────────
+const SECTION_ORDER_KEY = "chessbot_section_order";
+let draggedSection = null;
+
+function initDragAndDrop() {
+  const body = document.getElementById("settings-body");
+  if (!body) return;
+
+  // Restore saved order
+  restoreSectionOrder();
+
+  body.addEventListener("dragstart", (e) => {
+    const group = e.target.closest(".settings-group[draggable]");
+    if (!group) return;
+    // Only allow drag from the handle
+    const handle = group.querySelector(".drag-handle");
+    if (handle && !handle.contains(e.target) && e.target !== handle) {
+      e.preventDefault();
+      return;
+    }
+    draggedSection = group;
+    group.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", group.dataset.sectionId);
+  });
+
+  body.addEventListener("dragend", (e) => {
+    if (draggedSection) {
+      draggedSection.classList.remove("dragging");
+      draggedSection = null;
+    }
+    body.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach(el => {
+      el.classList.remove("drag-over-top", "drag-over-bottom");
+    });
+  });
+
+  body.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const group = e.target.closest(".settings-group[draggable]");
+    if (!group || group === draggedSection) return;
+
+    // Clear all indicators
+    body.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach(el => {
+      el.classList.remove("drag-over-top", "drag-over-bottom");
+    });
+
+    // Determine if we're in the top or bottom half
+    const rect = group.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    if (e.clientY < midY) {
+      group.classList.add("drag-over-top");
+    } else {
+      group.classList.add("drag-over-bottom");
+    }
+  });
+
+  body.addEventListener("dragleave", (e) => {
+    const group = e.target.closest(".settings-group[draggable]");
+    if (group) {
+      group.classList.remove("drag-over-top", "drag-over-bottom");
+    }
+  });
+
+  body.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const group = e.target.closest(".settings-group[draggable]");
+    if (!group || !draggedSection || group === draggedSection) return;
+
+    const rect = group.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    if (e.clientY < midY) {
+      body.insertBefore(draggedSection, group);
+    } else {
+      body.insertBefore(draggedSection, group.nextSibling);
+    }
+
+    // Clear indicators
+    body.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach(el => {
+      el.classList.remove("drag-over-top", "drag-over-bottom");
+    });
+
+    saveSectionOrder();
+  });
+}
+
+function saveSectionOrder() {
+  const body = document.getElementById("settings-body");
+  if (!body) return;
+  const order = Array.from(body.querySelectorAll(".settings-group[data-section-id]"))
+    .map(el => el.dataset.sectionId);
+  try { localStorage.setItem(SECTION_ORDER_KEY, JSON.stringify(order)); } catch {}
+}
+
+function restoreSectionOrder() {
+  try {
+    const raw = localStorage.getItem(SECTION_ORDER_KEY);
+    if (!raw) return;
+    const order = JSON.parse(raw);
+    if (!Array.isArray(order)) return;
+    const body = document.getElementById("settings-body");
+    if (!body) return;
+    const sections = {};
+    body.querySelectorAll(".settings-group[data-section-id]").forEach(el => {
+      sections[el.dataset.sectionId] = el;
+    });
+    // Reorder: append in saved order (missing sections stay at end)
+    for (const id of order) {
+      if (sections[id]) {
+        body.appendChild(sections[id]);
+        delete sections[id];
+      }
+    }
+    // Append any remaining sections not in saved order
+    for (const el of Object.values(sections)) {
+      body.appendChild(el);
+    }
+  } catch {}
+}
+
 // ── Init ─────────────────────────────────────────────────
 initThemeGrid();
 initPieceSetSelect();
+initDragAndDrop();
 connect();
 </script>
 </body>
