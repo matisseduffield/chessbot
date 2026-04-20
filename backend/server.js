@@ -768,6 +768,11 @@ async function main() {
       }
 
       // ── Broadcast — relay a message from panel to all other clients ──
+      // ── Game info relay (player names, clocks) ────────
+      if (msg.type === "game_info") {
+        broadcast(ws, msg);
+      }
+
       if (msg.type === "broadcast" && msg.payload) {
         // Store search limits server-side so they're authoritative
         if (msg.payload.type === "set_search_limits") {
@@ -869,6 +874,12 @@ async function main() {
         if (requiredType !== requestedType) {
           console.log(`[server] ignoring switch_engine to ${found.name} — variant ${currentVariant} requires ${requiredType} engine`);
           safeSend(ws, { type: "engine_switched", name: path.basename(config.stockfishPath) });
+          return;
+        }
+        // Skip if the requested engine is already active (avoid unnecessary restart)
+        if (path.resolve(found.path) === path.resolve(config.stockfishPath)) {
+          console.log(`[server] switch_engine: ${found.name} already active — skipping`);
+          safeSend(ws, { type: "engine_switched", name: found.name });
           return;
         }
         console.log(`[server] switching engine to: ${found.name}`);

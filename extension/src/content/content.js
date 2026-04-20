@@ -1248,7 +1248,74 @@ function sendFen(fen) {
   if (detectedVariant) msg.variant = detectedVariant;
   console.log(`[chessbot] → sendFen: ${fen.split(" ").slice(0,2).join(" ")} variant=${detectedVariant || "standard"} depth=${currentDepth}`);
   ws.send(JSON.stringify(msg));
+  // Also send player info update
+  scrapeGameInfo();
   return true;
+}
+
+// ── Scrape Game Info (player names, clocks) ──────────────────
+function scrapeGameInfo() {
+  try {
+    const info = { type: "game_info", white: { name: "", clock: "" }, black: { name: "", clock: "" }, moveNumber: 0, flipped: false };
+    const host = location.hostname;
+
+    if (host.includes("lichess")) {
+      // Lichess: player names are in .ruser-top and .ruser-bottom
+      const topUser = document.querySelector(".ruser-top .user-link, .ruser-top .text");
+      const bottomUser = document.querySelector(".ruser-bottom .user-link, .ruser-bottom .text");
+      const topClock = document.querySelector(".rclock-top .time, .rclock.rclock-top .time");
+      const bottomClock = document.querySelector(".rclock-bottom .time, .rclock.rclock-bottom .time");
+
+      const topName = topUser ? topUser.textContent.trim() : "";
+      const bottomName = bottomUser ? bottomUser.textContent.trim() : "";
+      const topClockText = topClock ? topClock.textContent.trim() : "";
+      const bottomClockText = bottomClock ? bottomClock.textContent.trim() : "";
+
+      // On Lichess, if we're playing black, the board is flipped (black at bottom)
+      const flipped = !!document.querySelector(".cg-wrap.orientation-black");
+      info.flipped = flipped;
+
+      if (flipped) {
+        info.black = { name: bottomName, clock: bottomClockText };
+        info.white = { name: topName, clock: topClockText };
+      } else {
+        info.white = { name: bottomName, clock: bottomClockText };
+        info.black = { name: topName, clock: topClockText };
+      }
+    } else if (host.includes("chess.com")) {
+      // Chess.com: player names and clocks
+      const players = document.querySelectorAll(".player-component, [class*='player-']");
+      const topPlayer = document.querySelector("[class*='playerInfo'][class*='top'] .user-username-component, [class*='player-top'] .user-username-component");
+      const bottomPlayer = document.querySelector("[class*='playerInfo'][class*='bottom'] .user-username-component, [class*='player-bottom'] .user-username-component");
+      const topClock = document.querySelector("[class*='clock'][class*='top'], [class*='playerInfo'][class*='top'] [class*='clock']");
+      const bottomClock = document.querySelector("[class*='clock'][class*='bottom'], [class*='playerInfo'][class*='bottom'] [class*='clock']");
+
+      const topName = topPlayer ? topPlayer.textContent.trim() : "";
+      const bottomName = bottomPlayer ? bottomPlayer.textContent.trim() : "";
+      const topClockText = topClock ? topClock.textContent.trim() : "";
+      const bottomClockText = bottomClock ? bottomClock.textContent.trim() : "";
+
+      // Chess.com: check if board is flipped
+      const board = document.querySelector(".board, chess-board");
+      const flipped = board ? board.classList.contains("flipped") : false;
+      info.flipped = flipped;
+
+      if (flipped) {
+        info.black = { name: bottomName, clock: bottomClockText };
+        info.white = { name: topName, clock: topClockText };
+      } else {
+        info.white = { name: bottomName, clock: bottomClockText };
+        info.black = { name: topName, clock: topClockText };
+      }
+    }
+
+    // Send via WS
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(info));
+    }
+  } catch (e) {
+    console.log("[chessbot] scrapeGameInfo error:", e.message);
+  }
 }
 
 // ── Board DOM → FEN ──────────────────────────────────────────
@@ -1679,6 +1746,9 @@ function readAndSend() {
       console.log("[chessbot] board changed after auto-move — skipping own move, waiting for opponent");
       lastBoardFen = boardPart;
       lastPieceCount = countPieces(boardPart);
+      // We just moved, so it's now the opponent's turn — update lastKnownTurn
+      // so the alternation sanity check works correctly on the next board change
+      if (lastKnownTurn) lastKnownTurn = lastKnownTurn === "w" ? "b" : "w";
       return;
     }
     waitingForOpponent = false;
@@ -1774,12 +1844,14 @@ function readAndSend() {
   // Effective turn: use detected turn, alternation fallback, or "w" for starting position
   let effectiveTurn = turn || lastKnownTurn || "w";
 
-  // Sanity check: if the board changed but turn didn't alternate from lastKnownTurn,
-  // it's likely a DOM race (board updated before move list). Force alternation.
+  // Sanity check: if the board changed, turn detection FAILED (turn is null), and
+  // effectiveTurn matches lastKnownTurn, it's likely a DOM race (board updated before
+  // move list). Force alternation. Only applies when inferTurn returned null — when it
+  // successfully detected a turn, trust it even if it looks like it didn't alternate.
   const boardChanged = prevBoard && boardPart !== prevBoard;
-  if (boardChanged && lastKnownTurn && effectiveTurn === lastKnownTurn && !isStartPos) {
+  if (boardChanged && !turn && lastKnownTurn && effectiveTurn === lastKnownTurn && !isStartPos) {
     const correctedTurn = lastKnownTurn === "w" ? "b" : "w";
-    console.log(`[chessbot] turn didn't alternate after board change (${lastKnownTurn}→${effectiveTurn}) — correcting to ${correctedTurn}`);
+    console.log(`[chessbot] turn detection failed + didn't alternate after board change (${lastKnownTurn}→${effectiveTurn}) — correcting to ${correctedTurn}`);
     effectiveTurn = correctedTurn;
   }
 

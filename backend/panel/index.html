@@ -964,6 +964,116 @@
   ::-webkit-scrollbar-thumb { background: var(--bg-600); border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--bg-500); }
 
+  /* ── Board Theme Grid ── */
+  .theme-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .theme-swatch {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    border: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .theme-swatch:hover { border-color: var(--bg-500); }
+  .theme-swatch.active { border-color: var(--accent); background: var(--accent-muted); }
+  .theme-swatch-colors {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+  .theme-swatch-colors > div:nth-child(1) { border-radius: 4px 0 0 0; }
+  .theme-swatch-colors > div:nth-child(2) { border-radius: 0 4px 0 0; }
+  .theme-swatch-colors > div:nth-child(3) { border-radius: 0 0 0 4px; }
+  .theme-swatch-colors > div:nth-child(4) { border-radius: 0 0 4px 0; }
+  .theme-swatch-label {
+    font-size: 9px;
+    color: var(--text-400);
+    font-weight: 600;
+    text-align: center;
+  }
+  .theme-swatch.active .theme-swatch-label { color: var(--accent); }
+
+  /* ── Player Info Bars ── */
+  .player-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    font-size: 12px;
+    font-family: 'Inter', sans-serif;
+    min-height: 26px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-800);
+    border: 1px solid var(--bg-700);
+    gap: 8px;
+  }
+  .player-bar-name {
+    font-weight: 700;
+    color: var(--text-100);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1;
+  }
+  .player-bar-material {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+  .player-bar-material .mat-adv {
+    font-size: 10px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-300);
+    margin-left: 3px;
+  }
+  .player-bar-clock {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 12px;
+    color: var(--text-200);
+    background: var(--bg-700);
+    padding: 2px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .player-bar-clock.active {
+    color: var(--green);
+    background: var(--green-muted);
+  }
+  .player-bar .move-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-500);
+    flex-shrink: 0;
+  }
+
+  /* ── Arrow Animation ── */
+  @keyframes arrowFadeIn {
+    from { opacity: 0; transform: scale(0.85); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  .move-arrow {
+    animation: arrowFadeIn 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    transform-origin: center;
+  }
+
   /* ── Training Section ── */
   .training-stats { margin-top: 10px; }
   .stat-row {
@@ -1013,8 +1123,18 @@
       </div>
       <div id="board-col">
         <div id="eco-label"></div>
+        <div class="player-bar" id="player-bar-top">
+          <span class="player-bar-name" id="top-player-name">—</span>
+          <span class="player-bar-material" id="top-player-material"></span>
+          <span class="player-bar-clock" id="top-player-clock"></span>
+        </div>
         <div id="board-svg-container">
           <svg id="board-svg" viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+        <div class="player-bar" id="player-bar-bottom">
+          <span class="player-bar-name" id="bottom-player-name">—</span>
+          <span class="player-bar-material" id="bottom-player-material"></span>
+          <span class="player-bar-clock" id="bottom-player-clock"></span>
         </div>
         <div id="wdl-bar">
           <div id="wdl-bar-inner">
@@ -1331,6 +1451,15 @@
             <input type="range" id="voice-speed-slider" min="0.5" max="2" step="0.1" value="1.1">
             <span class="range-value" id="voice-speed-value">1.1</span>
           </div>
+          <div class="sub-label" style="margin-top:10px">Board Theme</div>
+          <div class="theme-grid" id="theme-grid"></div>
+          <div class="sub-label" style="margin-top:10px">Piece Set</div>
+          <select id="piece-set-select" class="panel-select">
+            <option value="classic">Classic</option>
+            <option value="neo">Neo</option>
+            <option value="minimalist">Minimal</option>
+            <option value="letters">Letters</option>
+          </select>
         </div>
 
         <div class="settings-group">
@@ -1472,8 +1601,37 @@ const PIECE_IMG = {
   n: '/pieces/black-knight.png',  p: '/pieces/black-pawn.png',
 };
 
-const LIGHT_SQ = "#f0d9b5";
-const DARK_SQ = "#b58863";
+// ── Board Themes ─────────────────────────────────────────
+const BOARD_THEMES = {
+  classic:  { light: "#f0d9b5", dark: "#b58863", name: "Classic" },
+  green:    { light: "#ffffdd", dark: "#86a666", name: "Green" },
+  blue:     { light: "#dee3e6", dark: "#8ca2ad", name: "Blue" },
+  purple:   { light: "#e8daf0", dark: "#9070a0", name: "Purple" },
+  grey:     { light: "#d9d9d9", dark: "#8b8b8b", name: "Grey" },
+  coral:    { light: "#f0d0b0", dark: "#c07050", name: "Coral" },
+  midnight: { light: "#c8c8d0", dark: "#505070", name: "Midnight" },
+  wood:     { light: "#e8d0a8", dark: "#a07850", name: "Wood" },
+};
+let currentBoardTheme = "classic";
+function getBoardColors() { return BOARD_THEMES[currentBoardTheme] || BOARD_THEMES.classic; }
+
+// ── Piece Sets ───────────────────────────────────────────
+const PIECE_SETS = {
+  classic: { name: "Classic", type: "image" },
+  neo:     { name: "Neo", type: "unicode", shadow: true, outline: true },
+  minimalist: { name: "Minimal", type: "unicode", shadow: false, outline: false },
+  letters: { name: "Letters", type: "letter" },
+};
+let currentPieceSet = "classic";
+const UNICODE_PIECES = {
+  K: "\u2654", Q: "\u2655", R: "\u2656", B: "\u2657", N: "\u2658", P: "\u2659",
+  k: "\u265A", q: "\u265B", r: "\u265C", b: "\u265D", n: "\u265E", p: "\u265F",
+};
+const LETTER_PIECES = {
+  K: "K", Q: "Q", R: "R", B: "B", N: "N", P: "P",
+  k: "K", q: "Q", r: "R", b: "B", n: "N", p: "P",
+};
+
 const PV_COLORS = ["#2ecc71", "#00bcd4", "#f39c12", "#e74c3c", "#9b59b6", "#e67e22", "#1abc9c", "#e84393"];
 
 // ── Settings Persistence ─────────────────────────────────
@@ -1515,6 +1673,8 @@ function saveSettings() {
     lichessBook: document.getElementById("chk-lichess-book").checked,
     books: Array.from(document.getElementById("book-select").selectedOptions).map(o => o.value).filter(Boolean),
     syzygy: document.getElementById("syzygy-select").value,
+    boardTheme: currentBoardTheme,
+    pieceSet: currentPieceSet,
   };
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
 }
@@ -1789,6 +1949,13 @@ function connect() {
         progEl.style.display = "block";
       }
     }
+    if (msg.type === "game_info") {
+      if (msg.white) gameInfo.white = msg.white;
+      if (msg.black) gameInfo.black = msg.black;
+      if (msg.moveNumber) gameInfo.moveNumber = msg.moveNumber;
+      if (msg.flipped !== undefined && currentData) currentData.flipped = msg.flipped;
+      renderPlayerBars();
+    }
     if (msg.type === "settings") {
       applySettings(msg);
     }
@@ -1999,6 +2166,8 @@ function renderBoard() {
   svg.setAttribute("viewBox", `0 0 ${svgW} ${svgH}`);
   container.style.setProperty("--board-aspect", `${numFiles} / ${numRanks}`);
 
+  const theme = getBoardColors();
+
   // Draw squares
   for (let r = 0; r < numRanks; r++) {
     for (let f = 0; f < numFiles; f++) {
@@ -2007,12 +2176,13 @@ function renderBoard() {
       rect.setAttribute("y", r * sqSize);
       rect.setAttribute("width", sqSize);
       rect.setAttribute("height", sqSize);
-      rect.setAttribute("fill", (r + f) % 2 === 0 ? LIGHT_SQ : DARK_SQ);
+      rect.setAttribute("fill", (r + f) % 2 === 0 ? theme.light : theme.dark);
       svg.appendChild(rect);
     }
   }
 
   // Draw pieces
+  const pieceSet = PIECE_SETS[currentPieceSet] || PIECE_SETS.classic;
   const rows = boardPart.split("/");
   for (let r = 0; r < rows.length; r++) {
     let f = 0;
@@ -2027,18 +2197,58 @@ function renderBoard() {
         continue;
       }
       if (ch === "+" || ch === "~") continue;
-      const pieceImg = PIECE_IMG[ch];
-      if (!pieceImg) { f++; continue; }
-      const img = document.createElementNS("http://www.w3.org/2000/svg", "image");
+
       const tx = f * sqSize;
       const ty = r * sqSize;
-      img.setAttribute("href", pieceImg);
-      img.setAttribute("x", tx);
-      img.setAttribute("y", ty);
-      img.setAttribute("width", sqSize);
-      img.setAttribute("height", sqSize);
-      img.setAttribute("style", "pointer-events:none;");
-      svg.appendChild(img);
+
+      if (pieceSet.type === "image") {
+        const pieceImg = PIECE_IMG[ch];
+        if (!pieceImg) { f++; continue; }
+        const img = document.createElementNS("http://www.w3.org/2000/svg", "image");
+        img.setAttribute("href", pieceImg);
+        img.setAttribute("x", tx);
+        img.setAttribute("y", ty);
+        img.setAttribute("width", sqSize);
+        img.setAttribute("height", sqSize);
+        img.setAttribute("style", "pointer-events:none;");
+        svg.appendChild(img);
+      } else if (pieceSet.type === "unicode") {
+        const sym = UNICODE_PIECES[ch];
+        if (!sym) { f++; continue; }
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", tx + sqSize / 2);
+        text.setAttribute("y", ty + sqSize * 0.82);
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("font-size", sqSize * 0.85);
+        text.setAttribute("fill", ch === ch.toUpperCase() ? "#fff" : "#1a1a1a");
+        text.setAttribute("style", "pointer-events:none;");
+        if (pieceSet.shadow) text.setAttribute("filter", "drop-shadow(0 2px 3px rgba(0,0,0,0.5))");
+        if (pieceSet.outline) {
+          text.setAttribute("stroke", ch === ch.toUpperCase() ? "#333" : "#999");
+          text.setAttribute("stroke-width", "1.5");
+          text.setAttribute("paint-order", "stroke");
+        }
+        text.textContent = sym;
+        svg.appendChild(text);
+      } else if (pieceSet.type === "letter") {
+        const ltr = LETTER_PIECES[ch];
+        if (!ltr) { f++; continue; }
+        const isWhite = ch === ch.toUpperCase();
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", tx + sqSize / 2);
+        text.setAttribute("y", ty + sqSize * 0.72);
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("font-size", sqSize * 0.65);
+        text.setAttribute("font-weight", "900");
+        text.setAttribute("font-family", "'JetBrains Mono', monospace");
+        text.setAttribute("fill", isWhite ? "#fff" : "#1a1a1a");
+        text.setAttribute("stroke", isWhite ? "#333" : "#ccc");
+        text.setAttribute("stroke-width", "2");
+        text.setAttribute("paint-order", "stroke");
+        text.setAttribute("style", "pointer-events:none;");
+        text.textContent = ltr;
+        svg.appendChild(text);
+      }
       f++;
     }
   }
@@ -2053,6 +2263,9 @@ function renderBoard() {
   } else if (currentData.bestmove && currentData.bestmove.length >= 3) {
     drawArrow(svg, currentData.bestmove, true, numFiles, numRanks);
   }
+
+  // Render player info bars
+  renderPlayerBars();
 }
 
 function drawArrow(svg, uci, isOurMove, numFiles, numRanks) {
@@ -2143,6 +2356,7 @@ function drawArrow(svg, uci, isOurMove, numFiles, numRanks) {
     }
 
     svg.appendChild(g);
+    g.classList.add("move-arrow");
     return;
   }
 
@@ -2192,7 +2406,129 @@ function drawArrow(svg, uci, isOurMove, numFiles, numRanks) {
   path.setAttribute("d", d);
   path.setAttribute("fill", color);
   path.setAttribute("filter", "drop-shadow(0 1px 3px rgba(0,0,0,0.4))");
+  path.classList.add("move-arrow");
   svg.appendChild(path);
+}
+
+// ── Theme Grid Initialization ────────────────────────────
+function initThemeGrid() {
+  const grid = document.getElementById("theme-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  for (const [key, theme] of Object.entries(BOARD_THEMES)) {
+    const swatch = document.createElement("div");
+    swatch.className = "theme-swatch" + (key === currentBoardTheme ? " active" : "");
+    swatch.dataset.theme = key;
+    swatch.innerHTML = `
+      <div class="theme-swatch-colors">
+        <div style="background:${theme.light}"></div>
+        <div style="background:${theme.dark}"></div>
+        <div style="background:${theme.dark}"></div>
+        <div style="background:${theme.light}"></div>
+      </div>
+      <div class="theme-swatch-label">${theme.name}</div>`;
+    swatch.addEventListener("click", () => {
+      currentBoardTheme = key;
+      grid.querySelectorAll(".theme-swatch").forEach(s => s.classList.remove("active"));
+      swatch.classList.add("active");
+      saveSettings();
+      if (currentData) renderBoard();
+    });
+    grid.appendChild(swatch);
+  }
+}
+
+// ── Piece Set Change Handler ─────────────────────────────
+function initPieceSetSelect() {
+  const sel = document.getElementById("piece-set-select");
+  if (!sel) return;
+  sel.addEventListener("change", () => {
+    currentPieceSet = sel.value;
+    saveSettings();
+    if (currentData) renderBoard();
+  });
+}
+
+// ── Material Calculation from FEN ────────────────────────
+const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, P: 1, N: 3, B: 3, R: 5, Q: 9 };
+const MATERIAL_ICONS = { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛", P: "♙", N: "♘", B: "♗", R: "♖", Q: "♕" };
+
+function calculateMaterial(fen) {
+  if (!fen) return { white: 0, black: 0, whitePieces: {}, blackPieces: {}, diff: 0 };
+  const board = fen.split(" ")[0];
+  const whitePieces = {}; const blackPieces = {};
+  let whiteVal = 0, blackVal = 0;
+  for (const ch of board) {
+    if ("PNBRQ".includes(ch)) { whitePieces[ch] = (whitePieces[ch] || 0) + 1; whiteVal += PIECE_VALUES[ch]; }
+    else if ("pnbrq".includes(ch)) { blackPieces[ch] = (blackPieces[ch] || 0) + 1; blackVal += PIECE_VALUES[ch]; }
+  }
+  return { white: whiteVal, black: blackVal, whitePieces, blackPieces, diff: whiteVal - blackVal };
+}
+
+function materialAdvantageHtml(myPieces, oppPieces, myColor) {
+  // Show captured pieces (pieces the opponent had but I took)
+  const captured = {};
+  const oppKeys = myColor === "w" ? "pnbrq" : "PNBRQ";
+  const baseline = { p: 8, n: 2, b: 2, r: 2, q: 1, P: 8, N: 2, B: 2, R: 2, Q: 1 };
+  for (const ch of oppKeys) {
+    const have = (oppPieces[ch] || 0);
+    const diff = baseline[ch] - have;
+    if (diff > 0) captured[ch] = diff;
+  }
+  let html = "";
+  for (const [ch, count] of Object.entries(captured)) {
+    for (let i = 0; i < count; i++) html += `<span style="opacity:0.7">${MATERIAL_ICONS[ch]}</span>`;
+  }
+  return html;
+}
+
+// ── Player Info Bars ─────────────────────────────────────
+let gameInfo = { white: { name: "", clock: "" }, black: { name: "", clock: "" }, moveNumber: 0 };
+
+function renderPlayerBars() {
+  if (!currentData || !currentData.fen) return;
+  const mat = calculateMaterial(currentData.fen);
+  const moveNum = parseInt(currentData.fen.split(" ")[5]) || 1;
+  const activeSide = currentData.fen.split(" ")[1]; // "w" or "b"
+
+  // Determine board orientation from content script (default: white at bottom)
+  const flipped = currentData.flipped || false;
+  const topColor = flipped ? "white" : "black";
+  const bottomColor = flipped ? "black" : "white";
+
+  const topInfo = gameInfo[topColor] || {};
+  const bottomInfo = gameInfo[bottomColor] || {};
+
+  // Top bar
+  document.getElementById("top-player-name").textContent = topInfo.name || "—";
+  document.getElementById("top-player-clock").textContent = topInfo.clock || "";
+  document.getElementById("top-player-clock").className = "player-bar-clock" +
+    (activeSide === topColor[0] ? " active" : "");
+  document.getElementById("top-player-material").innerHTML =
+    materialAdvantageHtml({}, mat[topColor + "Pieces"] || {}, topColor[0]) +
+    (mat.diff !== 0 && ((topColor === "white" && mat.diff > 0) || (topColor === "black" && mat.diff < 0))
+      ? `<span class="mat-adv">+${Math.abs(mat.diff)}</span>` : "");
+
+  // Bottom bar
+  document.getElementById("bottom-player-name").textContent = bottomInfo.name || "—";
+  document.getElementById("bottom-player-clock").textContent = bottomInfo.clock || "";
+  document.getElementById("bottom-player-clock").className = "player-bar-clock" +
+    (activeSide === bottomColor[0] ? " active" : "");
+  document.getElementById("bottom-player-material").innerHTML =
+    materialAdvantageHtml({}, mat[bottomColor + "Pieces"] || {}, bottomColor[0]) +
+    (mat.diff !== 0 && ((bottomColor === "white" && mat.diff > 0) || (bottomColor === "black" && mat.diff < 0))
+      ? `<span class="mat-adv">+${Math.abs(mat.diff)}</span>` : "");
+
+  // Move number in bottom bar
+  const moveEl = document.getElementById("player-bar-bottom").querySelector(".move-num");
+  if (!moveEl) {
+    const span = document.createElement("span");
+    span.className = "move-num";
+    span.textContent = `#${moveNum}`;
+    document.getElementById("player-bar-bottom").prepend(span);
+  } else {
+    moveEl.textContent = `#${moveNum}`;
+  }
 }
 
 // ── PV Cards ─────────────────────────────────────────────
@@ -2808,6 +3144,15 @@ function applySettings(msg) {
       document.getElementById("auto-move-humanize-chance-value").textContent = Math.round(saved.autoMoveHumanizeChance * 100) + "%";
     }
 
+    // Board theme & piece set
+    if (saved.boardTheme && BOARD_THEMES[saved.boardTheme]) {
+      currentBoardTheme = saved.boardTheme;
+    }
+    if (saved.pieceSet && PIECE_SETS[saved.pieceSet]) {
+      currentPieceSet = saved.pieceSet;
+      document.getElementById("piece-set-select").value = saved.pieceSet;
+    }
+
     // Book / Syzygy — only restore for standard chess
     const restoredVariant = saved.variant || "chess";
     const variantIsStandard = !FAIRY_VARIANTS.includes(restoredVariant);
@@ -3111,6 +3456,8 @@ document.getElementById("btn-copy-logs").addEventListener("click", async () => {
 });
 
 // ── Init ─────────────────────────────────────────────────
+initThemeGrid();
+initPieceSetSelect();
 connect();
 </script>
 </body>
