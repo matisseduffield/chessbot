@@ -5,3 +5,4 @@ books/
 syzygy/
 screenshots/
 dashboard-*.png
+.playwright-mcp/
