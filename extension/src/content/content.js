@@ -1148,6 +1148,22 @@ function connectWS() {
           console.log("[chessbot] board changed during bestmove processing — skipping draw");
           return;
         }
+        // Turn re-check: re-read turn from DOM before displaying. Catches cases where
+        // the eval was sent due to a DOM race (board updated before move list) and
+        // the move list has since caught up, revealing it's actually the opponent's turn.
+        if (runEngineFor !== "both" && !isPuzzlePage()) {
+          const freshTurn = detectTurnFromMoveList();
+          if (freshTurn) {
+            const pc = getPlayerColor();
+            const isMyTurnNow = freshTurn === pc;
+            if ((runEngineFor === "me" && !isMyTurnNow) || (runEngineFor === "opponent" && isMyTurnNow)) {
+              console.log(`[chessbot] suppressing bestmove — turn re-check says it's not our turn (turn=${freshTurn} player=${pc} runFor=${runEngineFor})`);
+              clearMoveIndicators();
+              pendingEval = false;
+              return;
+            }
+          }
+        }
         if (trainingMode && !msg.streaming) {
           // Training mode: store best move, show progressive hint
           trainingBestMove = msg.bestmove;
@@ -1756,8 +1772,19 @@ function readAndSend() {
   }
 
   // Effective turn: use detected turn, alternation fallback, or "w" for starting position
-  const effectiveTurn = turn || lastKnownTurn || "w";
+  let effectiveTurn = turn || lastKnownTurn || "w";
+
+  // Sanity check: if the board changed but turn didn't alternate from lastKnownTurn,
+  // it's likely a DOM race (board updated before move list). Force alternation.
+  const boardChanged = prevBoard && boardPart !== prevBoard;
+  if (boardChanged && lastKnownTurn && effectiveTurn === lastKnownTurn && !isStartPos) {
+    const correctedTurn = lastKnownTurn === "w" ? "b" : "w";
+    console.log(`[chessbot] turn didn't alternate after board change (${lastKnownTurn}→${effectiveTurn}) — correcting to ${correctedTurn}`);
+    effectiveTurn = correctedTurn;
+  }
+
   if (turn) lastKnownTurn = turn;
+  else if (boardChanged && !isStartPos) lastKnownTurn = effectiveTurn;
 
   // 3-check: track check counts by detecting king-in-check from FEN
   // Also re-read from DOM whenever the board changes (DOM counters are most reliable)
