@@ -3513,265 +3513,276 @@ document.getElementById("btn-copy-logs").addEventListener("click", async () => {
   }
 });
 
-// ── Masonry Layout ────────────────────────────────────────
-const MASONRY_COLS = 3;
-let _masonryRAF = null;
+// ── Column-Based Layout + Drag-and-Drop ──────────────────
+const NUM_COLS = 3;
+const LAYOUT_KEY = "chessbot_column_layout";
+let _colLayout = null;  // [[id, id, ...], [id, ...], [id, ...]]
+let _drag = null;
+let _layoutRAF = null;
 
-function layoutMasonry() {
+// Build initial column layout (shortest-column packing)
+function buildInitialLayout(sectionIds) {
   const body = document.getElementById("settings-body");
-  if (!body) return;
-  const sections = Array.from(body.querySelectorAll(".settings-group[data-section-id]"));
-  if (!sections.length) return;
+  const colWidth = Math.floor(body.clientWidth / NUM_COLS);
+  const cols = Array.from({ length: NUM_COLS }, () => []);
+  const colHeights = new Array(NUM_COLS).fill(0);
 
-  const bodyWidth = body.clientWidth;
-  const colWidth = Math.floor(bodyWidth / MASONRY_COLS);
-  const colHeights = new Array(MASONRY_COLS).fill(0);
-
-  // Measure each section at column width, then position
-  sections.forEach(section => {
-    section.style.width = colWidth + "px";
-    section.style.visibility = "hidden";
-    section.style.position = "absolute";
-    section.style.left = "0";
-    section.style.top = "0";
+  // Measure each section
+  const elMap = {};
+  body.querySelectorAll(".settings-group[data-section-id]").forEach(el => {
+    el.style.width = colWidth + "px";
+    el.style.position = "absolute";
+    el.style.visibility = "hidden";
+    el.style.left = "0";
+    el.style.top = "0";
+    elMap[el.dataset.sectionId] = el;
   });
-  // Force reflow so heights are measurable
   body.offsetHeight;
 
-  sections.forEach(section => {
-    const h = section.offsetHeight;
+  for (const id of sectionIds) {
+    const el = elMap[id];
+    if (!el) continue;
+    const h = el.offsetHeight;
     const minCol = colHeights.indexOf(Math.min(...colHeights));
-    section.style.left = (minCol * colWidth) + "px";
-    section.style.top = colHeights[minCol] + "px";
-    section.style.visibility = "";
+    cols[minCol].push(id);
     colHeights[minCol] += h;
-  });
+  }
+  return cols;
+}
 
-  // Set container scroll height
+function getElMap() {
+  const body = document.getElementById("settings-body");
+  const map = {};
+  body.querySelectorAll(".settings-group[data-section-id]").forEach(el => {
+    map[el.dataset.sectionId] = el;
+  });
+  return map;
+}
+
+// Position sections based on _colLayout
+function layoutColumns(skipId, placeholder) {
+  const body = document.getElementById("settings-body");
+  if (!body || !_colLayout) return;
+
+  const bodyWidth = body.clientWidth;
+  const colWidth = Math.floor(bodyWidth / NUM_COLS);
+  const elMap = getElMap();
+  const colHeights = new Array(NUM_COLS).fill(0);
+
+  for (let c = 0; c < NUM_COLS; c++) {
+    for (const id of _colLayout[c]) {
+      let el;
+      if (id === "__placeholder__") {
+        el = placeholder;
+        if (!el) continue;
+      } else {
+        el = elMap[id];
+        if (!el || id === skipId) continue;
+      }
+      el.style.position = "absolute";
+      el.style.width = colWidth + "px";
+      el.style.left = (c * colWidth) + "px";
+      el.style.top = colHeights[c] + "px";
+      el.style.visibility = "";
+      colHeights[c] += el.offsetHeight;
+    }
+  }
   body.style.minHeight = Math.max(...colHeights) + "px";
 }
 
-function requestMasonryLayout() {
-  if (_masonryRAF) cancelAnimationFrame(_masonryRAF);
-  _masonryRAF = requestAnimationFrame(layoutMasonry);
+function requestLayout() {
+  if (_layoutRAF) cancelAnimationFrame(_layoutRAF);
+  _layoutRAF = requestAnimationFrame(() => layoutColumns());
 }
 
-// Re-layout on resize
-window.addEventListener("resize", requestMasonryLayout);
+window.addEventListener("resize", requestLayout);
 
-// ── Pointer-Based Drag-and-Drop Section Reorder ──────────
-const SECTION_ORDER_KEY = "chessbot_section_order";
-let _drag = null; // active drag state
+function saveLayout() {
+  try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(_colLayout)); } catch {}
+}
 
+function restoreLayout() {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (!raw) return false;
+    const saved = JSON.parse(raw);
+    if (!Array.isArray(saved) || saved.length !== NUM_COLS) return false;
+
+    // Validate all section IDs exist
+    const body = document.getElementById("settings-body");
+    const existing = new Set();
+    body.querySelectorAll(".settings-group[data-section-id]").forEach(el => {
+      existing.add(el.dataset.sectionId);
+    });
+    const inLayout = new Set(saved.flat());
+    // If any existing sections are missing from saved layout, add them
+    const missing = [...existing].filter(id => !inLayout.has(id));
+    if (missing.length) saved[0].push(...missing);
+
+    _colLayout = saved;
+    return true;
+  } catch { return false; }
+}
+
+// ── Drag-and-Drop ────────────────────────────────────────
 function initDragAndDrop() {
   const body = document.getElementById("settings-body");
   if (!body) return;
-  restoreSectionOrder();
 
-  body.addEventListener("pointerdown", (e) => {
-    const handle = e.target.closest(".drag-handle");
-    if (!handle) return;
-    const group = handle.closest(".settings-group[data-section-id]");
-    if (!group) return;
-
-    e.preventDefault();
-    handle.setPointerCapture(e.pointerId);
-
-    const groupRect = group.getBoundingClientRect();
-    const bodyRect = body.getBoundingClientRect();
-
-    // Create placeholder
-    const placeholder = document.createElement("div");
-    placeholder.className = "drag-placeholder";
-    placeholder.style.width = groupRect.width + "px";
-    placeholder.style.height = groupRect.height + "px";
-    body.appendChild(placeholder);
-
-    // Lift card: fix its size and position so it follows cursor
-    group.classList.add("dragging");
-    group.style.width = groupRect.width + "px";
-    group.style.left = (groupRect.left - bodyRect.left + body.scrollLeft) + "px";
-    group.style.top = (groupRect.top - bodyRect.top + body.scrollTop) + "px";
-
-    _drag = {
-      group,
-      placeholder,
-      body,
-      offsetX: e.clientX - groupRect.left,
-      offsetY: e.clientY - groupRect.top,
-      scrollTop0: body.scrollTop,
-      pointerId: e.pointerId,
-      insertBeforeEl: null
-    };
-
-    // Initial layout with placeholder in dragged card's DOM position
-    layoutMasonryWithPlaceholder();
-  });
-
-  body.addEventListener("pointermove", (e) => {
-    if (!_drag) return;
-    const { group, body } = _drag;
-    const bodyRect = body.getBoundingClientRect();
-
-    // Move the dragged card to follow cursor
-    const x = e.clientX - _drag.offsetX - bodyRect.left + body.scrollLeft;
-    const y = e.clientY - _drag.offsetY - bodyRect.top + body.scrollTop;
-    group.style.left = x + "px";
-    group.style.top = y + "px";
-
-    // Auto-scroll when near edges
-    const edgeZone = 40;
-    const scrollSpeed = 8;
-    if (e.clientY - bodyRect.top < edgeZone) {
-      body.scrollTop -= scrollSpeed;
-    } else if (bodyRect.bottom - e.clientY < edgeZone) {
-      body.scrollTop += scrollSpeed;
-    }
-
-    // Find nearest drop target based on mouse position vs section centers
-    findDropTarget(e.clientX, e.clientY);
-  });
-
-  body.addEventListener("pointerup", (e) => {
-    if (!_drag) return;
-    finishDrag();
-  });
-
-  body.addEventListener("pointercancel", (e) => {
-    if (!_drag) return;
-    finishDrag();
-  });
-}
-
-function findDropTarget(mx, my) {
-  if (!_drag) return;
-  const { group, placeholder, body } = _drag;
-  const sections = Array.from(body.querySelectorAll(".settings-group[data-section-id]"))
-    .filter(s => s !== group);
-
-  let bestEl = null;
-  let bestDist = Infinity;
-  let insertBefore = true;
-
-  for (const s of sections) {
-    const r = s.getBoundingClientRect();
-    const cy = r.top + r.height / 2;
-    const cx = r.left + r.width / 2;
-    const dist = Math.hypot(mx - cx, my - cy);
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestEl = s;
-      insertBefore = my < cy;
-    }
+  // Restore or build layout
+  if (!restoreLayout()) {
+    const ids = Array.from(body.querySelectorAll(".settings-group[data-section-id]"))
+      .map(el => el.dataset.sectionId);
+    _colLayout = buildInitialLayout(ids);
+    saveLayout();
   }
 
-  if (!bestEl) return;
+  layoutColumns();
 
-  const targetRef = insertBefore ? bestEl : bestEl.nextElementSibling;
-  if (_drag.insertBeforeEl === targetRef) return; // no change
-  _drag.insertBeforeEl = targetRef;
-
-  // Move placeholder in DOM (this determines where the dragged card will be inserted)
-  if (targetRef && targetRef !== placeholder) {
-    body.insertBefore(placeholder, targetRef);
-  } else if (!targetRef) {
-    body.appendChild(placeholder);
-  }
-
-  layoutMasonryWithPlaceholder();
+  body.addEventListener("pointerdown", onPointerDown);
+  body.addEventListener("pointermove", onPointerMove);
+  body.addEventListener("pointerup", onPointerUp);
+  body.addEventListener("pointercancel", onPointerUp);
 }
 
-function layoutMasonryWithPlaceholder() {
+function onPointerDown(e) {
+  const handle = e.target.closest(".drag-handle");
+  if (!handle) return;
+  const group = handle.closest(".settings-group[data-section-id]");
+  if (!group) return;
+
+  e.preventDefault();
+  handle.setPointerCapture(e.pointerId);
+
   const body = document.getElementById("settings-body");
-  if (!body || !_drag) return;
+  const groupRect = group.getBoundingClientRect();
+  const bodyRect = body.getBoundingClientRect();
+  const dragId = group.dataset.sectionId;
 
-  const { group, placeholder } = _drag;
-  // Get all items in DOM order including placeholder, excluding dragged card
-  const items = Array.from(body.children).filter(el =>
-    el !== group && (el.classList.contains("settings-group") || el === placeholder)
-  );
-
-  const bodyWidth = body.clientWidth;
-  const colWidth = Math.floor(bodyWidth / MASONRY_COLS);
-  const colHeights = new Array(MASONRY_COLS).fill(0);
-
-  items.forEach(item => {
-    if (item === placeholder) {
-      item.style.width = colWidth + "px";
-    } else {
-      item.style.width = colWidth + "px";
+  // Remove from column layout
+  let origCol = 0, origIdx = 0;
+  for (let c = 0; c < NUM_COLS; c++) {
+    const idx = _colLayout[c].indexOf(dragId);
+    if (idx !== -1) {
+      origCol = c;
+      origIdx = idx;
+      _colLayout[c].splice(idx, 1);
+      break;
     }
-  });
-  body.offsetHeight;
+  }
+  // Insert placeholder where the card was
+  _colLayout[origCol].splice(origIdx, 0, "__placeholder__");
 
-  items.forEach(item => {
-    const h = item.offsetHeight;
-    const minCol = colHeights.indexOf(Math.min(...colHeights));
-    item.style.left = (minCol * colWidth) + "px";
-    item.style.top = colHeights[minCol] + "px";
-    if (item !== placeholder) item.style.visibility = "";
-    colHeights[minCol] += h;
-  });
+  // Create placeholder element
+  const placeholder = document.createElement("div");
+  placeholder.className = "drag-placeholder";
+  placeholder.style.height = groupRect.height + "px";
+  body.appendChild(placeholder);
 
-  body.style.minHeight = Math.max(...colHeights) + "px";
+  // Lift the card
+  group.classList.add("dragging");
+  const colWidth = Math.floor(body.clientWidth / NUM_COLS);
+  group.style.width = colWidth + "px";
+  group.style.left = (groupRect.left - bodyRect.left + body.scrollLeft) + "px";
+  group.style.top = (groupRect.top - bodyRect.top + body.scrollTop) + "px";
+
+  _drag = {
+    id: dragId,
+    group,
+    placeholder,
+    body,
+    offsetX: e.clientX - groupRect.left,
+    offsetY: e.clientY - groupRect.top,
+    currentCol: origCol,
+    currentIdx: origIdx,
+  };
+
+  layoutColumns(dragId, placeholder);
 }
 
-function finishDrag() {
+function onPointerMove(e) {
   if (!_drag) return;
-  const { group, placeholder, body } = _drag;
+  const { group, body, placeholder } = _drag;
+  const bodyRect = body.getBoundingClientRect();
 
-  // Insert the dragged card where the placeholder is
-  body.insertBefore(group, placeholder);
+  // Move dragged card to follow cursor
+  group.style.left = (e.clientX - _drag.offsetX - bodyRect.left + body.scrollLeft) + "px";
+  group.style.top = (e.clientY - _drag.offsetY - bodyRect.top + body.scrollTop) + "px";
+
+  // Auto-scroll near edges
+  const edgeZone = 40, scrollSpeed = 8;
+  if (e.clientY - bodyRect.top < edgeZone) body.scrollTop -= scrollSpeed;
+  else if (bodyRect.bottom - e.clientY < edgeZone) body.scrollTop += scrollSpeed;
+
+  // Determine target column from mouse X
+  const colWidth = Math.floor(body.clientWidth / NUM_COLS);
+  const relX = e.clientX - bodyRect.left;
+  let targetCol = Math.floor(relX / colWidth);
+  targetCol = Math.max(0, Math.min(NUM_COLS - 1, targetCol));
+
+  // Determine target index within column from mouse Y
+  const relY = e.clientY - bodyRect.top + body.scrollTop;
+  const elMap = getElMap();
+  const colItems = _colLayout[targetCol].filter(id => id !== "__placeholder__");
+  let targetIdx = colItems.length; // default: append at end
+
+  let runningY = 0;
+  for (let i = 0; i < colItems.length; i++) {
+    const el = elMap[colItems[i]];
+    if (!el) continue;
+    const h = el.offsetHeight;
+    const midY = runningY + h / 2;
+    if (relY < midY) {
+      targetIdx = i;
+      break;
+    }
+    runningY += h;
+  }
+
+  // Update layout if target changed
+  if (targetCol !== _drag.currentCol || targetIdx !== _drag.currentIdx) {
+    // Remove placeholder from old position
+    for (let c = 0; c < NUM_COLS; c++) {
+      const pi = _colLayout[c].indexOf("__placeholder__");
+      if (pi !== -1) _colLayout[c].splice(pi, 1);
+    }
+    // Insert placeholder at new position
+    const realItems = _colLayout[targetCol].slice();
+    realItems.splice(targetIdx, 0, "__placeholder__");
+    _colLayout[targetCol] = realItems;
+
+    _drag.currentCol = targetCol;
+    _drag.currentIdx = targetIdx;
+
+    layoutColumns(_drag.id, placeholder);
+  }
+}
+
+function onPointerUp(e) {
+  if (!_drag) return;
+  const { id, group, placeholder, body } = _drag;
+
+  // Replace placeholder with the dragged card's ID
+  for (let c = 0; c < NUM_COLS; c++) {
+    const pi = _colLayout[c].indexOf("__placeholder__");
+    if (pi !== -1) {
+      _colLayout[c][pi] = id;
+      break;
+    }
+  }
+
   placeholder.remove();
-
   group.classList.remove("dragging");
-  group.style.width = "";
-
   _drag = null;
 
-  saveSectionOrder();
-  layoutMasonry();
-}
-
-function saveSectionOrder() {
-  const body = document.getElementById("settings-body");
-  if (!body) return;
-  const order = Array.from(body.querySelectorAll(".settings-group[data-section-id]"))
-    .map(el => el.dataset.sectionId);
-  try { localStorage.setItem(SECTION_ORDER_KEY, JSON.stringify(order)); } catch {}
-}
-
-function restoreSectionOrder() {
-  try {
-    const raw = localStorage.getItem(SECTION_ORDER_KEY);
-    if (!raw) return;
-    const order = JSON.parse(raw);
-    if (!Array.isArray(order)) return;
-    const body = document.getElementById("settings-body");
-    if (!body) return;
-    const sections = {};
-    body.querySelectorAll(".settings-group[data-section-id]").forEach(el => {
-      sections[el.dataset.sectionId] = el;
-    });
-    // Reorder: append in saved order (missing sections stay at end)
-    for (const id of order) {
-      if (sections[id]) {
-        body.appendChild(sections[id]);
-        delete sections[id];
-      }
-    }
-    // Append any remaining sections not in saved order
-    for (const el of Object.values(sections)) {
-      body.appendChild(el);
-    }
-  } catch {}
+  saveLayout();
+  layoutColumns();
 }
 
 // ── Init ─────────────────────────────────────────────────
 initThemeGrid();
 initPieceSetSelect();
 initDragAndDrop();
-layoutMasonry();
 connect();
 </script>
 </body>
