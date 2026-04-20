@@ -1229,6 +1229,7 @@
     </div>
 
     <div class="settings-body" id="settings-body">
+      <div id="settings-body-spacer" style="pointer-events:none;"></div>
       <!-- 1. Analysis -->
       <div class="settings-group" data-section-id="analysis">
         <div class="group-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Analysis</div>
@@ -3587,7 +3588,8 @@ function layoutColumns(skipId, placeholder) {
       colHeights[c] += el.offsetHeight;
     }
   }
-  body.style.minHeight = Math.max(...colHeights) + "px";
+  const spacer = document.getElementById("settings-body-spacer");
+  if (spacer) spacer.style.height = Math.max(...colHeights) + "px";
 }
 
 function requestLayout() {
