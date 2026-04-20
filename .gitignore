@@ -3,6 +3,5 @@ dist/
 engine/
 books/
 syzygy/
-screenshots/
 dashboard-*.png
 .playwright-mcp/
