@@ -344,6 +344,7 @@
     flex: 1;
     display: flex;
     flex-wrap: wrap;
+    align-items: flex-start;
     align-content: flex-start;
     gap: 0;
     overflow-y: auto;
@@ -3511,6 +3512,7 @@ document.getElementById("btn-copy-logs").addEventListener("click", async () => {
 // ── Drag-and-Drop Section Reorder ─────────────────────────
 const SECTION_ORDER_KEY = "chessbot_section_order";
 let draggedSection = null;
+let _lastMouseDownTarget = null;
 
 function initDragAndDrop() {
   const body = document.getElementById("settings-body");
@@ -3519,12 +3521,17 @@ function initDragAndDrop() {
   // Restore saved order
   restoreSectionOrder();
 
+  // Track which element was actually clicked (dragstart e.target is always the draggable element)
+  body.addEventListener("mousedown", (e) => {
+    _lastMouseDownTarget = e.target;
+  }, true);
+
   body.addEventListener("dragstart", (e) => {
     const group = e.target.closest(".settings-group[draggable]");
     if (!group) return;
-    // Only allow drag from the handle
+    // Only allow drag when initiated from the drag handle
     const handle = group.querySelector(".drag-handle");
-    if (handle && !handle.contains(e.target) && e.target !== handle) {
+    if (handle && _lastMouseDownTarget && !handle.contains(_lastMouseDownTarget)) {
       e.preventDefault();
       return;
     }
