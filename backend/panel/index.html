@@ -650,42 +650,66 @@
     cursor: pointer;
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 6px;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: border-color 0.2s, box-shadow 0.2s, background 0.15s;
     outline: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    position: relative;
+  }
+  .variant-picker-selected::after {
+    content: '';
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%) rotate(0deg);
+    width: 0; height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid var(--text-400);
+    transition: transform 0.2s, border-color 0.2s;
+  }
+  .variant-picker.open .variant-picker-selected::after {
+    transform: translateY(-50%) rotate(180deg);
+    border-top-color: var(--accent);
   }
   .variant-picker-selected:hover,
   .variant-picker-selected:focus {
-    border-color: var(--accent);
-    box-shadow: var(--accent-glow);
+    border-color: var(--bg-500);
+    background: var(--bg-750);
   }
   .variant-picker.open .variant-picker-selected {
     border-color: var(--accent);
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
+    box-shadow: 0 0 0 3px var(--accent-muted);
   }
   .variant-picker-dropdown {
-    display: none;
+    display: flex;
+    flex-direction: column;
     position: absolute;
-    top: 100%;
+    top: calc(100% + 4px);
     left: 0;
     right: 0;
-    z-index: 100;
+    z-index: 1000;
     background: var(--bg-800);
-    border: 1px solid var(--accent);
-    border-top: none;
-    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    border: 1px solid var(--bg-600);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.03);
     max-height: 320px;
     overflow: hidden;
-    flex-direction: column;
+    opacity: 0;
+    transform: translateY(-4px);
+    pointer-events: none;
+    transition: opacity 0.15s, transform 0.15s;
   }
   .variant-picker.open .variant-picker-dropdown {
-    display: flex;
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
   }
   .variant-picker-search {
     width: 100%;
-    padding: 7px 10px;
+    padding: 8px 10px;
     border: none;
     border-bottom: 1px solid var(--bg-600);
     background: var(--bg-750);
@@ -694,41 +718,63 @@
     font-size: 12px;
     outline: none;
     box-sizing: border-box;
+    flex-shrink: 0;
+  }
+  .variant-picker-search:focus {
+    background: var(--bg-700);
   }
   .variant-picker-search::placeholder { color: var(--text-400); }
   .variant-picker-list {
     overflow-y: auto;
     max-height: 270px;
+    padding: 4px;
     scrollbar-width: thin;
     scrollbar-color: var(--bg-600) transparent;
   }
+  .variant-picker-list::-webkit-scrollbar { width: 5px; }
+  .variant-picker-list::-webkit-scrollbar-track { background: transparent; }
+  .variant-picker-list::-webkit-scrollbar-thumb { background: var(--bg-600); border-radius: 3px; }
   .variant-picker-group {
-    padding: 4px 0;
+    padding: 2px 0;
+  }
+  .variant-picker-group + .variant-picker-group {
+    border-top: 1px solid var(--bg-700);
+    margin-top: 2px;
+    padding-top: 4px;
   }
   .variant-picker-group-label {
-    padding: 4px 10px 2px;
+    padding: 4px 8px 2px;
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-400);
+    color: var(--text-500);
     pointer-events: none;
   }
   .variant-picker-item {
-    padding: 5px 10px 5px 16px;
+    padding: 6px 10px;
+    border-radius: 4px;
     font-size: 12px;
-    color: var(--text-200);
+    font-weight: 500;
+    color: var(--text-300);
     cursor: pointer;
-    transition: background 0.1s;
+    transition: background 0.1s, color 0.1s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .variant-picker-item:hover,
   .variant-picker-item.highlighted {
-    background: var(--accent-muted);
-    color: var(--text-50);
+    background: var(--bg-700);
+    color: var(--text-100);
   }
   .variant-picker-item.selected {
-    color: var(--accent);
-    font-weight: 600;
+    background: var(--accent-muted);
+    color: var(--accent-hover);
+  }
+  .variant-picker-item.selected::before {
+    content: '✓ ';
+    font-size: 10px;
   }
   .variant-picker-empty {
     padding: 12px 10px;
@@ -1236,7 +1282,6 @@
         <div class="variant-picker" id="variant-picker">
           <div class="variant-picker-selected" id="variant-picker-btn" tabindex="0">
             <span id="variant-picker-label">Standard</span>
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 5l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </div>
           <div class="variant-picker-dropdown" id="variant-picker-dropdown">
             <input type="text" class="variant-picker-search" id="variant-picker-search" placeholder="Search variants…" autocomplete="off" spellcheck="false">
