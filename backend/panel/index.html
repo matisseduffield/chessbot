@@ -59,11 +59,62 @@
   /* ── Layout: board left, settings right ── */
   #layout {
     display: grid;
-    grid-template-columns: 580px 1fr;
+    grid-template-columns: var(--left-col-width, 580px) 4px 1fr;
     grid-template-rows: 1fr;
     height: 100vh;
     overflow: hidden;
     background: var(--bg-950);
+  }
+
+  /* Vertical resizer between board column and settings */
+  #board-resizer {
+    background: var(--bg-700);
+    cursor: col-resize;
+    position: relative;
+    z-index: 5;
+    transition: background 0.15s;
+  }
+  #board-resizer:hover,
+  #board-resizer.dragging {
+    background: var(--pink, #e91e63);
+  }
+  #board-resizer::after {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0;
+    left: -4px; right: -4px;
+  }
+
+  /* Vertical resizers between settings columns */
+  .col-resizer {
+    position: absolute;
+    top: 0;
+    width: 10px;
+    margin-left: -5px;
+    cursor: col-resize;
+    z-index: 4;
+    background: transparent;
+    transition: background 0.15s;
+  }
+  .col-resizer::before {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: transparent;
+    transition: background 0.15s;
+  }
+  .col-resizer:hover::before,
+  .col-resizer.dragging::before {
+    background: var(--pink, #e91e63);
+  }
+
+  /* During any column drag, disable text selection */
+  body.resizing,
+  body.resizing * {
+    user-select: none !important;
+    cursor: col-resize !important;
   }
 
   /* ── Left column: board + PVs ── */
@@ -71,12 +122,9 @@
     display: flex;
     flex-direction: column;
     background: var(--bg-900);
-    border-right: 1px solid var(--bg-700);
     overflow-y: auto;
     overflow-x: hidden;
-    width: 580px;
-    min-width: 580px;
-    flex-shrink: 0;
+    min-width: 0;
   }
   #board-area {
     padding: 16px 20px;
@@ -1380,6 +1428,9 @@
       <div class="empty-state">Waiting for analysis…</div>
     </div>
   </div>
+
+  <!-- Vertical resizer between board column and settings -->
+  <div id="board-resizer" title="Drag to resize board column"></div>
 
   <!-- Right: Settings -->
   <div id="settings">
@@ -3893,21 +3944,59 @@ document.getElementById("btn-copy-logs").addEventListener("click", async () => {
 // ── Column-Based Layout + Drag-and-Drop ──────────────────
 const NUM_COLS = 3;
 const LAYOUT_KEY = "chessbot_column_layout";
+const COL_FRACTIONS_KEY = "chessbot_column_fractions";
+const LEFT_COL_WIDTH_KEY = "chessbot_left_col_width";
 let _colLayout = null;  // [[id, id, ...], [id, ...], [id, ...]]
+let _colFractions = null; // [f0, f1, f2] summing to 1
 let _drag = null;
 let _layoutRAF = null;
+
+function loadColFractions() {
+  try {
+    const raw = localStorage.getItem(COL_FRACTIONS_KEY);
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr) || arr.length !== NUM_COLS) return null;
+    const sum = arr.reduce((a, b) => a + b, 0);
+    if (sum <= 0) return null;
+    // Normalize
+    return arr.map(v => v / sum);
+  } catch { return null; }
+}
+function saveColFractions() {
+  try { localStorage.setItem(COL_FRACTIONS_KEY, JSON.stringify(_colFractions)); } catch {}
+}
+function getColFractions() {
+  if (!_colFractions) {
+    _colFractions = loadColFractions() || Array.from({ length: NUM_COLS }, () => 1 / NUM_COLS);
+  }
+  return _colFractions;
+}
+function getColWidths(totalWidth) {
+  const fr = getColFractions();
+  const widths = fr.map(f => Math.floor(totalWidth * f));
+  // Give remainder to last column
+  const used = widths.reduce((a, b) => a + b, 0);
+  widths[NUM_COLS - 1] += (totalWidth - used);
+  return widths;
+}
+function getColOffsets(widths) {
+  const offs = [0];
+  for (let i = 0; i < widths.length - 1; i++) offs.push(offs[i] + widths[i]);
+  return offs;
+}
 
 // Build initial column layout (shortest-column packing)
 function buildInitialLayout(sectionIds) {
   const body = document.getElementById("settings-body");
-  const colWidth = Math.floor(body.clientWidth / NUM_COLS);
+  const widths = getColWidths(body.clientWidth);
   const cols = Array.from({ length: NUM_COLS }, () => []);
   const colHeights = new Array(NUM_COLS).fill(0);
 
-  // Measure each section
+  // Measure each section (use col 0 width as estimate)
   const elMap = {};
   body.querySelectorAll(".settings-group[data-section-id]").forEach(el => {
-    el.style.width = colWidth + "px";
+    el.style.width = widths[0] + "px";
     el.style.position = "absolute";
     el.style.visibility = "hidden";
     el.style.left = "0";
@@ -3942,13 +4031,14 @@ function layoutColumns(skipId, placeholder) {
   if (!body || !_colLayout) return;
 
   const bodyWidth = body.clientWidth;
-  const colWidth = Math.floor(bodyWidth / NUM_COLS);
+  const widths = getColWidths(bodyWidth);
+  const offsets = getColOffsets(widths);
   const elMap = getElMap();
   const colHeights = new Array(NUM_COLS).fill(0);
 
   for (let c = 0; c < NUM_COLS; c++) {
-    // Last column takes remaining width to avoid overflow
-    const thisWidth = (c === NUM_COLS - 1) ? bodyWidth - (c * colWidth) : colWidth;
+    const thisWidth = widths[c];
+    const thisLeft = offsets[c];
     for (const id of _colLayout[c]) {
       let el;
       if (id === "__placeholder__") {
@@ -3960,14 +4050,79 @@ function layoutColumns(skipId, placeholder) {
       }
       el.style.position = "absolute";
       el.style.width = thisWidth + "px";
-      el.style.left = (c * colWidth) + "px";
+      el.style.left = thisLeft + "px";
       el.style.top = colHeights[c] + "px";
       el.style.visibility = "";
       colHeights[c] += el.offsetHeight;
     }
   }
+  const totalHeight = Math.max(...colHeights);
   const spacer = document.getElementById("settings-body-spacer");
-  if (spacer) spacer.style.height = Math.max(...colHeights) + "px";
+  if (spacer) spacer.style.height = totalHeight + "px";
+
+  // Position inter-column resize handles
+  positionColResizers(offsets, widths, totalHeight);
+}
+
+function positionColResizers(offsets, widths, totalHeight) {
+  const body = document.getElementById("settings-body");
+  if (!body) return;
+  // Remove old resizers
+  body.querySelectorAll(".col-resizer").forEach(e => e.remove());
+  // Add resizer at the boundary between columns 0-1 and 1-2
+  for (let i = 1; i < NUM_COLS; i++) {
+    const resizer = document.createElement("div");
+    resizer.className = "col-resizer";
+    resizer.dataset.boundary = i; // resizer between col i-1 and col i
+    resizer.style.left = offsets[i] + "px";
+    resizer.style.height = totalHeight + "px";
+    resizer.addEventListener("pointerdown", onColResizerDown);
+    body.appendChild(resizer);
+  }
+}
+
+function onColResizerDown(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const resizer = e.currentTarget;
+  const boundary = parseInt(resizer.dataset.boundary); // between col boundary-1 and col boundary
+  const body = document.getElementById("settings-body");
+  const bodyRect = body.getBoundingClientRect();
+  resizer.classList.add("dragging");
+  document.body.classList.add("resizing");
+  resizer.setPointerCapture(e.pointerId);
+
+  const fr = getColFractions().slice();
+  const startX = e.clientX;
+  const bodyWidth = body.clientWidth;
+  const leftFr = fr[boundary - 1];
+  const rightFr = fr[boundary];
+  const combined = leftFr + rightFr;
+
+  function onMove(ev) {
+    const dx = ev.clientX - startX;
+    const dFr = dx / bodyWidth;
+    // Minimum 10% width for each column
+    const minFr = 0.1;
+    let newLeft = leftFr + dFr;
+    let newRight = rightFr - dFr;
+    if (newLeft < minFr) { newLeft = minFr; newRight = combined - minFr; }
+    if (newRight < minFr) { newRight = minFr; newLeft = combined - minFr; }
+    fr[boundary - 1] = newLeft;
+    fr[boundary] = newRight;
+    _colFractions = fr.slice();
+    layoutColumns();
+  }
+  function onUp(ev) {
+    resizer.releasePointerCapture(ev.pointerId);
+    resizer.classList.remove("dragging");
+    document.body.classList.remove("resizing");
+    resizer.removeEventListener("pointermove", onMove);
+    resizer.removeEventListener("pointerup", onUp);
+    saveColFractions();
+  }
+  resizer.addEventListener("pointermove", onMove);
+  resizer.addEventListener("pointerup", onUp);
 }
 
 function requestLayout() {
@@ -4061,8 +4216,8 @@ function onPointerDown(e) {
 
   // Lift the card
   group.classList.add("dragging");
-  const colWidth = Math.floor(body.clientWidth / NUM_COLS);
-  group.style.width = colWidth + "px";
+  const widthsForDrag = getColWidths(body.clientWidth);
+  group.style.width = widthsForDrag[origCol] + "px";
   group.style.left = (groupRect.left - bodyRect.left + body.scrollLeft) + "px";
   group.style.top = (groupRect.top - bodyRect.top + body.scrollTop) + "px";
 
@@ -4094,10 +4249,14 @@ function onPointerMove(e) {
   if (e.clientY - bodyRect.top < edgeZone) body.scrollTop -= scrollSpeed;
   else if (bodyRect.bottom - e.clientY < edgeZone) body.scrollTop += scrollSpeed;
 
-  // Determine target column from mouse X
-  const colWidth = Math.floor(body.clientWidth / NUM_COLS);
+  // Determine target column from mouse X using dynamic column widths
+  const widthsForMove = getColWidths(body.clientWidth);
+  const offsetsForMove = getColOffsets(widthsForMove);
   const relX = e.clientX - bodyRect.left;
-  let targetCol = Math.floor(relX / colWidth);
+  let targetCol = 0;
+  for (let i = 0; i < NUM_COLS; i++) {
+    if (relX >= offsetsForMove[i]) targetCol = i;
+  }
   targetCol = Math.max(0, Math.min(NUM_COLS - 1, targetCol));
 
   // Determine target index within column from mouse Y
@@ -4207,12 +4366,62 @@ function initShortcutsModal() {
   });
 }
 
+// ── Board Column Resizer ─────────────────────────────────
+function initBoardResizer() {
+  const resizer = document.getElementById("board-resizer");
+  const layout = document.getElementById("layout");
+  if (!resizer || !layout) return;
+
+  // Restore saved width
+  try {
+    const saved = parseInt(localStorage.getItem(LEFT_COL_WIDTH_KEY));
+    if (saved && saved > 200 && saved < window.innerWidth - 200) {
+      layout.style.setProperty("--left-col-width", saved + "px");
+    }
+  } catch {}
+
+  resizer.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    resizer.setPointerCapture(e.pointerId);
+    resizer.classList.add("dragging");
+    document.body.classList.add("resizing");
+
+    const startX = e.clientX;
+    const layoutRect = layout.getBoundingClientRect();
+    const leftCol = document.getElementById("left-col");
+    const startWidth = leftCol.getBoundingClientRect().width;
+    const minWidth = 300;
+    const maxWidth = layoutRect.width - 400; // leave room for settings
+
+    function onMove(ev) {
+      const dx = ev.clientX - startX;
+      let newWidth = Math.max(minWidth, Math.min(maxWidth, startWidth + dx));
+      layout.style.setProperty("--left-col-width", newWidth + "px");
+      requestLayout();
+    }
+    function onUp(ev) {
+      resizer.releasePointerCapture(ev.pointerId);
+      resizer.classList.remove("dragging");
+      document.body.classList.remove("resizing");
+      resizer.removeEventListener("pointermove", onMove);
+      resizer.removeEventListener("pointerup", onUp);
+      try {
+        const current = layout.style.getPropertyValue("--left-col-width");
+        if (current) localStorage.setItem(LEFT_COL_WIDTH_KEY, parseInt(current));
+      } catch {}
+    }
+    resizer.addEventListener("pointermove", onMove);
+    resizer.addEventListener("pointerup", onUp);
+  });
+}
+
 // ── Init ─────────────────────────────────────────────────
 initThemeGrid();
 initPieceSetSelect();
 initCollapsible();
 initShortcutsModal();
 initDragAndDrop();
+initBoardResizer();
 renderBoard();
 connect();
 </script>
