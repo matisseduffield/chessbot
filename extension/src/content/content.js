@@ -24,6 +24,7 @@ import { applyUciMoveToBoard } from "./fenApply.js";
 import { formatScore, isLineLosing } from "./evalFormat.js";
 import { filterGhostPieces as _filterGhostPieces } from "./pieceFilter.js";
 import { getEvalTimeout as _getEvalTimeout } from "./evalTimeout.js";
+import { assignPlayersByOrientation } from "./gameInfo.js";
 
 function gridToFenBoard(grid, pocket) {
   const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
@@ -1265,15 +1266,16 @@ function scrapeGameInfo() {
 
       // On Lichess, if we're playing black, the board is flipped (black at bottom)
       const flipped = !!document.querySelector(".cg-wrap.orientation-black");
-      info.flipped = flipped;
-
-      if (flipped) {
-        info.black = { name: bottomName, clock: bottomClockText };
-        info.white = { name: topName, clock: topClockText };
-      } else {
-        info.white = { name: bottomName, clock: bottomClockText };
-        info.black = { name: topName, clock: topClockText };
-      }
+      Object.assign(
+        info,
+        assignPlayersByOrientation({
+          topName,
+          bottomName,
+          topClock: topClockText,
+          bottomClock: bottomClockText,
+          flipped,
+        }),
+      );
     } else if (host.includes("chess.com")) {
       // Chess.com: player names and clocks
       const players = document.querySelectorAll(".player-component, [class*='player-']");
@@ -1290,15 +1292,16 @@ function scrapeGameInfo() {
       // Chess.com: check if board is flipped
       const board = document.querySelector(".board, chess-board");
       const flipped = board ? board.classList.contains("flipped") : false;
-      info.flipped = flipped;
-
-      if (flipped) {
-        info.black = { name: bottomName, clock: bottomClockText };
-        info.white = { name: topName, clock: topClockText };
-      } else {
-        info.white = { name: bottomName, clock: bottomClockText };
-        info.black = { name: topName, clock: topClockText };
-      }
+      Object.assign(
+        info,
+        assignPlayersByOrientation({
+          topName,
+          bottomName,
+          topClock: topClockText,
+          bottomClock: bottomClockText,
+          flipped,
+        }),
+      );
     }
 
     // Send via WS

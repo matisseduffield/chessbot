@@ -441,18 +441,23 @@ class StockfishBridge {
       clearTimeout(this._abortTimeout);
       const parsed = parseBestmoveLine(line);
       const bestmove = parsed ? parsed.bestmove : null;
+      // Plan §4.3: surface the engine's ponder move so callers can
+      // pre-search / display "expected reply".
+      const ponder = parsed && parsed.ponder ? parsed.ponder : null;
 
       // Build lines array from collected PV data
       const lines = [];
       if (this._pendingPV) {
-        const indices = Object.keys(this._pendingPV).map(Number).sort((a, b) => a - b);
+        const indices = Object.keys(this._pendingPV)
+          .map(Number)
+          .sort((a, b) => a - b);
         for (const idx of indices) {
           lines.push(this._pendingPV[idx]);
         }
       }
 
       if (this._pendingResolve) {
-        this._pendingResolve({ bestmove, lines });
+        this._pendingResolve({ bestmove, ponder, lines });
         this._pendingResolve = null;
         this._pendingPV = null;
       }

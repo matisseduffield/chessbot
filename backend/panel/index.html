@@ -1879,18 +1879,37 @@ function escHtml(s) {
 }
 
 // ── Eval History Sparkline ───────────────────────────────
+// Plan §5.1: rAF-coalesced redraws. WS bursts (many info frames while
+// searching) used to cause a full canvas redraw on every message;
+// we now queue a single redraw per animation frame.
+let _evalGraphRafId = 0;
+let _lastCanvasW = 0;
+let _lastCanvasH = 0;
 function renderEvalGraph() {
+  if (_evalGraphRafId) return;
+  _evalGraphRafId = requestAnimationFrame(() => {
+    _evalGraphRafId = 0;
+    _renderEvalGraphNow();
+  });
+}
+function _renderEvalGraphNow() {
   const canvas = document.getElementById("eval-graph");
   if (!canvas || !evalHistory.length) return;
   const ctx = canvas.getContext("2d");
   const dpr = window.devicePixelRatio || 1;
-  // Read CSS size BEFORE setting canvas buffer dimensions
   const rect = canvas.getBoundingClientRect();
   const w = Math.floor(rect.width * dpr);
   const h = Math.floor(rect.height * dpr);
-  canvas.width = w;
-  canvas.height = h;
-  ctx.scale(dpr, dpr);
+  // Only resize the backing buffer when dimensions actually change.
+  // Setting canvas.width/.height clears and forces a full repaint,
+  // which we want to avoid on the hot path.
+  if (w !== _lastCanvasW || h !== _lastCanvasH) {
+    canvas.width = w;
+    canvas.height = h;
+    _lastCanvasW = w;
+    _lastCanvasH = h;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const cw = rect.width;
   const ch = rect.height;
 

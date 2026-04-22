@@ -734,6 +734,7 @@ async function main() {
               const engineMsg = {
                 type: "bestmove",
                 bestmove: result.bestmove,
+                ponder: result.ponder || null,
                 lines: enrichedLines,
                 source: "engine",
                 fen,
@@ -746,6 +747,7 @@ async function main() {
               if (depth > 0 && result.bestmove) {
                 setCachedEval(fen, evalVariant, depth, multiPV, {
                   bestmove: result.bestmove,
+                  ponder: result.ponder || null,
                   lines: enrichedLines,
                   tablebase: tbResult,
                 });
