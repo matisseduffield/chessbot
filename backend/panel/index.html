@@ -1864,6 +1864,16 @@ import {
   calculateMaterial,
   materialAdvantageHtml,
 } from "./src/panelUtils.js";
+import {
+  computeEvalGraphPoints,
+  computeEvalBar,
+  computeWdlPcts,
+  formatNodesMetric,
+  formatTimeMetric,
+  formatNpsMetric,
+  pvScoreColor,
+  speakablize,
+} from "./src/panelRender.js";
 // ── State ────────────────────────────────────────────────
 let ws = null;
 let wsBackoff = 1000;
@@ -1917,7 +1927,6 @@ function _renderEvalGraphNow() {
   const red = style.getPropertyValue("--red").trim() || "#ef4444";
 
   const midY = ch / 2;
-  const clamp = 800;
 
   // Dashed zero line
   ctx.save();
@@ -1931,17 +1940,17 @@ function _renderEvalGraphNow() {
   ctx.restore();
 
   const n = evalHistory.length;
-  const toY = (cp) => {
-    // When flipped (user is black), negate so positive = user's advantage
-    const userCp = (currentData.flipped) ? -cp : cp;
-    const clamped = Math.max(-clamp, Math.min(clamp, userCp));
-    return midY - (clamped / clamp) * midY;
-  };
+  const graph = computeEvalGraphPoints(
+    evalHistory,
+    currentData.flipped || false,
+    cw,
+    ch
+  );
+  const { points } = graph;
 
   if (n === 1) {
-    const y = toY(evalHistory[0].cp);
-    const adjCp = currentData.flipped ? -evalHistory[0].cp : evalHistory[0].cp;
-    const color = adjCp >= 0 ? green : red;
+    const y = points[0].y;
+    const color = graph.lastAdjCp >= 0 ? green : red;
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -1950,9 +1959,6 @@ function _renderEvalGraphNow() {
     ctx.stroke();
     return;
   }
-
-  const step = cw / (n - 1);
-  const points = evalHistory.map((e, i) => ({ x: i * step, y: toY(e.cp) }));
 
   // Green fill (above zero = user's advantage)
   ctx.beginPath();
@@ -1984,8 +1990,7 @@ function _renderEvalGraphNow() {
   for (let i = 1; i < n; i++) {
     ctx.lineTo(points[i].x, points[i].y);
   }
-  const lastCp = currentData.flipped ? -evalHistory[n - 1].cp : evalHistory[n - 1].cp;
-  ctx.strokeStyle = lastCp >= 0 ? green : red;
+  ctx.strokeStyle = graph.lastAdjCp >= 0 ? green : red;
   ctx.lineWidth = 1.5;
   ctx.stroke();
 }
@@ -2560,33 +2565,15 @@ function renderEvalBar() {
   }
 
   const best = lines[0];
-  let whitePct = 50;
-  if (best.mate !== undefined && best.mate !== null) {
-    whitePct = best.mate > 0 ? 95 : 5;
-  } else if (best.score !== undefined && best.score !== null) {
-    // score is from side-to-move. FEN tells us who's moving.
-    const turn = currentData.fen ? currentData.fen.split(" ")[1] : "w";
-    const cpWhite = turn === "w" ? best.score : -best.score;
-    whitePct = Math.min(95, Math.max(5, 50 + cpWhite / 10));
-  }
+  const { whitePct, userScore } = computeEvalBar(
+    best,
+    currentData.fen ? currentData.fen.split(" ")[1] : "w",
+    boardFlipped
+  );
 
   // When flipped, white is at top of bar, so top height = whitePct
   // When not flipped, black is at top, so top height = 100 - whitePct
   topEl.style.height = boardFlipped ? `${whitePct}%` : `${100 - whitePct}%`;
-  // Show score from user's perspective
-  const turn = currentData.fen ? currentData.fen.split(" ")[1] : "w";
-  let userScore = { ...best };
-  if (boardFlipped) {
-    // User is black — negate score to show from their perspective
-    if (userScore.score !== undefined && userScore.score !== null) {
-      const cpWhiteScore = turn === "w" ? userScore.score : -userScore.score;
-      userScore = { ...userScore, score: -cpWhiteScore };
-    }
-    if (userScore.mate !== undefined && userScore.mate !== null) {
-      const mateWhite = turn === "w" ? userScore.mate : -userScore.mate;
-      userScore = { ...userScore, mate: -mateWhite };
-    }
-  }
   const scoreText = formatScore(userScore);
   scoreEl.textContent = scoreText;
 
@@ -2612,30 +2599,18 @@ function renderEvalBar() {
 
   // WDL bar — show win/draw/loss percentages if available
   const wdlBar = document.getElementById("wdl-bar");
-  if (best.wdl) {
-    const total = best.wdl.win + best.wdl.draw + best.wdl.loss;
-    if (total > 0) {
-      const turn = currentData.fen ? currentData.fen.split(" ")[1] : "w";
-      // WDL is from side-to-move; show from user's perspective
-      const wWhite = turn === "w" ? best.wdl.win : best.wdl.loss;
-      const dWhite = best.wdl.draw;
-      const lWhite = turn === "w" ? best.wdl.loss : best.wdl.win;
-      // If board is flipped, user is black — swap win/loss
-      const w = boardFlipped ? lWhite : wWhite;
-      const d = dWhite;
-      const l = boardFlipped ? wWhite : lWhite;
-      const wPct = (w / total * 100).toFixed(1);
-      const dPct = (d / total * 100).toFixed(1);
-      const lPct = (l / total * 100).toFixed(1);
-      document.getElementById("wdl-win").style.width = `${wPct}%`;
-      document.getElementById("wdl-draw").style.width = `${dPct}%`;
-      document.getElementById("wdl-loss").style.width = `${lPct}%`;
-      document.getElementById("wdl-win-label").textContent = parseFloat(wPct) >= 8 ? `${Math.round(wPct)}%` : "";
-      document.getElementById("wdl-draw-label").textContent = parseFloat(dPct) >= 8 ? `${Math.round(dPct)}%` : "";
-      document.getElementById("wdl-loss-label").textContent = parseFloat(lPct) >= 8 ? `${Math.round(lPct)}%` : "";
-      wdlBar.title = `Win: ${(w / 10).toFixed(1)}%  Draw: ${(d / 10).toFixed(1)}%  Loss: ${(l / 10).toFixed(1)}%`;
-      wdlBar.style.display = "block";
-    }
+  const turnStm = currentData.fen ? currentData.fen.split(" ")[1] : "w";
+  const wdlPcts = best.wdl ? computeWdlPcts(best.wdl, turnStm, boardFlipped) : null;
+  if (wdlPcts) {
+    const { w, d, l, wPct, dPct, lPct } = wdlPcts;
+    document.getElementById("wdl-win").style.width = `${wPct.toFixed(1)}%`;
+    document.getElementById("wdl-draw").style.width = `${dPct.toFixed(1)}%`;
+    document.getElementById("wdl-loss").style.width = `${lPct.toFixed(1)}%`;
+    document.getElementById("wdl-win-label").textContent = wPct >= 8 ? `${Math.round(wPct)}%` : "";
+    document.getElementById("wdl-draw-label").textContent = dPct >= 8 ? `${Math.round(dPct)}%` : "";
+    document.getElementById("wdl-loss-label").textContent = lPct >= 8 ? `${Math.round(lPct)}%` : "";
+    wdlBar.title = `Win: ${(w / 10).toFixed(1)}%  Draw: ${(d / 10).toFixed(1)}%  Loss: ${(l / 10).toFixed(1)}%`;
+    wdlBar.style.display = "block";
   } else {
     wdlBar.style.display = "none";
   }
@@ -3038,28 +3013,18 @@ function renderPVs() {
     card.onclick = () => { selectedPV = i + 1; renderAll(); };
 
     const scoreText = formatScore(line);
-    // Score is from side-to-move perspective: positive = good for them
-    const isGood = (line.mate !== undefined && line.mate !== null) ? line.mate > 0
-      : (line.score !== undefined && line.score !== null) ? line.score >= 0 : true;
-    const isBad = (line.mate !== undefined && line.mate !== null) ? line.mate < 0
-      : (line.score !== undefined && line.score !== null) ? line.score < -50 : false;
-    const scoreColor = isGood ? "var(--green)" : "var(--red)";
+    const scoreColor = pvScoreColor(line);
     const sanMoves = line.san || line.pv || [];
     const eco = line.eco || "";
 
     // Build confidence metrics string
     const metrics = [];
-    if (line.nodes) {
-      const n = line.nodes;
-      metrics.push(n >= 1e6 ? `${(n / 1e6).toFixed(1)}M nodes` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}K nodes` : `${n} nodes`);
-    }
-    if (line.timeMs) {
-      metrics.push(line.timeMs >= 1000 ? `${(line.timeMs / 1000).toFixed(1)}s` : `${line.timeMs}ms`);
-    }
-    if (line.nps) {
-      const nps = line.nps;
-      metrics.push(nps >= 1e6 ? `${(nps / 1e6).toFixed(1)}M nps` : `${(nps / 1e3).toFixed(0)}K nps`);
-    }
+    const nodesStr = formatNodesMetric(line.nodes);
+    if (nodesStr) metrics.push(nodesStr);
+    const timeStr = formatTimeMetric(line.timeMs);
+    if (timeStr) metrics.push(timeStr);
+    const npsStr = formatNpsMetric(line.nps);
+    if (npsStr) metrics.push(npsStr);
     const metricsHtml = metrics.length ? `<div class="pv-metrics">${metrics.map(m => `<span>${escHtml(m)}</span>`).join("")}</div>` : "";
 
     card.innerHTML = `
@@ -3089,8 +3054,7 @@ function speak(msg) {
     text = lines[0].san[0];
   }
   // Make it speakable
-  text = text.replace(/\+/g, " check").replace(/#/g, " checkmate")
-    .replace(/^O-O-O$/i, "queen side castle").replace(/^O-O$/i, "king side castle");
+  text = speakablize(text);
 
   const utt = new SpeechSynthesisUtterance(text);
   utt.rate = voiceEnabled ? (parseFloat(document.getElementById("voice-speed-slider").value) || 1.1) : 1.1;
