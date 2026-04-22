@@ -1,0 +1,59 @@
+name: Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared
+        run: npm run build --workspace shared
+
+      - name: Build extension
+        run: npm run build --workspace extension
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist-installer -Force | Out-Null
+          & "C:\Program Files (x86)\Inno Setup 6\iscc.exe" installer\chessbot.iss
+
+      # Code-signing step — enable once CERT_PFX_BASE64 and CERT_PFX_PASSWORD
+      # secrets are configured. Until then, the installer ships unsigned.
+      # - name: Sign installer
+      #   shell: pwsh
+      #   env:
+      #     CERT_PFX_BASE64: ${{ secrets.CERT_PFX_BASE64 }}
+      #     CERT_PFX_PASSWORD: ${{ secrets.CERT_PFX_PASSWORD }}
+      #   run: |
+      #     [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:CERT_PFX_BASE64))
+      #     & signtool sign /f cert.pfx /p $env:CERT_PFX_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 dist-installer\*.exe
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chessbot-installer
+          path: dist-installer/*.exe
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-installer/*.exe

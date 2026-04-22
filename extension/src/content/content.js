@@ -25,6 +25,7 @@ import { formatScore, isLineLosing } from "./evalFormat.js";
 import { filterGhostPieces as _filterGhostPieces } from "./pieceFilter.js";
 import { getEvalTimeout as _getEvalTimeout } from "./evalTimeout.js";
 import { assignPlayersByOrientation } from "./gameInfo.js";
+import { turnFromRunningClock } from "./turnDetect.js";
 
 function gridToFenBoard(grid, pocket) {
   const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
@@ -2893,7 +2894,7 @@ function detectTurnFromClocks() {
       if (clock.classList.contains("rclock-running")) {
         const isBottom = clock.classList.contains("rclock-bottom");
         const flipped = isLichessFlipped();
-        return isBottom ? (flipped ? "b" : "w") : (flipped ? "w" : "b");
+        return turnFromRunningClock(isBottom, flipped);
       }
     }
   }
@@ -2918,9 +2919,9 @@ function detectTurnFromClocks() {
       "div[class*='clock-top'][class*='active']",
     ].join(", ");
     const bottom = document.querySelector(bottomSel);
-    if (bottom) return flipped ? "b" : "w";
+    if (bottom) return turnFromRunningClock(true, flipped);
     const top = document.querySelector(topSel);
-    if (top) return flipped ? "w" : "b";
+    if (top) return turnFromRunningClock(false, flipped);
 
     // Variant/Vue page clocks — broader selectors for active/running clocks
     // positioned relative to the board (use Y-coordinate heuristic)
@@ -2940,7 +2941,7 @@ function detectTurnFromClocks() {
           const clockMidY = cr.top + cr.height / 2;
           const isBelow = clockMidY > boardMidY;
           // Below board = player's clock, above = opponent's
-          return isBelow ? (flipped ? "b" : "w") : (flipped ? "w" : "b");
+          return turnFromRunningClock(isBelow, flipped);
         }
       }
     }
