@@ -26,6 +26,12 @@ import { filterGhostPieces as _filterGhostPieces } from "./pieceFilter.js";
 import { getEvalTimeout as _getEvalTimeout } from "./evalTimeout.js";
 import { assignPlayersByOrientation } from "./gameInfo.js";
 import { turnFromRunningClock } from "./turnDetect.js";
+import {
+  parseTranslate,
+  pieceClassToFenChar,
+  translateToSquare,
+  pieceCenterToSquare,
+} from "./lichessBoard.js";
 
 function gridToFenBoard(grid, pocket) {
   const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
@@ -2054,11 +2060,21 @@ function chesscomBoardToFen() {
     if (pieceRect.width > 0 && squareW > 0) {
       const cx = pieceRect.left + pieceRect.width / 2 - boardRect.left;
       const cy = pieceRect.top + pieceRect.height / 2 - boardRect.top;
-      // Pieces outside the board area are pocket/bank pieces in drop variants
-      if (cx < -5 || cx > boardRect.width + 5 || cy < -5 || cy > boardRect.height + 5) {
+      const sq = pieceCenterToSquare(
+        cx,
+        cy,
+        squareW,
+        squareH,
+        boardRect.width,
+        boardRect.height,
+        flipped,
+      );
+      if (!sq) {
+        // Pieces outside the board area are pocket/bank pieces in drop variants
         if (isDropVariant && fenChar) {
-          // Count this as a pocket piece — check for a count indicator
-          const countEl = piece.querySelector("[class*='count'], [class*='Count'], [class*='badge']");
+          const countEl = piece.querySelector(
+            "[class*='count'], [class*='Count'], [class*='badge']",
+          );
           const countText = countEl ? countEl.textContent.trim() : "";
           const count = parseInt(countText) || 1;
           for (let i = 0; i < count; i++) {
@@ -2068,15 +2084,7 @@ function chesscomBoardToFen() {
         }
         continue;
       }
-      let visFile = Math.floor(cx / squareW);
-      let visRank = Math.floor(cy / squareH);
-      visFile = Math.max(0, Math.min(7, visFile));
-      visRank = Math.max(0, Math.min(7, visRank));
-
-      // Convert visual position to board coordinates
-      const file = flipped ? 7 - visFile : visFile;
-      const rank = flipped ? visRank : 7 - visRank;
-      grid[7 - rank][file] = fenChar;
+      grid[7 - sq.rank][sq.file] = fenChar;
       found++;
       continue;
     }
@@ -2549,36 +2557,16 @@ function lichessBoardToFen() {
     // Skip ghost/premove pieces on lichess (class contains "ghost")
     if (piece.classList.contains("ghost")) continue;
     // Lichess uses CSS transform: translate(…) for positioning
-    const transform = piece.style.transform;
-    const match = transform && transform.match(/translate\((-?\d+(?:\.\d+)?)px\s*,\s*(-?\d+(?:\.\d+)?)px\)/);
-    if (!match) continue;
+    const xy = parseTranslate(piece.style.transform);
+    if (!xy) continue;
 
-    const px = parseFloat(match[1]);
-    const py = parseFloat(match[2]);
+    const sq = translateToSquare(xy.px, xy.py, squareW, squareH, flipped);
+    if (!sq) continue;
 
-    let file = Math.round(px / squareW);
-    let rank = Math.round(py / squareH);
+    const fenChar = pieceClassToFenChar(piece.className);
+    if (!fenChar) continue;
 
-    // Handle flip: lichess has rank 0 = top visually
-    if (flipped) {
-      file = 7 - file;
-      rank = 7 - rank;
-    }
-
-    // Lichess classes: "white pawn", "black king", etc.
-    const cl = piece.className;
-    const color = cl.includes("white") ? "w" : "b";
-    const typeMap = { pawn: "p", rook: "r", knight: "n", bishop: "b", queen: "q", king: "k" };
-    let type = null;
-    for (const [name, ch] of Object.entries(typeMap)) {
-      if (cl.includes(name)) { type = ch; break; }
-    }
-    if (!type) continue;
-
-    const fenChar = color === "w" ? type.toUpperCase() : type.toLowerCase();
-    if (rank >= 0 && rank < 8 && file >= 0 && file < 8) {
-      grid[rank][file] = fenChar;
-    }
+    grid[sq.rank][sq.file] = fenChar;
   }
 
   return gridToFenBoard(grid, readPocket());
@@ -2616,35 +2604,34 @@ function playstrategyBoardToFen() {
 
   for (const piece of pieces) {
     if (piece.classList.contains("ghost")) continue;
-    const transform = piece.style.transform;
-    const match = transform && transform.match(/translate\((-?\d+(?:\.\d+)?)px\s*,\s*(-?\d+(?:\.\d+)?)px\)/);
-    if (!match) continue;
+    const xy = parseTranslate(piece.style.transform);
+    if (!xy) continue;
 
-    const px = parseFloat(match[1]);
-    const py = parseFloat(match[2]);
-
-    let file = Math.round(px / squareW);
-    let rank = Math.round(py / squareH);
-
-    if (flipped) {
-      file = 7 - file;
-      rank = 7 - rank;
-    }
+    const sq = translateToSquare(xy.px, xy.py, squareW, squareH, flipped);
+    if (!sq) continue;
 
     // PlayStrategy classes: "p1 r-piece ally", "p2 n-piece enemy", etc.
     const cl = piece.className;
     const color = cl.includes("p1") ? "w" : "b";
-    const typeMap = { "p-piece": "p", "r-piece": "r", "n-piece": "n", "b-piece": "b", "q-piece": "q", "k-piece": "k" };
+    const typeMap = {
+      "p-piece": "p",
+      "r-piece": "r",
+      "n-piece": "n",
+      "b-piece": "b",
+      "q-piece": "q",
+      "k-piece": "k",
+    };
     let type = null;
     for (const [name, ch] of Object.entries(typeMap)) {
-      if (cl.includes(name)) { type = ch; break; }
+      if (cl.includes(name)) {
+        type = ch;
+        break;
+      }
     }
     if (!type) continue;
 
     const fenChar = color === "w" ? type.toUpperCase() : type.toLowerCase();
-    if (rank >= 0 && rank < 8 && file >= 0 && file < 8) {
-      grid[rank][file] = fenChar;
-    }
+    grid[sq.rank][sq.file] = fenChar;
   }
 
   return gridToFenBoard(grid, readPocket());
