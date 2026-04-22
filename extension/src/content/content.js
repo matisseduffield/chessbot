@@ -15,6 +15,11 @@ import {
   gridToFenBoard as _gridToFenBoard,
 } from "./boardMath.js";
 import { isKingInCheck } from "./threeCheck.js";
+import {
+  isRealMoveText,
+  plyCountToTurn,
+  parseLastRowTurn,
+} from "./moveText.js";
 
 function gridToFenBoard(grid, pocket) {
   const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
@@ -2754,34 +2759,20 @@ function inferTurn(prevBoardFen, currentBoardFen) {
  *  If the last move in the list was made by black, it's white's turn (and vice versa). */
 function detectTurnFromMoveList() {
   if (SITE === "chesscom") {
-    // Chess.com move list: try multiple known selector patterns
     // Pattern 1: modern chess.com — each ply is a separate node
     let moveNodes = document.querySelectorAll(
       ".main-line-ply, [data-ply], move-list-ply"
     );
-    // Filter to actual move nodes (exclude move numbers, annotations, etc.)
     if (moveNodes.length > 0) {
-      const realMoves = Array.from(moveNodes).filter(el => {
-        const text = el.textContent.trim();
-        // Must contain at least one letter (a-h or piece letter) and not be just a number
-        return text && /[a-hNBRQKO]/.test(text) && !/^\d+\.?$/.test(text);
-      });
-      if (realMoves.length > 0) {
-        const lastPly = realMoves.length;
-        return lastPly % 2 === 0 ? "w" : "b";
-      }
+      const realMoves = Array.from(moveNodes).filter(el => isRealMoveText(el.textContent));
+      if (realMoves.length > 0) return plyCountToTurn(realMoves.length);
     }
 
     // Pattern 2: move-text-component elements (older chess.com)
     moveNodes = document.querySelectorAll(".move-text-component");
     if (moveNodes.length > 0) {
-      const realMoves = Array.from(moveNodes).filter(el => {
-        const text = el.textContent.trim();
-        return text && /[a-hNBRQKO]/.test(text) && !/^\d+\.?$/.test(text);
-      });
-      if (realMoves.length > 0) {
-        return realMoves.length % 2 === 0 ? "w" : "b";
-      }
+      const realMoves = Array.from(moveNodes).filter(el => isRealMoveText(el.textContent));
+      if (realMoves.length > 0) return plyCountToTurn(realMoves.length);
     }
 
     // Pattern 3: vertical move list with numbered rows
@@ -2790,27 +2781,16 @@ function detectTurnFromMoveList() {
     );
     if (rows.length > 0) {
       const lastRow = rows[rows.length - 1];
-      const text = lastRow.textContent.trim();
-      const parts = text.replace(/^\d+\.?\s*/, "").trim().split(/\s+/);
-      if (parts.length >= 2 && parts[1] && !parts[1].match(/^[\d.]+$/)) {
-        return "w";
-      }
-      return "b";
+      return parseLastRowTurn(lastRow.textContent);
     }
 
     // Pattern 4: chess.com variant/Vue pages — broad search for move notation
-    // elements with data attributes or variant-specific class patterns
     const variantMoveNodes = document.querySelectorAll(
       "[class*='Move-'], [class*='move-node'], [class*='MoveList'] [class*='move'], [class*='notations'] [class*='move']"
     );
     if (variantMoveNodes.length > 0) {
-      const realMoves = Array.from(variantMoveNodes).filter(el => {
-        const text = el.textContent.trim();
-        return text && /[a-hNBRQKO]/.test(text) && !/^\d+\.?$/.test(text);
-      });
-      if (realMoves.length > 0) {
-        return realMoves.length % 2 === 0 ? "w" : "b";
-      }
+      const realMoves = Array.from(variantMoveNodes).filter(el => isRealMoveText(el.textContent));
+      if (realMoves.length > 0) return plyCountToTurn(realMoves.length);
     }
   }
 
@@ -2818,28 +2798,19 @@ function detectTurnFromMoveList() {
     // Lichess / PlayStrategy: moves are in <move>, <m2>, <kwdb>, or .tview2 elements
     const moves = document.querySelectorAll("move, m2, kwdb, .moves kwdb");
     if (moves.length > 0) {
-      // Filter to only actual move elements (must contain move notation text)
       const realMoves = Array.from(moves).filter(el => {
-        const text = el.textContent.trim();
+        const text = (el.textContent || "").trim();
+        // Accept drop notation (@) in addition to normal move chars
         return text && /[a-hNBRQKO@]/.test(text) && !/^\d+\.?$/.test(text);
       });
-      if (realMoves.length > 0) {
-        return realMoves.length % 2 === 0 ? "w" : "b";
-      }
-      // Fallback: use raw count
-      return moves.length % 2 === 0 ? "w" : "b";
+      if (realMoves.length > 0) return plyCountToTurn(realMoves.length);
+      return plyCountToTurn(moves.length);
     }
-    // Alternative: l4x/tview2 container elements
     const plies = document.querySelectorAll("l4x move, .tview2 move, .tview2 kwdb");
-    if (plies.length > 0) {
-      return plies.length % 2 === 0 ? "w" : "b";
-    }
+    if (plies.length > 0) return plyCountToTurn(plies.length);
 
-    // Alternative: Lichess <rm6> container with child move tags
     const rm6Moves = document.querySelectorAll("rm6 kwdb, rm6 move");
-    if (rm6Moves.length > 0) {
-      return rm6Moves.length % 2 === 0 ? "w" : "b";
-    }
+    if (rm6Moves.length > 0) return plyCountToTurn(rm6Moves.length);
   }
 
   return null;
