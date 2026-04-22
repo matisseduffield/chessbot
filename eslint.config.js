@@ -76,6 +76,15 @@ export default defineConfig([
     },
   },
   {
+    // Panel is browser-side ESM served statically; override the backend
+    // commonjs default so import/export parse correctly.
+    files: ['backend/panel/src/**/*.{js,mjs}'],
+    languageOptions: {
+      globals: { ...globals.browser },
+      sourceType: 'module',
+    },
+  },
+  {
     files: ['shared/**/*.{js,mjs,ts}'],
     languageOptions: {
       globals: { ...globals.node },
