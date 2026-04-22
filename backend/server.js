@@ -8,6 +8,12 @@ const StockfishBridge = require("./stockfishBridge");
 const OpeningBook = require("./openingBook");
 const eco = require("./eco");
 const config = require("./config");
+const {
+  validateFen,
+  injectThreeCheckCounters,
+  toEpd,
+  parseFen,
+} = require("@chessbot/shared");
 
 // ── Server log buffer ────────────────────────────────────
 const SERVER_LOG_MAX = 1000;
@@ -376,7 +382,7 @@ async function main() {
             const m = g.move(uci);
             if (m) {
               san.push(m.san);
-              if (san.length === 1) firstEpd = g.fen().split(" ").slice(0, 4).join(" ");
+              if (san.length === 1) firstEpd = toEpd(g.fen());
             } else break;
           } catch { break; }
         }
@@ -391,8 +397,7 @@ async function main() {
   /** Look up ECO for the current FEN position. */
   function getEco(fen) {
     try {
-      const epd = fen.split(" ").slice(0, 4).join(" ");
-      return eco.lookup(epd);
+      return eco.lookup(toEpd(fen));
     } catch { return null; }
   }
 
@@ -502,21 +507,21 @@ async function main() {
       if (msg.type === "fen" && typeof msg.fen === "string") {
         let fen = msg.fen.trim();
         // Basic FEN validation (relaxed for variants like crazyhouse which append [] to board)
-        const fenParts = fen.split(" ");
-        const boardPart = fenParts[0].replace(/\[.*?\]/, ""); // strip crazyhouse pocket
-        const rankCount = boardPart.split("/").length;
-        if (fenParts.length < 2 || rankCount < 1 || rankCount > 16) {
-          console.warn(`[server] invalid FEN rejected: ${fen}`);
+        const validation = validateFen(fen);
+        if (!validation.valid) {
+          console.warn(`[server] invalid FEN rejected (${validation.reason}): ${fen}`);
           safeSend(ws, { type: "error", message: "Invalid FEN" });
           return;
         }
 
         // Safety net: ensure 3check FEN has check counters
         // fairy-stockfish misparses standard FEN (reads halfmove as counter → 1+1)
-        if ((msg.variant === "3check" || currentVariant === "3check") && fenParts.length === 6) {
-          fenParts.splice(4, 0, "3+3");
-          fen = fenParts.join(" ");
-          console.log(`[server] injected default 3check counters into FEN`);
+        if (msg.variant === "3check" || currentVariant === "3check") {
+          const injected = injectThreeCheckCounters(fen);
+          if (injected !== fen) {
+            fen = injected;
+            console.log(`[server] injected default 3check counters into FEN`);
+          }
         }
 
         // If content script detected a variant, auto-switch
@@ -571,7 +576,7 @@ async function main() {
             const posEco = isStandard ? getEco(fen) : null;
 
             // Try opening book first (standard chess only, skip for deep positions)
-            const moveNumber = parseInt(fen.split(" ")[5]) || 1;
+            const moveNumber = parseFen(fen)?.fullmove ?? 1;
             if (isStandard && moveNumber <= 15) {
               const bookMove = await book.lookup(fen);
               if (bookMove) {

@@ -1,38 +1,7 @@
-const fs = require("fs");
-const path = require("path");
+'use strict';
 
-const openings = new Map();
-
-function loadEco(dir) {
-  if (!fs.existsSync(dir)) {
-    console.log("[eco] directory not found:", dir);
-    return;
-  }
-  openings.clear(); // clear previous entries on reload
-  let count = 0;
-  for (const file of fs.readdirSync(dir)) {
-    if (!file.endsWith(".tsv")) continue;
-    const full = path.join(dir, file);
-    let content = fs.readFileSync(full, "utf-8");
-    // Strip BOM prefix that prevents first entry from matching
-    if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
-    const lines = content.split("\n");
-    for (let i = 1; i < lines.length; i++) {
-      const parts = lines[i].split("\t");
-      if (parts.length >= 3) {
-        // parts[0]=eco code, parts[1]=name, parts[2]=fen/epd
-        openings.set(parts[2].trim(), { code: parts[0].trim(), name: parts[1].trim() });
-        count++;
-      }
-    }
-  }
-  console.log(`[eco] loaded ${count} openings`);
-}
-
-/** Look up an EPD string (FEN without move counters) and return { code, name } or null. */
-function lookup(epd) {
-  if (!epd || typeof epd !== "string") return null;
-  return openings.get(epd) || null;
-}
-
-module.exports = { loadEco, lookup };
+/**
+ * Backward-compatible re-export. The real implementation lives in
+ * src/book/eco.js and is covered by unit tests.
+ */
+module.exports = require('./src/book/eco');
