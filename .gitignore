@@ -14,3 +14,7 @@ plans/
 .env.local
 .vscode/
 .idea/
+
+# scratch commit message files
+.commitmsg.txt
+

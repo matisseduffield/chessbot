@@ -381,6 +381,30 @@ async function main() {
     next();
   });
 
+  // ── Health endpoint ────────────────────────────────────
+  // Liveness + light diagnostics for CI, uptime probes, and the panel
+  // self-test button. Always returns 200 so network layers can distinguish
+  // "backend down" from "engine not ready"; inspect the body for details.
+  const startedAt = Date.now();
+  app.get("/healthz", (_req, res) => {
+    res.json({
+      status: "ok",
+      uptimeMs: Date.now() - startedAt,
+      version: require("./package.json").version,
+      engine: {
+        ready: !!(engine && engine.ready),
+        type: currentEngineType,
+        variant: currentVariant,
+      },
+      book: {
+        ecoOpenings: eco.size ? eco.size() : 0,
+        lichessEnabled: !!(lichessBook && lichessBook.enabled),
+        offlineBook: book.enabled ? path.basename(book.bookPath) : null,
+      },
+      clients: wss ? wss.clients.size : 0,
+    });
+  });
+
   app.use(express.static(path.join(__dirname, "panel")));
   const server = http.createServer(app);
 
