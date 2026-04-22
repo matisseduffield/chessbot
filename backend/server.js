@@ -3,6 +3,7 @@ const http = require("http");
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { Chess } = require("chess.js");
 const StockfishBridge = require("./stockfishBridge");
 const OpeningBook = require("./openingBook");
@@ -89,6 +90,18 @@ function listSyzygyDirs() {
 
 // ── Evaluation cache ─────────────────────────────────────
 const _evalCache = new EvalCache({ ttlMs: 5 * 60 * 1000, max: 500 });
+
+// Persist across restarts (plan §4.5). File lives in user-writable app data.
+const _evalCachePath = path.join(
+  process.env.CHESSBOT_DATA_DIR || path.join(os.homedir(), '.chessbot'),
+  'eval-cache.json',
+);
+try {
+  const loaded = _evalCache.loadFromDisk(_evalCachePath);
+  if (loaded > 0) console.log(`[server] loaded ${loaded} eval cache entries from ${_evalCachePath}`);
+} catch (err) {
+  console.warn("[server] failed to load eval cache:", err.message);
+}
 
 function getCachedEval(fen, variant, depth, multiPV) {
   return _evalCache.get(fen, variant, depth, multiPV);
@@ -1022,6 +1035,12 @@ async function main() {
   // ── 4. Graceful shutdown ───────────────────────────────
   function shutdown() {
     console.log("\n[server] shutting down…");
+    try {
+      const count = _evalCache.saveToDisk(_evalCachePath);
+      console.log(`[server] saved ${count} eval cache entries → ${_evalCachePath}`);
+    } catch (err) {
+      console.error("[server] failed to save eval cache:", err.message);
+    }
     engine.stop();
     book.close();
     wss.close(() => process.exit(0));

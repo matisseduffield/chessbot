@@ -79,4 +79,67 @@ describe('EvalCache', () => {
     expect(c.size).toBe(2);
     expect(c.get('a', 'chess', 10, 1)).toBe('A2');
   });
+
+  it('round-trips via saveToDisk / loadFromDisk', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const os = require('node:os');
+    const file = path.join(os.tmpdir(), `evalcache-test-${Date.now()}-${Math.random()}.json`);
+    try {
+      const a = new EvalCache();
+      a.set('f1', 'chess', 10, 1, { bestmove: 'e2e4', score: 25 });
+      a.set('f2', 'chess', 12, 2, { bestmove: 'd2d4', score: 30 });
+      const saved = a.saveToDisk(file);
+      expect(saved).toBe(2);
+
+      const b = new EvalCache();
+      const loaded = b.loadFromDisk(file);
+      expect(loaded).toBe(2);
+      expect(b.get('f1', 'chess', 10, 1)).toEqual({ bestmove: 'e2e4', score: 25 });
+      expect(b.get('f2', 'chess', 12, 2)).toEqual({ bestmove: 'd2d4', score: 30 });
+    } finally {
+      try { fs.unlinkSync(file); } catch { /* ignore */ }
+    }
+  });
+
+  it('loadFromDisk drops expired entries', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const os = require('node:os');
+    const file = path.join(os.tmpdir(), `evalcache-expire-${Date.now()}-${Math.random()}.json`);
+    try {
+      let t = 1_000_000;
+      const a = new EvalCache({ ttlMs: 1000, now: () => t });
+      a.set('fresh', 'chess', 10, 1, 'F');
+      a.saveToDisk(file);
+      t += 2000; // past TTL
+      const b = new EvalCache({ ttlMs: 1000, now: () => t });
+      const loaded = b.loadFromDisk(file);
+      expect(loaded).toBe(0);
+      expect(b.get('fresh', 'chess', 10, 1)).toBeNull();
+    } finally {
+      try { fs.unlinkSync(file); } catch { /* ignore */ }
+    }
+  });
+
+  it('loadFromDisk is a no-op if file is missing', () => {
+    const c = new EvalCache();
+    expect(c.loadFromDisk('/nonexistent/path/to/cache.json')).toBe(0);
+    expect(c.size).toBe(0);
+  });
+
+  it('loadFromDisk handles corrupt JSON gracefully', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const os = require('node:os');
+    const file = path.join(os.tmpdir(), `evalcache-corrupt-${Date.now()}-${Math.random()}.json`);
+    try {
+      fs.writeFileSync(file, '{not valid json');
+      const c = new EvalCache();
+      expect(c.loadFromDisk(file)).toBe(0);
+      expect(c.size).toBe(0);
+    } finally {
+      try { fs.unlinkSync(file); } catch { /* ignore */ }
+    }
+  });
 });

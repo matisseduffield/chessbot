@@ -9,7 +9,14 @@
  * full and expired entries on access. A `purgeExpired()` helper is
  * provided for periodic sweeps so memory doesn't creep upward for
  * long-idle caches (the server calls this on a 60s interval).
+ *
+ * Disk persistence (plan §4.5): `saveToDisk` / `loadFromDisk` write
+ * the live entries as JSON. Expired entries are dropped on load so a
+ * cold start never returns stale data.
  */
+
+const fs = require('fs');
+const path = require('path');
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX = 500;
@@ -95,6 +102,56 @@ class EvalCache {
 
   clear() {
     this._map.clear();
+  }
+
+  /**
+   * Persist the live (non-expired) entries to disk as JSON.
+   * Writes atomically via a temp file + rename so a crash mid-save
+   * never corrupts the cache file.
+   * @param {string} filePath
+   */
+  saveToDisk(filePath) {
+    const cutoff = this._now() - this.ttlMs;
+    const entries = [];
+    for (const [key, entry] of this._map) {
+      if (entry.ts > cutoff) entries.push([key, entry]);
+    }
+    const payload = JSON.stringify({ version: 1, ttlMs: this.ttlMs, entries });
+    const dir = path.dirname(filePath);
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${filePath}.tmp`;
+    fs.writeFileSync(tmp, payload);
+    fs.renameSync(tmp, filePath);
+    return entries.length;
+  }
+
+  /**
+   * Load entries from a previous `saveToDisk`. Missing file → no-op.
+   * Corrupt JSON → logs to stderr (via thrown Error) and returns 0.
+   * Expired entries are dropped.
+   * @param {string} filePath
+   * @returns {number} count of entries loaded
+   */
+  loadFromDisk(filePath) {
+    if (!fs.existsSync(filePath)) return 0;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return 0;
+    }
+    if (!parsed || !Array.isArray(parsed.entries)) return 0;
+    const cutoff = this._now() - this.ttlMs;
+    let loaded = 0;
+    for (const [key, entry] of parsed.entries) {
+      if (!entry || typeof entry.ts !== 'number') continue;
+      if (entry.ts <= cutoff) continue;
+      if (this._map.size >= this.max) break;
+      this._map.set(key, entry);
+      loaded++;
+    }
+    return loaded;
   }
 }
 
