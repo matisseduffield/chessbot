@@ -1876,6 +1876,9 @@ import {
 } from "./src/panelRender.js";
 import { state } from "./src/state.js";
 import { renderEvalGraph } from "./src/evalGraph.js";
+import { renderEvalBar } from "./src/evalBar.js";
+import { renderPlayerBars } from "./src/playerBars.js";
+import { renderPVs, PV_COLORS } from "./src/pvCards.js";
 // ── State ────────────────────────────────────────────────
 // State moved to ./src/state.js — read/write via `state.xxx`
 
@@ -1974,7 +1977,7 @@ const LETTER_PIECES = {
   k: "K", q: "Q", r: "R", b: "B", n: "N", p: "P",
 };
 
-const PV_COLORS = ["#2ecc71", "#00bcd4", "#f39c12", "#e74c3c", "#9b59b6", "#e67e22", "#1abc9c", "#e84393"];
+// PV_COLORS moved to ./src/pvCards.js (re-exported)
 
 // ── Settings Persistence ─────────────────────────────────
 const STORAGE_KEY = "chessbot_settings";
@@ -2393,7 +2396,7 @@ function renderAll() {
   renderEco();
   renderEvalBar();
   renderBoard();
-  renderPVs();
+  renderPVs(renderAll);
 }
 
 function renderFen() {
@@ -2407,100 +2410,7 @@ function renderEco() {
   label.textContent = code ? `${code}: ${name}` : name || "";
 }
 
-function renderEvalBar() {
-  const wrap = document.getElementById("eval-bar-wrap");
-  wrap.style.display = document.getElementById("chk-evalbar").checked ? "block" : "none";
-
-  const topEl = document.getElementById("eval-bar-top");
-  const scoreEl = document.getElementById("eval-bar-score");
-
-  if (state.currentData.source === "book") {
-    topEl.style.height = "50%";
-    topEl.style.background = "linear-gradient(180deg,#d4a017,#b8860b)";
-    scoreEl.textContent = "Book";
-    scoreEl.style.color = "#fff";
-    scoreEl.style.bottom = "auto";
-    scoreEl.style.top = "calc(50% - 5px)";
-    scoreEl.style.transform = "none";
-    return;
-  }
-
-  topEl.style.background = "#333";
-  scoreEl.style.transform = "";
-
-  // Flip eval bar colors when board is flipped (user plays black)
-  const boardFlipped = state.currentData.flipped || false;
-  const evalBarTop = document.getElementById("eval-bar-top");
-  const evalBarBot = document.getElementById("eval-bar-bot");
-  if (boardFlipped) {
-    evalBarTop.style.background = "#e8e8e8";
-    evalBarBot.style.background = "#333";
-  } else {
-    evalBarTop.style.background = "#333";
-    evalBarBot.style.background = "#e8e8e8";
-  }
-
-  const lines = state.currentData.lines || [];
-  if (!lines.length) {
-    topEl.style.height = "50%";
-    scoreEl.textContent = "—";
-    scoreEl.style.color = "#333";
-    scoreEl.style.bottom = "4px";
-    scoreEl.style.top = "auto";
-    return;
-  }
-
-  const best = lines[0];
-  const { whitePct, userScore } = computeEvalBar(
-    best,
-    state.currentData.fen ? state.currentData.fen.split(" ")[1] : "w",
-    boardFlipped
-  );
-
-  // When flipped, white is at top of bar, so top height = whitePct
-  // When not flipped, black is at top, so top height = 100 - whitePct
-  topEl.style.height = boardFlipped ? `${whitePct}%` : `${100 - whitePct}%`;
-  const scoreText = formatScore(userScore);
-  scoreEl.textContent = scoreText;
-
-  // Position score label near the side that's winning
-  if (boardFlipped) {
-    if (whitePct > 50) {
-      // White winning, white is at top when flipped
-      scoreEl.style.top = "4px"; scoreEl.style.bottom = "auto";
-      scoreEl.style.color = "#333";
-    } else {
-      scoreEl.style.bottom = "4px"; scoreEl.style.top = "auto";
-      scoreEl.style.color = "#ccc";
-    }
-  } else {
-    if (whitePct > 50) {
-      scoreEl.style.bottom = "4px"; scoreEl.style.top = "auto";
-      scoreEl.style.color = "#333";
-    } else {
-      scoreEl.style.top = "4px"; scoreEl.style.bottom = "auto";
-      scoreEl.style.color = "#ccc";
-    }
-  }
-
-  // WDL bar — show win/draw/loss percentages if available
-  const wdlBar = document.getElementById("wdl-bar");
-  const turnStm = state.currentData.fen ? state.currentData.fen.split(" ")[1] : "w";
-  const wdlPcts = best.wdl ? computeWdlPcts(best.wdl, turnStm, boardFlipped) : null;
-  if (wdlPcts) {
-    const { w, d, l, wPct, dPct, lPct } = wdlPcts;
-    document.getElementById("wdl-win").style.width = `${wPct.toFixed(1)}%`;
-    document.getElementById("wdl-draw").style.width = `${dPct.toFixed(1)}%`;
-    document.getElementById("wdl-loss").style.width = `${lPct.toFixed(1)}%`;
-    document.getElementById("wdl-win-label").textContent = wPct >= 8 ? `${Math.round(wPct)}%` : "";
-    document.getElementById("wdl-draw-label").textContent = dPct >= 8 ? `${Math.round(dPct)}%` : "";
-    document.getElementById("wdl-loss-label").textContent = lPct >= 8 ? `${Math.round(lPct)}%` : "";
-    wdlBar.title = `Win: ${(w / 10).toFixed(1)}%  Draw: ${(d / 10).toFixed(1)}%  Loss: ${(l / 10).toFixed(1)}%`;
-    wdlBar.style.display = "block";
-  } else {
-    wdlBar.style.display = "none";
-  }
-}
+// renderEvalBar moved to ./src/evalBar.js
 
 function renderBoard() {
   const container = document.getElementById("board-svg-container");
@@ -2818,113 +2728,10 @@ function initPieceSetSelect() {
 // ── Player Info Bars ─────────────────────────────────────
 // state.gameInfo moved to ./src/state.js
 
-function renderPlayerBars() {
-  if (!state.currentData || !state.currentData.fen) return;
-  const mat = calculateMaterial(state.currentData.fen);
-  const moveNum = parseInt(state.currentData.fen.split(" ")[5]) || 1;
-  const activeSide = state.currentData.fen.split(" ")[1]; // "w" or "b"
-
-  // Determine board orientation from content script (default: white at bottom)
-  const flipped = state.currentData.flipped || false;
-  const topColor = flipped ? "white" : "black";
-  const bottomColor = flipped ? "black" : "white";
-
-  const topInfo = state.gameInfo[topColor] || {};
-  const bottomInfo = state.gameInfo[bottomColor] || {};
-
-  // Top bar
-  document.getElementById("top-player-name").textContent = topInfo.name || "—";
-  document.getElementById("top-player-clock").textContent = topInfo.clock || "";
-  document.getElementById("top-player-clock").className = "player-bar-clock" +
-    (activeSide === topColor[0] ? " active" : "");
-  document.getElementById("top-player-material").innerHTML =
-    materialAdvantageHtml({}, mat[topColor + "Pieces"] || {}, topColor[0]) +
-    (mat.diff !== 0 && ((topColor === "white" && mat.diff > 0) || (topColor === "black" && mat.diff < 0))
-      ? `<span class="mat-adv">+${Math.abs(mat.diff)}</span>` : "");
-
-  // Bottom bar
-  document.getElementById("bottom-player-name").textContent = bottomInfo.name || "—";
-  document.getElementById("bottom-player-clock").textContent = bottomInfo.clock || "";
-  document.getElementById("bottom-player-clock").className = "player-bar-clock" +
-    (activeSide === bottomColor[0] ? " active" : "");
-  document.getElementById("bottom-player-material").innerHTML =
-    materialAdvantageHtml({}, mat[bottomColor + "Pieces"] || {}, bottomColor[0]) +
-    (mat.diff !== 0 && ((bottomColor === "white" && mat.diff > 0) || (bottomColor === "black" && mat.diff < 0))
-      ? `<span class="mat-adv">+${Math.abs(mat.diff)}</span>` : "");
-
-  // Move number in bottom bar
-  const moveEl = document.getElementById("player-bar-bottom").querySelector(".move-num");
-  if (!moveEl) {
-    const span = document.createElement("span");
-    span.className = "move-num";
-    span.textContent = `#${moveNum}`;
-    document.getElementById("player-bar-bottom").prepend(span);
-  } else {
-    moveEl.textContent = `#${moveNum}`;
-  }
-}
+// renderPlayerBars moved to ./src/playerBars.js
 
 // ── PV Cards ─────────────────────────────────────────────
-function renderPVs() {
-  const container = document.getElementById("pvs");
-  if (!document.getElementById("chk-pvs").checked) {
-    container.innerHTML = "";
-    return;
-  }
-
-  const lines = state.currentData.lines || [];
-  if (!lines.length && state.currentData.source === "book") {
-    container.innerHTML = `<div class="pv-card selected">
-      <div class="pv-header">
-        <span class="pv-rank">Book Move</span>
-        <span class="pv-source book">BOOK</span>
-      </div>
-      <div class="pv-eco">${escHtml(state.currentData.eco)}</div>
-      <div style="font-size:18px;font-weight:800;font-family:monospace;color:var(--orange)">${escHtml(state.currentData.bestmove)}</div>
-    </div>`;
-    return;
-  }
-
-  if (!lines.length) {
-    container.innerHTML = '<div class="empty-state">Waiting for analysis…</div>';
-    return;
-  }
-
-  container.innerHTML = "";
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const card = document.createElement("div");
-    card.className = "pv-card" + (state.selectedPV === i + 1 ? " selected" : "");
-    card.style.borderColor = state.selectedPV === i + 1 ? PV_COLORS[i] || PV_COLORS[0] : "";
-    card.onclick = () => { state.selectedPV = i + 1; renderAll(); };
-
-    const scoreText = formatScore(line);
-    const scoreColor = pvScoreColor(line);
-    const sanMoves = line.san || line.pv || [];
-    const eco = line.eco || "";
-
-    // Build confidence metrics string
-    const metrics = [];
-    const nodesStr = formatNodesMetric(line.nodes);
-    if (nodesStr) metrics.push(nodesStr);
-    const timeStr = formatTimeMetric(line.timeMs);
-    if (timeStr) metrics.push(timeStr);
-    const npsStr = formatNpsMetric(line.nps);
-    if (npsStr) metrics.push(npsStr);
-    const metricsHtml = metrics.length ? `<div class="pv-metrics">${metrics.map(m => `<span>${escHtml(m)}</span>`).join("")}</div>` : "";
-
-    card.innerHTML = `
-      <div class="pv-header">
-        <span class="pv-rank">PV ${i + 1} <span class="pv-source engine">${state.currentData.source === "book" ? "BOOK" : "ENGINE"}</span>${line.depth ? `<span class="pv-depth">D${escHtml(line.depth)}</span>` : ""}</span>
-        <span class="pv-score" style="color:${scoreColor}">${escHtml(scoreText)}</span>
-      </div>
-      <div class="pv-eco" title="${escHtml(eco)}">${escHtml(eco)}</div>
-      <div class="pv-moves">${formatPVMoves(sanMoves.slice(0, 16), state.currentData.fen)}</div>
-      ${metricsHtml}
-    `;
-    container.appendChild(card);
-  }
-}
+// renderPVs moved to ./src/pvCards.js
 
 // ── Voice ────────────────────────────────────────────────
 function speak(msg) {
