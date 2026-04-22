@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc -p . --noEmit"
   },
   "license": "ISC",
   "type": "commonjs",

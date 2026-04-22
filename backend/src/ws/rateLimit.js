@@ -1,7 +1,15 @@
 'use strict';
+// @ts-check
 
 /**
  * Per-connection fixed-window rate limiter (improvement-plan §11).
+ *
+ * @param {{
+ *   max?: number,
+ *   windowMs?: number,
+ *   setIntervalImpl?: typeof setInterval,
+ *   clearIntervalImpl?: typeof clearInterval,
+ * }} [opts]
  */
 function createRateLimiter({
   max = 300,
@@ -15,9 +23,12 @@ function createRateLimiter({
     count = 0;
     warned = false;
   }, windowMs);
-  if (timer && typeof timer.unref === 'function') timer.unref();
+  if (timer && typeof /** @type {any} */ (timer).unref === 'function') {
+    /** @type {any} */ (timer).unref();
+  }
 
   return {
+    /** @returns {{ ok: true } | { ok: false, firstHit: boolean }} */
     hit() {
       count++;
       if (count <= max) return { ok: true };

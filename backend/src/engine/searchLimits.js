@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Pure helpers for resolving search limits from a client request.
  *

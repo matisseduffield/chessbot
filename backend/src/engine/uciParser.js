@@ -1,4 +1,5 @@
 'use strict';
+// @ts-check
 
 /**
  * Pure parsers for Stockfish UCI output lines.
@@ -11,11 +12,7 @@
  */
 
 /**
- * Parse a single `info ... pv ...` line from Stockfish.
- * Returns null if the line is not an info+pv line.
- *
- * @param {string} line
- * @returns {null | {
+ * @typedef {{
  *   depth: number,
  *   multipv: number,
  *   score?: number,
@@ -27,7 +24,15 @@
  *   wdl?: { win: number, draw: number, loss: number },
  *   pv: string[],
  *   move: string,
- * }}
+ * }} InfoLine
+ */
+
+/**
+ * Parse a single `info ... pv ...` line from Stockfish.
+ * Returns null if the line is not an info+pv line.
+ *
+ * @param {string} line
+ * @returns {null | InfoLine}
  */
 function parseInfoLine(line) {
   if (typeof line !== 'string') return null;
@@ -50,6 +55,7 @@ function parseInfoLine(line) {
   const timeMatch = line.match(/\btime (\d+)/);
   const wdlMatch = line.match(/\bwdl (\d+) (\d+) (\d+)/);
 
+  /** @type {InfoLine} */
   const info = {
     depth: parseInt(depthMatch[1], 10),
     multipv: multipvMatch ? parseInt(multipvMatch[1], 10) : 1,
@@ -87,6 +93,7 @@ function parseBestmoveLine(line) {
     return { bestmove: null };
   }
   const ponderIdx = parts.indexOf('ponder');
+  /** @type {{ bestmove: string, ponder?: string }} */
   const result = { bestmove };
   if (ponderIdx > 0 && parts[ponderIdx + 1]) {
     result.ponder = parts[ponderIdx + 1];

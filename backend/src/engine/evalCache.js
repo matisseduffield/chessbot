@@ -1,4 +1,5 @@
 'use strict';
+// @ts-check
 
 /**
  * LRU+TTL cache for engine evaluations.
@@ -13,18 +14,44 @@
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX = 500;
 
+/**
+ * @template T
+ * @typedef {{ result: T, ts: number }} CacheEntry
+ */
+
+/**
+ * @template T
+ */
 class EvalCache {
+  /**
+   * @param {{ ttlMs?: number, max?: number, now?: () => number }} [opts]
+   */
   constructor({ ttlMs = DEFAULT_TTL_MS, max = DEFAULT_MAX, now = Date.now } = {}) {
     this.ttlMs = ttlMs;
     this.max = max;
     this._now = now;
+    /** @type {Map<string, CacheEntry<T>>} */
     this._map = new Map();
   }
 
+  /**
+   * @param {string} fen
+   * @param {string} variant
+   * @param {number} depth
+   * @param {number} multiPV
+   * @returns {string}
+   */
   _key(fen, variant, depth, multiPV) {
     return `${fen}:${variant}:${depth}:${multiPV}`;
   }
 
+  /**
+   * @param {string} fen
+   * @param {string} variant
+   * @param {number} depth
+   * @param {number} multiPV
+   * @returns {T | null}
+   */
   get(fen, variant, depth, multiPV) {
     const key = this._key(fen, variant, depth, multiPV);
     const entry = this._map.get(key);
@@ -39,6 +66,13 @@ class EvalCache {
     return entry.result;
   }
 
+  /**
+   * @param {string} fen
+   * @param {string} variant
+   * @param {number} depth
+   * @param {number} multiPV
+   * @param {T} result
+   */
   set(fen, variant, depth, multiPV, result) {
     const key = this._key(fen, variant, depth, multiPV);
     if (this._map.size >= this.max && !this._map.has(key)) {
