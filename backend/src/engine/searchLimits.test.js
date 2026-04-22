@@ -49,4 +49,40 @@ describe('pickSearchLimits', () => {
     const r = pickSearchLimits({ depth: 0 }, { defaultDepth: 18 });
     expect(r.depth).toBe(0);
   });
+
+  it('caps movetime by remaining clock (§8.3 time management)', () => {
+    // Configured 5s move, but only 3s left on clock → should clamp down
+    const r = pickSearchLimits(
+      { movetime: 5000, remainingClockMs: 3000 },
+      {},
+    );
+    expect(r.options.movetime).toBeLessThan(5000);
+    expect(r.options.movetime).toBeGreaterThan(0);
+  });
+
+  it('leaves movetime alone when clock is plentiful', () => {
+    const r = pickSearchLimits(
+      { movetime: 1500, remainingClockMs: 120_000 },
+      {},
+    );
+    // 10% of (120s - 2s reserve) = 11.8s, but hardCap is 1500 → stays 1500
+    expect(r.options.movetime).toBe(1500);
+  });
+
+  it('respects custom clockReserveMs from the client', () => {
+    const r = pickSearchLimits(
+      { movetime: 5000, remainingClockMs: 10_000, clockReserveMs: 5000 },
+      {},
+    );
+    // available = 10000-5000 = 5000; 10% = 500
+    expect(r.options.movetime).toBe(500);
+  });
+
+  it('ignores clock info when no movetime is in play', () => {
+    const r = pickSearchLimits(
+      { depth: 20, remainingClockMs: 1000 },
+      {},
+    );
+    expect(r.options.movetime).toBeUndefined();
+  });
 });
