@@ -1874,126 +1874,12 @@ import {
   pvScoreColor,
   speakablize,
 } from "./src/panelRender.js";
+import { state } from "./src/state.js";
+import { renderEvalGraph } from "./src/evalGraph.js";
 // ── State ────────────────────────────────────────────────
-let ws = null;
-let wsBackoff = 1000;
-let selectedPV = 1;
-let currentData = { fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", lines: [] };
-let voiceEnabled = false;
-let lastSpoken = "";
-let searchMovetime = null; // null = disabled
-let searchNodes = null;    // null = disabled
-let evalHistory = [];
+// State moved to ./src/state.js — read/write via `state.xxx`
 
-// ── Eval History Sparkline ───────────────────────────────
-// Plan §5.1: rAF-coalesced redraws. WS bursts (many info frames while
-// searching) used to cause a full canvas redraw on every message;
-// we now queue a single redraw per animation frame.
-let _evalGraphRafId = 0;
-let _lastCanvasW = 0;
-let _lastCanvasH = 0;
-function renderEvalGraph() {
-  if (_evalGraphRafId) return;
-  _evalGraphRafId = requestAnimationFrame(() => {
-    _evalGraphRafId = 0;
-    _renderEvalGraphNow();
-  });
-}
-function _renderEvalGraphNow() {
-  const canvas = document.getElementById("eval-graph");
-  if (!canvas || !evalHistory.length) return;
-  const ctx = canvas.getContext("2d");
-  const dpr = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  const w = Math.floor(rect.width * dpr);
-  const h = Math.floor(rect.height * dpr);
-  // Only resize the backing buffer when dimensions actually change.
-  // Setting canvas.width/.height clears and forces a full repaint,
-  // which we want to avoid on the hot path.
-  if (w !== _lastCanvasW || h !== _lastCanvasH) {
-    canvas.width = w;
-    canvas.height = h;
-    _lastCanvasW = w;
-    _lastCanvasH = h;
-  }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const cw = rect.width;
-  const ch = rect.height;
-
-  ctx.clearRect(0, 0, cw, ch);
-
-  const style = getComputedStyle(document.documentElement);
-  const green = style.getPropertyValue("--green").trim() || "#22c55e";
-  const red = style.getPropertyValue("--red").trim() || "#ef4444";
-
-  const midY = ch / 2;
-
-  // Dashed zero line
-  ctx.save();
-  ctx.setLineDash([4, 4]);
-  ctx.strokeStyle = "rgba(255,255,255,0.08)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, midY);
-  ctx.lineTo(cw, midY);
-  ctx.stroke();
-  ctx.restore();
-
-  const n = evalHistory.length;
-  const graph = computeEvalGraphPoints(
-    evalHistory,
-    currentData.flipped || false,
-    cw,
-    ch
-  );
-  const { points } = graph;
-
-  if (n === 1) {
-    const y = points[0].y;
-    const color = graph.lastAdjCp >= 0 ? green : red;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(cw, y);
-    ctx.stroke();
-    return;
-  }
-
-  // Green fill (above zero = user's advantage)
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, midY);
-  for (const p of points) {
-    const y = Math.min(p.y, midY);
-    ctx.lineTo(p.x, y);
-  }
-  ctx.lineTo(points[n - 1].x, midY);
-  ctx.closePath();
-  ctx.fillStyle = green + "33";
-  ctx.fill();
-
-  // Red fill (below zero = opponent's advantage)
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, midY);
-  for (const p of points) {
-    const y = Math.max(p.y, midY);
-    ctx.lineTo(p.x, y);
-  }
-  ctx.lineTo(points[n - 1].x, midY);
-  ctx.closePath();
-  ctx.fillStyle = red + "33";
-  ctx.fill();
-
-  // Line
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < n; i++) {
-    ctx.lineTo(points[i].x, points[i].y);
-  }
-  ctx.strokeStyle = graph.lastAdjCp >= 0 ? green : red;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-}
+// renderEvalGraph moved to ./src/evalGraph.js
 
 // ── PV Move Formatting ───────────────────────────────────
 // formatPVMoves / decorateMove live in ./src/panelUtils.js
@@ -2244,8 +2130,8 @@ function vpSetValue(key, silent) {
   vpLabel.textContent = VARIANT_LABELS[key] || key;
   vpClose();
   if (!silent) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "switch_variant", variant: key }));
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ type: "switch_variant", variant: key }));
     }
     filterEnginesByVariant(null);
     saveSettings();
@@ -2362,19 +2248,19 @@ function updateVariantHint(variant) {
 // ── WebSocket ────────────────────────────────────────────
 function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(`${proto}//${location.host}`);
+  state.ws = new WebSocket(`${proto}//${location.host}`);
 
-  ws.onopen = () => {
-    wsBackoff = 1000; // reset backoff on successful connection
+  state.ws.onopen = () => {
+    state.wsBackoff = 1000; // reset backoff on successful connection
     document.getElementById("status-dot").className = "status-dot connected";
     document.getElementById("status-text").textContent = "Connected";
     if (window.__cbWatchdog) { clearTimeout(window.__cbWatchdog); window.__cbWatchdog = null; }
     document.body.classList.remove("cb-offline");
     // Request current settings
-    ws.send(JSON.stringify({ type: "get_settings" }));
+    state.ws.send(JSON.stringify({ type: "get_settings" }));
   };
 
-  ws.onclose = () => {
+  state.ws.onclose = () => {
     document.getElementById("status-dot").className = "status-dot disconnected";
     document.getElementById("status-text").textContent = "Disconnected";
     // Watchdog toast (improvement-plan §10): if we stay offline for
@@ -2385,14 +2271,14 @@ function connect() {
         document.body.classList.add("cb-offline");
       }, 3000);
     }
-    wsBackoff = Math.min(wsBackoff * 1.5, 30000);
+    state.wsBackoff = Math.min(state.wsBackoff * 1.5, 30000);
     const jitter = Math.random() * 1000;
-    setTimeout(connect, wsBackoff + jitter);
+    setTimeout(connect, state.wsBackoff + jitter);
   };
 
-  ws.onerror = () => {};
+  state.ws.onerror = () => {};
 
-  ws.onmessage = (evt) => {
+  state.ws.onmessage = (evt) => {
     let msg;
     try { msg = JSON.parse(evt.data); } catch { return; }
 
@@ -2412,8 +2298,8 @@ function connect() {
     if (msg.type === "bestmove") {
       if (!msg.fen || typeof msg.fen !== "string") return;
       if (msg.lines && !Array.isArray(msg.lines)) return;
-      currentData = msg;
-      selectedPV = 1;
+      state.currentData = msg;
+      state.selectedPV = 1;
       // Track eval history for sparkline
       if (msg.lines && msg.lines.length) {
         const best = msg.lines[0];
@@ -2421,15 +2307,15 @@ function connect() {
         let cp = best.score ?? 0;
         if (turn === "b") cp = -cp;
         if (best.mate !== undefined && best.mate !== null) cp = best.mate > 0 ? 1500 : -1500;
-        evalHistory.push({ move: evalHistory.length + 1, cp, fen: msg.fen });
-        if (evalHistory.length > 200) evalHistory.shift();
+        state.evalHistory.push({ move: state.evalHistory.length + 1, cp, fen: msg.fen });
+        if (state.evalHistory.length > 200) state.evalHistory.shift();
         renderEvalGraph();
       }
       // Clear progress indicator on final result
       const progEl = document.getElementById("eval-progress");
       if (progEl && !msg.streaming) progEl.style.display = "none";
       renderAll();
-      if (voiceEnabled) speak(msg);
+      if (state.voiceEnabled) speak(msg);
     }
     if (msg.type === "eval_progress") {
       const progEl = document.getElementById("eval-progress");
@@ -2440,10 +2326,10 @@ function connect() {
       }
     }
     if (msg.type === "game_info") {
-      if (msg.white) gameInfo.white = msg.white;
-      if (msg.black) gameInfo.black = msg.black;
-      if (msg.moveNumber) gameInfo.moveNumber = msg.moveNumber;
-      if (msg.flipped !== undefined && currentData) currentData.flipped = msg.flipped;
+      if (msg.white) state.gameInfo.white = msg.white;
+      if (msg.black) state.gameInfo.black = msg.black;
+      if (msg.moveNumber) state.gameInfo.moveNumber = msg.moveNumber;
+      if (msg.flipped !== undefined && state.currentData) state.currentData.flipped = msg.flipped;
       renderPlayerBars();
     }
     if (msg.type === "settings") {
@@ -2502,7 +2388,7 @@ function connect() {
 
 // ── Render ───────────────────────────────────────────────
 function renderAll() {
-  if (!currentData) return;
+  if (!state.currentData) return;
   renderFen();
   renderEco();
   renderEvalBar();
@@ -2511,13 +2397,13 @@ function renderAll() {
 }
 
 function renderFen() {
-  document.getElementById("fen-display").textContent = currentData.fen || "—";
+  document.getElementById("fen-display").textContent = state.currentData.fen || "—";
 }
 
 function renderEco() {
   const label = document.getElementById("eco-label");
-  const code = currentData.ecoCode || "";
-  const name = currentData.eco || "";
+  const code = state.currentData.ecoCode || "";
+  const name = state.currentData.eco || "";
   label.textContent = code ? `${code}: ${name}` : name || "";
 }
 
@@ -2528,7 +2414,7 @@ function renderEvalBar() {
   const topEl = document.getElementById("eval-bar-top");
   const scoreEl = document.getElementById("eval-bar-score");
 
-  if (currentData.source === "book") {
+  if (state.currentData.source === "book") {
     topEl.style.height = "50%";
     topEl.style.background = "linear-gradient(180deg,#d4a017,#b8860b)";
     scoreEl.textContent = "Book";
@@ -2543,7 +2429,7 @@ function renderEvalBar() {
   scoreEl.style.transform = "";
 
   // Flip eval bar colors when board is flipped (user plays black)
-  const boardFlipped = currentData.flipped || false;
+  const boardFlipped = state.currentData.flipped || false;
   const evalBarTop = document.getElementById("eval-bar-top");
   const evalBarBot = document.getElementById("eval-bar-bot");
   if (boardFlipped) {
@@ -2554,7 +2440,7 @@ function renderEvalBar() {
     evalBarBot.style.background = "#e8e8e8";
   }
 
-  const lines = currentData.lines || [];
+  const lines = state.currentData.lines || [];
   if (!lines.length) {
     topEl.style.height = "50%";
     scoreEl.textContent = "—";
@@ -2567,7 +2453,7 @@ function renderEvalBar() {
   const best = lines[0];
   const { whitePct, userScore } = computeEvalBar(
     best,
-    currentData.fen ? currentData.fen.split(" ")[1] : "w",
+    state.currentData.fen ? state.currentData.fen.split(" ")[1] : "w",
     boardFlipped
   );
 
@@ -2599,7 +2485,7 @@ function renderEvalBar() {
 
   // WDL bar — show win/draw/loss percentages if available
   const wdlBar = document.getElementById("wdl-bar");
-  const turnStm = currentData.fen ? currentData.fen.split(" ")[1] : "w";
+  const turnStm = state.currentData.fen ? state.currentData.fen.split(" ")[1] : "w";
   const wdlPcts = best.wdl ? computeWdlPcts(best.wdl, turnStm, boardFlipped) : null;
   if (wdlPcts) {
     const { w, d, l, wPct, dPct, lPct } = wdlPcts;
@@ -2623,7 +2509,7 @@ function renderBoard() {
   const svg = document.getElementById("board-svg");
   svg.innerHTML = "";
 
-  const fen = currentData.fen;
+  const fen = state.currentData.fen;
   if (!fen) return;
   const boardPart = fen.split(" ")[0].replace(/\[.*?\]$/g, "");
   const dim = parseBoardDimensions(fen);
@@ -2638,7 +2524,7 @@ function renderBoard() {
   const theme = getBoardColors();
 
   // Draw squares — flip when user plays black
-  const flipped = currentData.flipped || false;
+  const flipped = state.currentData.flipped || false;
   for (let r = 0; r < numRanks; r++) {
     for (let f = 0; f < numFiles; f++) {
       const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -2730,14 +2616,14 @@ function renderBoard() {
   }
 
   // Draw arrows for selected PV or book move
-  const lines = currentData.lines || [];
+  const lines = state.currentData.lines || [];
   if (lines.length > 0) {
-    const line = lines[Math.min(selectedPV - 1, lines.length - 1)];
+    const line = lines[Math.min(state.selectedPV - 1, lines.length - 1)];
     const pv = line.pv || [];
     if (pv.length >= 1) drawArrow(svg, pv[0], true, numFiles, numRanks);
     if (pv.length >= 2) drawArrow(svg, pv[1], false, numFiles, numRanks);
-  } else if (currentData.bestmove && currentData.bestmove.length >= 3) {
-    drawArrow(svg, currentData.bestmove, true, numFiles, numRanks);
+  } else if (state.currentData.bestmove && state.currentData.bestmove.length >= 3) {
+    drawArrow(svg, state.currentData.bestmove, true, numFiles, numRanks);
   }
 
   // Render player info bars
@@ -2908,7 +2794,7 @@ function initThemeGrid() {
       grid.querySelectorAll(".theme-swatch").forEach(s => s.classList.remove("active"));
       swatch.classList.add("active");
       saveSettings();
-      if (currentData) renderBoard();
+      if (state.currentData) renderBoard();
     });
     grid.appendChild(swatch);
   }
@@ -2921,7 +2807,7 @@ function initPieceSetSelect() {
   sel.addEventListener("change", () => {
     currentPieceSet = sel.value;
     saveSettings();
-    if (currentData) renderBoard();
+    if (state.currentData) renderBoard();
   });
 }
 
@@ -2930,21 +2816,21 @@ function initPieceSetSelect() {
 // live in ./src/panelUtils.js
 
 // ── Player Info Bars ─────────────────────────────────────
-let gameInfo = { white: { name: "", clock: "" }, black: { name: "", clock: "" }, moveNumber: 0 };
+// state.gameInfo moved to ./src/state.js
 
 function renderPlayerBars() {
-  if (!currentData || !currentData.fen) return;
-  const mat = calculateMaterial(currentData.fen);
-  const moveNum = parseInt(currentData.fen.split(" ")[5]) || 1;
-  const activeSide = currentData.fen.split(" ")[1]; // "w" or "b"
+  if (!state.currentData || !state.currentData.fen) return;
+  const mat = calculateMaterial(state.currentData.fen);
+  const moveNum = parseInt(state.currentData.fen.split(" ")[5]) || 1;
+  const activeSide = state.currentData.fen.split(" ")[1]; // "w" or "b"
 
   // Determine board orientation from content script (default: white at bottom)
-  const flipped = currentData.flipped || false;
+  const flipped = state.currentData.flipped || false;
   const topColor = flipped ? "white" : "black";
   const bottomColor = flipped ? "black" : "white";
 
-  const topInfo = gameInfo[topColor] || {};
-  const bottomInfo = gameInfo[bottomColor] || {};
+  const topInfo = state.gameInfo[topColor] || {};
+  const bottomInfo = state.gameInfo[bottomColor] || {};
 
   // Top bar
   document.getElementById("top-player-name").textContent = topInfo.name || "—";
@@ -2986,15 +2872,15 @@ function renderPVs() {
     return;
   }
 
-  const lines = currentData.lines || [];
-  if (!lines.length && currentData.source === "book") {
+  const lines = state.currentData.lines || [];
+  if (!lines.length && state.currentData.source === "book") {
     container.innerHTML = `<div class="pv-card selected">
       <div class="pv-header">
         <span class="pv-rank">Book Move</span>
         <span class="pv-source book">BOOK</span>
       </div>
-      <div class="pv-eco">${escHtml(currentData.eco)}</div>
-      <div style="font-size:18px;font-weight:800;font-family:monospace;color:var(--orange)">${escHtml(currentData.bestmove)}</div>
+      <div class="pv-eco">${escHtml(state.currentData.eco)}</div>
+      <div style="font-size:18px;font-weight:800;font-family:monospace;color:var(--orange)">${escHtml(state.currentData.bestmove)}</div>
     </div>`;
     return;
   }
@@ -3008,9 +2894,9 @@ function renderPVs() {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const card = document.createElement("div");
-    card.className = "pv-card" + (selectedPV === i + 1 ? " selected" : "");
-    card.style.borderColor = selectedPV === i + 1 ? PV_COLORS[i] || PV_COLORS[0] : "";
-    card.onclick = () => { selectedPV = i + 1; renderAll(); };
+    card.className = "pv-card" + (state.selectedPV === i + 1 ? " selected" : "");
+    card.style.borderColor = state.selectedPV === i + 1 ? PV_COLORS[i] || PV_COLORS[0] : "";
+    card.onclick = () => { state.selectedPV = i + 1; renderAll(); };
 
     const scoreText = formatScore(line);
     const scoreColor = pvScoreColor(line);
@@ -3029,11 +2915,11 @@ function renderPVs() {
 
     card.innerHTML = `
       <div class="pv-header">
-        <span class="pv-rank">PV ${i + 1} <span class="pv-source engine">${currentData.source === "book" ? "BOOK" : "ENGINE"}</span>${line.depth ? `<span class="pv-depth">D${escHtml(line.depth)}</span>` : ""}</span>
+        <span class="pv-rank">PV ${i + 1} <span class="pv-source engine">${state.currentData.source === "book" ? "BOOK" : "ENGINE"}</span>${line.depth ? `<span class="pv-depth">D${escHtml(line.depth)}</span>` : ""}</span>
         <span class="pv-score" style="color:${scoreColor}">${escHtml(scoreText)}</span>
       </div>
       <div class="pv-eco" title="${escHtml(eco)}">${escHtml(eco)}</div>
-      <div class="pv-moves">${formatPVMoves(sanMoves.slice(0, 16), currentData.fen)}</div>
+      <div class="pv-moves">${formatPVMoves(sanMoves.slice(0, 16), state.currentData.fen)}</div>
       ${metricsHtml}
     `;
     container.appendChild(card);
@@ -3044,8 +2930,8 @@ function renderPVs() {
 function speak(msg) {
   if (!window.speechSynthesis) return;
   const move = msg.bestmove;
-  if (!move || move === lastSpoken) return;
-  lastSpoken = move;
+  if (!move || move === state.lastSpoken) return;
+  state.lastSpoken = move;
 
   // Try to use SAN from first line
   const lines = msg.lines || [];
@@ -3057,7 +2943,7 @@ function speak(msg) {
   text = speakablize(text);
 
   const utt = new SpeechSynthesisUtterance(text);
-  utt.rate = voiceEnabled ? (parseFloat(document.getElementById("voice-speed-slider").value) || 1.1) : 1.1;
+  utt.rate = state.voiceEnabled ? (parseFloat(document.getElementById("voice-speed-slider").value) || 1.1) : 1.1;
   utt.pitch = 1.0;
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utt);
@@ -3065,8 +2951,8 @@ function speak(msg) {
 
 // ── Settings handlers ────────────────────────────────────
 function sendOpt(name, value) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "set_option", name, value }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "set_option", name, value }));
   }
 }
 
@@ -3077,8 +2963,8 @@ document.getElementById("depth-slider").addEventListener("change", (e) => {
   const depth = parseInt(e.target.value);
   sendOpt("depth", depth);
   // Broadcast to content scripts so they use the new depth for future FEN requests
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_depth", value: depth } }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_depth", value: depth } }));
   }
   saveSettings();
 });
@@ -3086,8 +2972,8 @@ document.getElementById("depth-slider").addEventListener("change", (e) => {
 // Analyze For radio buttons — broadcast to all extension tabs
 document.querySelectorAll('input[name="run-for"]').forEach((radio) => {
   radio.addEventListener("change", (e) => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_run_engine_for", value: e.target.value } }));
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_run_engine_for", value: e.target.value } }));
     }
     saveSettings();
   });
@@ -3096,8 +2982,8 @@ document.querySelectorAll('input[name="run-for"]').forEach((radio) => {
 // Display Mode radio buttons — broadcast to all extension tabs
 document.querySelectorAll('input[name="display-mode"]').forEach((radio) => {
   radio.addEventListener("change", (e) => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_display_mode", value: e.target.value } }));
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_display_mode", value: e.target.value } }));
     }
     saveSettings();
   });
@@ -3133,21 +3019,21 @@ document.getElementById("skill-slider").addEventListener("change", (e) => {
 });
 
 document.getElementById("chk-voice").addEventListener("change", (e) => {
-  voiceEnabled = e.target.checked;
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice", value: e.target.checked } }));
+  state.voiceEnabled = e.target.checked;
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice", value: e.target.checked } }));
   }
   saveSettings();
 });
 document.getElementById("chk-voice-eval").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_eval", value: e.target.checked } }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_eval", value: e.target.checked } }));
   }
   saveSettings();
 });
 document.getElementById("chk-voice-opening").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_opening", value: e.target.checked } }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_opening", value: e.target.checked } }));
   }
   saveSettings();
 });
@@ -3159,8 +3045,8 @@ let _voiceSpeedTimer = null;
 document.getElementById("voice-speed-slider").addEventListener("change", (e) => {
   clearTimeout(_voiceSpeedTimer);
   _voiceSpeedTimer = setTimeout(() => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_speed", value: parseFloat(e.target.value) } }));
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_speed", value: parseFloat(e.target.value) } }));
     }
     saveSettings();
   }, 150);
@@ -3174,34 +3060,34 @@ document.getElementById("chk-training-mode").addEventListener("change", (e) => {
     opts.classList.remove("training-enabled");
     opts.classList.add("training-disabled-overlay");
   }
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_mode", value: e.target.checked } }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_mode", value: e.target.checked } }));
   }
   saveSettings();
 });
 document.querySelectorAll('input[name="training-difficulty"]').forEach(r => {
   r.addEventListener("change", (e) => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_difficulty", value: e.target.value } }));
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_difficulty", value: e.target.value } }));
     }
     saveSettings();
   });
 });
 document.getElementById("chk-training-auto-reveal").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_auto_reveal", value: e.target.checked } }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_auto_reveal", value: e.target.checked } }));
   }
   saveSettings();
 });
 document.getElementById("chk-training-sound").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_sound", value: e.target.checked } }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_sound", value: e.target.checked } }));
   }
   saveSettings();
 });
 document.getElementById("chk-training-strict").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_strict", value: e.target.checked } }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_strict", value: e.target.checked } }));
   }
   saveSettings();
 });
@@ -3212,8 +3098,8 @@ document.getElementById("btn-reset-training").addEventListener("click", () => {
   document.getElementById("training-streak-icon").style.display = "none";
   document.getElementById("training-correct").textContent = "0";
   document.getElementById("training-total").textContent = "0";
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "reset_training_stats" } }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "reset_training_stats" } }));
   }
 });
 
@@ -3222,14 +3108,14 @@ document.getElementById("chk-auto-move").addEventListener("change", (e) => {
   const opts = document.getElementById("auto-move-options");
   if (e.target.checked) opts.classList.add("training-enabled");
   else opts.classList.remove("training-enabled");
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move", value: e.target.checked } }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move", value: e.target.checked } }));
   }
   saveSettings();
 });
 document.getElementById("chk-bullet-mode").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_bullet_mode", value: e.target.checked } }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_bullet_mode", value: e.target.checked } }));
   }
   // Visually dim delay/humanize controls when bullet mode is active
   const delayHumanize = document.getElementById("bullet-dimmed-options");
@@ -3272,8 +3158,8 @@ document.getElementById("auto-move-humanize-chance").addEventListener("change", 
   saveSettings();
 });
 function broadcastAutoMoveDelay() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: {
       type: "set_auto_move_delay",
       min: parseInt(document.getElementById("auto-move-delay-min").value),
       max: parseInt(document.getElementById("auto-move-delay-max").value),
@@ -3281,8 +3167,8 @@ function broadcastAutoMoveDelay() {
   }
 }
 function broadcastAutoMoveHumanize() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: {
       type: "set_auto_move_humanize",
       value: document.getElementById("chk-auto-move-humanize").checked,
       chance: parseFloat(document.getElementById("auto-move-humanize-chance").value),
@@ -3294,7 +3180,7 @@ function broadcastAutoMoveHumanize() {
 document.getElementById("chk-time-limit").addEventListener("change", (e) => {
   const slider = document.getElementById("time-slider");
   slider.disabled = !e.target.checked;
-  searchMovetime = e.target.checked ? parseInt(slider.value) : null;
+  state.searchMovetime = e.target.checked ? parseInt(slider.value) : null;
   broadcastSearchLimits();
   saveSettings();
 });
@@ -3303,7 +3189,7 @@ document.getElementById("time-slider").addEventListener("input", (e) => {
 });
 document.getElementById("time-slider").addEventListener("change", (e) => {
   if (document.getElementById("chk-time-limit").checked) {
-    searchMovetime = parseInt(e.target.value);
+    state.searchMovetime = parseInt(e.target.value);
     broadcastSearchLimits();
   }
   saveSettings();
@@ -3313,64 +3199,64 @@ document.getElementById("time-slider").addEventListener("change", (e) => {
 document.getElementById("chk-nodes-limit").addEventListener("change", (e) => {
   const input = document.getElementById("nodes-input");
   input.disabled = !e.target.checked;
-  searchNodes = e.target.checked ? parseInt(input.value) : null;
+  state.searchNodes = e.target.checked ? parseInt(input.value) : null;
   broadcastSearchLimits();
   saveSettings();
 });
 document.getElementById("nodes-input").addEventListener("change", (e) => {
   if (document.getElementById("chk-nodes-limit").checked) {
-    searchNodes = parseInt(e.target.value);
+    state.searchNodes = parseInt(e.target.value);
     broadcastSearchLimits();
   }
   saveSettings();
 });
 
 function broadcastSearchLimits() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({
       type: "broadcast",
-      payload: { type: "set_search_limits", movetime: searchMovetime, nodes: searchNodes }
+      payload: { type: "set_search_limits", movetime: state.searchMovetime, nodes: state.searchNodes }
     }));
   }
 }
 document.getElementById("chk-evalbar").addEventListener("change", () => { renderAll(); saveSettings(); });
 document.getElementById("chk-pvs").addEventListener("change", () => { renderAll(); saveSettings(); });
 document.getElementById("chk-opponent-response").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_show_opponent_response", value: e.target.checked } }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_show_opponent_response", value: e.target.checked } }));
   }
   saveSettings();
 });
 document.getElementById("chk-lichess-book").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "set_lichess_book", value: e.target.checked }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "set_lichess_book", value: e.target.checked }));
   }
   saveSettings();
 });
 
 document.getElementById("engine-select").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "switch_engine", name: e.target.value }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "switch_engine", name: e.target.value }));
   }
   saveSettings();
 });
 // variant-select change is handled by the variant picker widget (vpSetValue)
 document.getElementById("book-select").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     const selected = Array.from(e.target.selectedOptions).map(o => o.value).filter(Boolean);
-    ws.send(JSON.stringify({ type: "switch_book", name: selected }));
+    state.ws.send(JSON.stringify({ type: "switch_book", name: selected }));
   }
   saveSettings();
 });
 document.getElementById("syzygy-select").addEventListener("change", (e) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "switch_syzygy", name: e.target.value }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "switch_syzygy", name: e.target.value }));
   }
   saveSettings();
 });
 document.getElementById("btn-clear-hash").addEventListener("click", () => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "clear_hash" }));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: "clear_hash" }));
   }
 });
 
@@ -3476,7 +3362,7 @@ function applySettings(msg) {
       filterEnginesByVariant(msg.activeEngine);
       // Only send switch_variant if it differs from the server's current variant
       if (saved.variant !== msg.variant) {
-        ws.send(JSON.stringify({ type: "switch_variant", variant: saved.variant }));
+        state.ws.send(JSON.stringify({ type: "switch_variant", variant: saved.variant }));
       }
     }
 
@@ -3496,12 +3382,12 @@ function applySettings(msg) {
     document.getElementById("time-slider").disabled = !saved.timeLimitEnabled;
     document.getElementById("time-slider").value = saved.timeValue;
     document.getElementById("time-value").textContent = saved.timeValue;
-    searchMovetime = saved.timeLimitEnabled ? saved.timeValue : null;
+    state.searchMovetime = saved.timeLimitEnabled ? saved.timeValue : null;
 
     document.getElementById("chk-nodes-limit").checked = saved.nodesLimitEnabled;
     document.getElementById("nodes-input").disabled = !saved.nodesLimitEnabled;
     document.getElementById("nodes-input").value = saved.nodesValue;
-    searchNodes = saved.nodesLimitEnabled ? saved.nodesValue : null;
+    state.searchNodes = saved.nodesLimitEnabled ? saved.nodesValue : null;
 
     // Engine settings — dropdown is already filtered by variant
     if (saved.engine && [...engineSel.options].some(o => o.value === saved.engine)) {
@@ -3515,7 +3401,7 @@ function applySettings(msg) {
 
     // Display toggles
     document.getElementById("chk-voice").checked = saved.voice;
-    voiceEnabled = saved.voice;
+    state.voiceEnabled = saved.voice;
     if (saved.voiceEval !== undefined) document.getElementById("chk-voice-eval").checked = saved.voiceEval;
     if (saved.voiceOpening !== undefined) document.getElementById("chk-voice-opening").checked = saved.voiceOpening;
     if (saved.voiceSpeed !== undefined) {
@@ -3609,37 +3495,37 @@ function applySettings(msg) {
     // Re-send saved settings to server
     sendOpt("depth", saved.depth);
     // Broadcast depth to content scripts
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_depth", value: saved.depth } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_depth", value: saved.depth } }));
     sendOpt("MultiPV", saved.multiPV);
     sendOpt("Threads", saved.threads);
     sendOpt("Hash", parseInt(saved.hash));
     sendOpt("Skill Level", saved.skill);
     // Send switch_engine only if the selected engine is in the dropdown (i.e. compatible)
     if (saved.engine && [...engineSel.options].some(o => o.value === saved.engine)) {
-      ws.send(JSON.stringify({ type: "switch_engine", name: saved.engine }));
+      state.ws.send(JSON.stringify({ type: "switch_engine", name: saved.engine }));
     }
     if (variantIsStandard) {
       const selectedBooks = Array.from(bookSel.selectedOptions).map(o => o.value).filter(Boolean);
-      ws.send(JSON.stringify({ type: "switch_book", name: selectedBooks }));
-      ws.send(JSON.stringify({ type: "switch_syzygy", name: szSel.value }));
+      state.ws.send(JSON.stringify({ type: "switch_book", name: selectedBooks }));
+      state.ws.send(JSON.stringify({ type: "switch_syzygy", name: szSel.value }));
     }
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_run_engine_for", value: saved.runFor } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_display_mode", value: saved.displayMode || "both" } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_show_opponent_response", value: saved.opponentResponse !== undefined ? saved.opponentResponse : true } }));
-    ws.send(JSON.stringify({ type: "set_lichess_book", value: !!saved.lichessBook }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice", value: !!saved.voice } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_eval", value: !!saved.voiceEval } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_opening", value: !!saved.voiceOpening } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_speed", value: saved.voiceSpeed || 1.1 } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_mode", value: !!saved.trainingMode } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_difficulty", value: saved.trainingDifficulty || "medium" } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_auto_reveal", value: !!saved.trainingAutoReveal } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_sound", value: saved.trainingSound !== undefined ? saved.trainingSound : true } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_strict", value: !!saved.trainingStrict } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move", value: !!saved.autoMove } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_bullet_mode", value: !!saved.bulletMode } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move_delay", min: saved.autoMoveDelayMin || 500, max: saved.autoMoveDelayMax || 2000 } }));
-    ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move_humanize", value: saved.autoMoveHumanize !== undefined ? saved.autoMoveHumanize : true, chance: saved.autoMoveHumanizeChance || 0.1 } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_run_engine_for", value: saved.runFor } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_display_mode", value: saved.displayMode || "both" } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_show_opponent_response", value: saved.opponentResponse !== undefined ? saved.opponentResponse : true } }));
+    state.ws.send(JSON.stringify({ type: "set_lichess_book", value: !!saved.lichessBook }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice", value: !!saved.voice } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_eval", value: !!saved.voiceEval } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_opening", value: !!saved.voiceOpening } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_voice_speed", value: saved.voiceSpeed || 1.1 } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_mode", value: !!saved.trainingMode } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_difficulty", value: saved.trainingDifficulty || "medium" } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_auto_reveal", value: !!saved.trainingAutoReveal } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_sound", value: saved.trainingSound !== undefined ? saved.trainingSound : true } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_training_strict", value: !!saved.trainingStrict } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move", value: !!saved.autoMove } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_bullet_mode", value: !!saved.bulletMode } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move_delay", min: saved.autoMoveDelayMin || 500, max: saved.autoMoveDelayMax || 2000 } }));
+    state.ws.send(JSON.stringify({ type: "broadcast", payload: { type: "set_auto_move_humanize", value: saved.autoMoveHumanize !== undefined ? saved.autoMoveHumanize : true, chance: saved.autoMoveHumanizeChance || 0.1 } }));
     broadcastSearchLimits();
   } else {
     // No saved settings — use server defaults
@@ -3835,12 +3721,12 @@ let pendingLogResolve = null;
 
 function getServerLogs() {
   return new Promise((resolve) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
       resolve("(WebSocket not connected — server logs unavailable)");
       return;
     }
     pendingLogResolve = resolve;
-    ws.send(JSON.stringify({ type: "get_server_logs" }));
+    state.ws.send(JSON.stringify({ type: "get_server_logs" }));
     setTimeout(() => {
       if (pendingLogResolve) {
         pendingLogResolve("(Timed out waiting for server logs)");
@@ -3857,11 +3743,11 @@ document.getElementById("btn-copy-logs").addEventListener("click", async () => {
   const panelInfo = [
     "=== PANEL DIAGNOSTIC INFO ===",
     `Timestamp: ${new Date().toISOString()}`,
-    `WS state: ${ws ? ["CONNECTING","OPEN","CLOSING","CLOSED"][ws.readyState] : "null"}`,
-    `Current data: ${currentData ? "yes (fen=" + (currentData.fen || "?") + " variant=" + (currentData.variant || "?") + ")" : "none"}`,
-    `Selected PV: ${selectedPV}`,
-    `Voice: ${voiceEnabled}`,
-    `Search limits: movetime=${searchMovetime} nodes=${searchNodes}`,
+    `WS state: ${state.ws ? ["CONNECTING","OPEN","CLOSING","CLOSED"][state.ws.readyState] : "null"}`,
+    `Current data: ${state.currentData ? "yes (fen=" + (state.currentData.fen || "?") + " variant=" + (state.currentData.variant || "?") + ")" : "none"}`,
+    `Selected PV: ${state.selectedPV}`,
+    `Voice: ${state.voiceEnabled}`,
+    `Search limits: movetime=${state.searchMovetime} nodes=${state.searchNodes}`,
   ].join("\n");
 
   const full = panelInfo + "\n\n" + serverLogs;
