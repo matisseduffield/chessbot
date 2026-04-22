@@ -17,6 +17,8 @@ const {
 const { EvalCache } = require("./src/engine/evalCache");
 const { LichessBook } = require("./src/book/lichess");
 const { PROTOCOL_VERSION } = require("@chessbot/shared");
+const { safeSend, broadcast: wsBroadcast } = require("./src/ws/send");
+const { createRateLimiter } = require("./src/ws/rateLimit");
 
 // ── Server log buffer ────────────────────────────────────
 const SERVER_LOG_MAX = 1000;
@@ -406,6 +408,38 @@ async function main() {
     });
   });
 
+  // ── Self-check: run a short canned evaluation ─────────────
+  // Returns depth reached + time elapsed so ops can verify the engine
+  // pipeline end-to-end. Refuses while another search is active so we
+  // don't poison the user's current analysis. Plan §10.
+  let selfcheckBusy = false;
+  app.get("/selfcheck", async (_req, res) => {
+    if (!engine || !engine.ready) {
+      return res.status(503).json({ status: "engine_not_ready" });
+    }
+    if (selfcheckBusy) {
+      return res.status(503).json({ status: "busy" });
+    }
+    selfcheckBusy = true;
+    const startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    const t0 = Date.now();
+    try {
+      const result = await engine.evaluate(startFen, 8, { movetime: 1500 });
+      res.json({
+        status: "ok",
+        elapsedMs: Date.now() - t0,
+        depthReached: result.depth || 0,
+        bestMove: result.bestmove || result.bestMove || null,
+        score: result.score ?? null,
+        engineType: currentEngineType,
+      });
+    } catch (err) {
+      res.status(500).json({ status: "error", error: String(err && err.message || err) });
+    } finally {
+      selfcheckBusy = false;
+    }
+  });
+
   app.use(express.static(path.join(__dirname, "panel")));
   const server = http.createServer(app);
 
@@ -441,21 +475,11 @@ async function main() {
 
   /** Broadcast a message to all OTHER connected clients (for panel sync). */
   function broadcast(senderWs, message) {
-    const data = typeof message === "string" ? message : JSON.stringify(message);
-    for (const client of Array.from(wss.clients)) {
-      if (client !== senderWs && client.readyState === 1 /* OPEN */) {
-        client.send(data);
-      }
-    }
+    return wsBroadcast(wss, senderWs, message);
   }
 
-  /** Safe send — catches errors from connections that close mid-send. */
-  function safeSend(ws, data) {
-    if (ws.readyState !== ws.OPEN) return;
-    try {
-      ws.send(typeof data === "string" ? data : JSON.stringify(data));
-    } catch { /* connection already closing */ }
-  }
+  // safeSend is imported from src/ws/send; it no-ops on closed sockets
+  // and stringifies objects on the fly.
 
   wss.on("connection", (ws, req) => {
     const remote = req.socket.remoteAddress;
@@ -470,19 +494,9 @@ async function main() {
       engine: { name: "stockfish" },
     });
 
-    // Per-connection rate limit (improvement-plan §11). Bounded counter
-    // reset on an interval; bursts above the ceiling get a single error
-    // frame and the message is dropped. Keeps one rogue client from
-    // stalling the engine for everyone else.
-    const RATE_WINDOW_MS = 10_000;
-    const RATE_MAX = 300;
-    let rateCount = 0;
-    let rateWarned = false;
-    const rateTimer = setInterval(() => {
-      rateCount = 0;
-      rateWarned = false;
-    }, RATE_WINDOW_MS);
-    rateTimer.unref && rateTimer.unref();
+    // Per-connection rate limit (improvement-plan §11). See
+    // backend/src/ws/rateLimit.js for the algorithm + tests.
+    const rateLimiter = createRateLimiter({ max: 300, windowMs: 10_000 });
 
     // Send current depth setting so newly-connected clients sync immediately
     if (config.defaultDepth !== undefined) {
@@ -498,14 +512,13 @@ async function main() {
     let evaluationQueue = Promise.resolve();
 
     ws.on("message", async (data) => {
-      rateCount++;
-      if (rateCount > RATE_MAX) {
-        if (!rateWarned) {
-          rateWarned = true;
+      const gate = rateLimiter.hit();
+      if (!gate.ok) {
+        if (gate.firstHit) {
           safeSend(ws, {
             type: "error",
             code: "rate_limited",
-            message: `Too many messages (max ${RATE_MAX} per ${RATE_WINDOW_MS / 1000}s).`,
+            message: "Too many messages (max 300 per 10s).",
           });
         }
         return;
@@ -528,7 +541,7 @@ async function main() {
         const validation = validateFen(fen);
         if (!validation.valid) {
           console.warn(`[server] invalid FEN rejected (${validation.reason}): ${fen}`);
-          safeSend(ws, { type: "error", message: "Invalid FEN" });
+          safeSend(ws, { type: "error", code: "invalid_fen", message: "Invalid FEN" });
           return;
         }
 
@@ -761,7 +774,7 @@ async function main() {
           })
           .catch((err) => {
             console.error("[server] evaluation error:", err.message);
-            safeSend(ws, { type: "error", message: err.message });
+            safeSend(ws, { type: "error", code: "engine_error", message: err.message });
           });
       }
 
@@ -858,7 +871,7 @@ async function main() {
           safeSend(ws, variantMsg);
           broadcast(ws, variantMsg);
         } else {
-          safeSend(ws, { type: "error", message: result.error });
+          safeSend(ws, { type: "error", code: "variant_unsupported", message: result.error });
         }
       }
 
@@ -888,7 +901,7 @@ async function main() {
         }
         const found = getCachedFiles().engines.find((e) => e.name === msg.name);
         if (!found) {
-          safeSend(ws, { type: "error", message: `Engine not found: ${msg.name}` });
+          safeSend(ws, { type: "error", code: "resource_missing", message: `Engine not found: ${msg.name}` });
           return;
         }
         // Guard: if the active variant requires a specific engine type, block incompatible switches
@@ -942,7 +955,7 @@ async function main() {
           } catch (rollbackErr) {
             console.error("[server] CRITICAL: rollback also failed:", rollbackErr.message);
           }
-          safeSend(ws, { type: "error", message: `Failed to start ${msg.name}: ${err.message}` });
+          safeSend(ws, { type: "error", code: "switch_failed", message: `Failed to start ${msg.name}: ${err.message}` });
         } finally {
           engineSwitchLock = false;
         }
@@ -973,7 +986,7 @@ async function main() {
               }
             }
             if (paths.length === 0) {
-              safeSend(ws, { type: "error", message: `No valid books found` });
+              safeSend(ws, { type: "error", code: "resource_missing", message: `No valid books found` });
               return;
             }
             config.openingBookPath = paths[0];
@@ -984,7 +997,7 @@ async function main() {
           }
         } catch (err) {
           console.error(`[server] failed to switch book: ${err.message}`);
-          safeSend(ws, { type: "error", message: err.message });
+          safeSend(ws, { type: "error", code: "switch_failed", message: err.message });
         }
       }
 
@@ -998,7 +1011,7 @@ async function main() {
         } else {
           const found = getCachedFiles().syzygy.find((s) => s.name === msg.name);
           if (!found) {
-            safeSend(ws, { type: "error", message: `Syzygy dir not found: ${msg.name}` });
+            safeSend(ws, { type: "error", code: "resource_missing", message: `Syzygy dir not found: ${msg.name}` });
             return;
           }
           config.syzygyPath = found.path;
@@ -1011,7 +1024,7 @@ async function main() {
 
     ws.on("close", () => {
       console.log(`[server] client disconnected (${remote})`);
-      clearInterval(rateTimer);
+      rateLimiter.stop();
       evalGeneration++; // discard any in-flight evals for this client
     });
 

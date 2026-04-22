@@ -3,6 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- CSP (improvement-plan §11): no remote scripts, no eval. Inline
+     styles/scripts are allowed because the panel is intentionally a
+     single static file; swap to nonces once we migrate to the Vite
+     app described in plan §2.1. -->
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self' ws://localhost:* wss://localhost:* https://explorer.lichess.ovh https://tablebase.lichess.ovh; object-src 'none'; base-uri 'self'; frame-ancestors 'none'">
 <title>ChessBot Panel</title>
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
@@ -397,6 +403,23 @@
     animation: pulse 2s ease-in-out infinite;
   }
   .status-dot.disconnected { background: var(--red); }
+
+  /* Watchdog toast (plan §10). Body flips .cb-offline after 3 s of
+     disconnect. Toast is purely CSS — no JS render cost. */
+  body.cb-offline::after {
+    content: "Backend offline — reconnecting…";
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    padding: 10px 14px;
+    background: var(--red, #d83a3a);
+    color: #fff;
+    font: 600 13px/1 system-ui, sans-serif;
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+    z-index: 99999;
+    pointer-events: none;
+  }
   #status-text {
     font-size: 11px;
     font-weight: 600;
@@ -2336,6 +2359,8 @@ function connect() {
     wsBackoff = 1000; // reset backoff on successful connection
     document.getElementById("status-dot").className = "status-dot connected";
     document.getElementById("status-text").textContent = "Connected";
+    if (window.__cbWatchdog) { clearTimeout(window.__cbWatchdog); window.__cbWatchdog = null; }
+    document.body.classList.remove("cb-offline");
     // Request current settings
     ws.send(JSON.stringify({ type: "get_settings" }));
   };
@@ -2343,6 +2368,14 @@ function connect() {
   ws.onclose = () => {
     document.getElementById("status-dot").className = "status-dot disconnected";
     document.getElementById("status-text").textContent = "Disconnected";
+    // Watchdog toast (improvement-plan §10): if we stay offline for
+    // 3 s, visibly mark the body so the CSS toast appears. Hidden on
+    // reconnect.
+    if (!window.__cbWatchdog) {
+      window.__cbWatchdog = setTimeout(() => {
+        document.body.classList.add("cb-offline");
+      }, 3000);
+    }
     wsBackoff = Math.min(wsBackoff * 1.5, 30000);
     const jitter = Math.random() * 1000;
     setTimeout(connect, wsBackoff + jitter);
