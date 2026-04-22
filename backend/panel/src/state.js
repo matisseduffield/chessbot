@@ -35,4 +35,8 @@ export const state = {
     black: { name: '', clock: '' },
     moveNumber: 0,
   },
+
+  // Board appearance (keys into BOARD_THEMES / PIECE_SETS in ./board.js)
+  currentBoardTheme: 'classic',
+  currentPieceSet: 'classic',
 };
