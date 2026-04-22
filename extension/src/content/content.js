@@ -23,6 +23,7 @@ import {
 import { applyUciMoveToBoard } from "./fenApply.js";
 import { formatScore, isLineLosing } from "./evalFormat.js";
 import { filterGhostPieces as _filterGhostPieces } from "./pieceFilter.js";
+import { getEvalTimeout as _getEvalTimeout } from "./evalTimeout.js";
 
 function gridToFenBoard(grid, pocket) {
   const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
@@ -59,15 +60,9 @@ let observer = null;
 let debounceTimer = null;
 let pendingEval = false; // true while waiting for a bestmove response
 let evalSentAt = 0;     // timestamp when last eval was sent — for client-side timeout
-const EVAL_TIMEOUT_BASE_MS = 25000; // base timeout for depth ≤15
 /** Dynamic eval timeout: scales with depth (min 25s, +3s per depth above 15, max 180s) */
 function getEvalTimeout() {
-  if (currentDepth === 0) {
-    // Infinite depth: if a time limit is set, use that + generous buffer; otherwise no timeout
-    if (searchMovetime) return searchMovetime + 15000;
-    return Infinity;
-  }
-  return Math.min(180000, Math.max(EVAL_TIMEOUT_BASE_MS, EVAL_TIMEOUT_BASE_MS + (currentDepth - 15) * 3000));
+  return _getEvalTimeout(currentDepth, searchMovetime);
 }
 let lastPieceCount = 0;  // to detect animation mid-flight (piece count changes)
 let initialReadDone = false; // guard against duplicate initialRead calls
