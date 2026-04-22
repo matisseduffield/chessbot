@@ -1,6 +1,14 @@
 const { spawn } = require("child_process");
 const fs = require("fs");
 const config = require("./config");
+const {
+  parseInfoLine,
+  parseBestmoveLine,
+  parseOptionLine,
+} = require("./src/engine/uciParser");
+const { forModule } = require("./src/lib/logger");
+
+const log = forModule("stockfish");
 
 class StockfishBridge {
   constructor() {
@@ -31,16 +39,16 @@ class StockfishBridge {
       let settled = false;
       const settle = (fn, val) => { if (!settled) { settled = true; fn(val); } };
 
-      console.log(`[stockfish] spawning: ${config.stockfishPath}`);
+      log.info(`spawning: ${config.stockfishPath}`);
       this.process = spawn(config.stockfishPath);
 
       // Catch EPIPE / broken pipe on stdin to prevent crashing Node
       this.process.stdin.on("error", (err) => {
-        console.error("[stockfish] stdin error:", err.message);
+        log.error("stdin error:", err.message);
       });
 
       this.process.on("error", (err) => {
-        console.error("[stockfish] failed to start:", err.message);
+        log.error("failed to start:", err.message);
         settle(reject, err);
       });
 
@@ -51,7 +59,7 @@ class StockfishBridge {
           this._stopping = false;
           return; // Expected exit from stop()
         }
-        console.error(`[stockfish] process exited unexpectedly (code=${code}, signal=${signal})`);
+        log.error(`process exited unexpectedly (code=${code}, signal=${signal})`);
         this.ready = false;
         this.process = null;
         // Clear any in-flight timers to prevent them firing on a dead process
@@ -77,7 +85,7 @@ class StockfishBridge {
       });
 
       this.process.stderr.on("data", (data) => {
-        console.error("[stockfish][stderr]", data.toString().trim());
+        log.error({ stderr: data.toString().trim() }, "stderr");
       });
 
       let buffer = "";
@@ -100,7 +108,7 @@ class StockfishBridge {
       // Handshake timeout: if engine never responds, reject after 15s
       const handshakeTimeout = setTimeout(() => {
         if (!settled) {
-          console.error("[stockfish] UCI handshake timeout (15s) — killing engine");
+          log.error("UCI handshake timeout (15s) — killing engine");
           try { if (this.process) this.process.kill("SIGKILL"); } catch {}
           settle(reject, new Error("UCI handshake timeout"));
         }
@@ -113,10 +121,10 @@ class StockfishBridge {
       this._supportedOptions = new Set();
       const onLine = this._handleLine;
       this._handleLine = (line) => {
-        console.log(`[stockfish] ${line}`);
+        log.info(`${line}`);
         // Collect supported option names during handshake
-        const optMatch = line.match(/^option name (.+?) type /);
-        if (optMatch) this._supportedOptions.add(optMatch[1]);
+        const optName = parseOptionLine(line);
+        if (optName) this._supportedOptions.add(optName);
         if (line === "uciok") {
           this.ready = true;
           this._handleLine = onLine; // restore
@@ -124,15 +132,15 @@ class StockfishBridge {
           // Configure Syzygy tablebases if the path exists
           if (config.syzygyPath && fs.existsSync(config.syzygyPath)) {
             this._send(`setoption name SyzygyPath value ${config.syzygyPath}`);
-            console.log(`[stockfish] Syzygy tablebases: ${config.syzygyPath}`);
+            log.info(`Syzygy tablebases: ${config.syzygyPath}`);
           } else {
-            console.log("[stockfish] Syzygy tablebases: not configured");
+            log.info("Syzygy tablebases: not configured");
           }
 
           this._send("isready");
           // Wait for "readyok" before resolving
           this._handleLine = (l) => {
-            console.log(`[stockfish] ${l}`);
+            log.info(`${l}`);
             if (l === "readyok") {
               clearTimeout(handshakeTimeout);
               this._handleLine = this._defaultLineHandler.bind(this);
@@ -140,7 +148,7 @@ class StockfishBridge {
               if (this._supportedOptions.has("UCI_ShowWDL")) {
                 this._send("setoption name UCI_ShowWDL value true");
               }
-              console.log("[stockfish] engine ready");
+              log.info("engine ready");
               settle(resolve);
             }
           };
@@ -155,7 +163,7 @@ class StockfishBridge {
   async evaluate(fen, depth = 15, options = {}) {
     // If engine is restarting, wait for it before proceeding
     if (this._restartPromise) {
-      console.log("[stockfish] waiting for engine restart before evaluating...");
+      log.info("waiting for engine restart before evaluating...");
       await this._restartPromise;
     }
     return new Promise((resolve, reject) => {
@@ -185,7 +193,7 @@ class StockfishBridge {
         if (!goParams.length) goParams.push(`depth 15`);
       }
 
-      console.log(`[stockfish] evaluating: ${fen} (${goParams.join(" ")})`);
+      log.info(`evaluating: ${fen} (${goParams.join(" ")})`);
 
       const multiPV = Number(this._settings.MultiPV) || 1;
       const pvLines = {}; // multipv index → latest info at highest depth
@@ -205,12 +213,12 @@ class StockfishBridge {
         const timeoutMs = Math.min(180_000, Math.max(20_000, 20_000 + (depth - 15) * 3_000));
         this._evalTimeout = setTimeout(() => {
         if (this._pendingResolve) {
-          console.warn(`[stockfish] evaluation timeout (${timeoutMs}ms) — forcing stop`);
+          log.warn(`evaluation timeout (${timeoutMs}ms) — forcing stop`);
           this._send("stop");
           // If stop doesn't produce bestmove within 2s, force-resolve and restart
           this._stopFallback = setTimeout(() => {
             if (this._pendingResolve) {
-              console.error("[stockfish] engine unresponsive — force-resolving eval and restarting");
+              log.error("engine unresponsive — force-resolving eval and restarting");
               const res = this._pendingResolve;
               this._pendingResolve = null;
               this._pendingPV = null;
@@ -239,7 +247,7 @@ class StockfishBridge {
       this._abortResolve = null;
     }
     if (!this._pendingResolve) return Promise.resolve();
-    console.log("[stockfish] aborting current evaluation");
+    log.info("aborting current evaluation");
     this._send("stop");
     // Return a promise that resolves when the bestmove line arrives,
     // with a safety timeout in case the engine is already idle
@@ -248,7 +256,7 @@ class StockfishBridge {
       this._abortResolve = resolve;
       this._abortTimeout = setTimeout(() => {
         if (this._abortResolve === resolve) {
-          console.log("[stockfish] abort timeout — engine likely idle, unblocking queue");
+          log.info("abort timeout — engine likely idle, unblocking queue");
           this._abortResolve = null;
           this._pendingResolve = null;
           this._pendingPV = null;
@@ -269,19 +277,19 @@ class StockfishBridge {
       "UCI_Variant",
     ];
     if (!allowed.includes(name)) {
-      console.warn(`[stockfish] option "${name}" not in whitelist, ignoring`);
+      log.warn(`option "${name}" not in whitelist, ignoring`);
       return;
     }
     // Skip options not supported by the current engine
     if (this._supportedOptions.size > 0 && !this._supportedOptions.has(name)) {
-      console.log(`[stockfish] option "${name}" not supported by this engine, skipping`);
+      log.info(`option "${name}" not supported by this engine, skipping`);
       return;
     }
     // Sanitize value to prevent UCI command injection via newlines
     const safeValue = String(value).replace(/[\r\n]/g, "");
     this._send(`setoption name ${name} value ${safeValue}`);
     this._settings[name] = safeValue;
-    console.log(`[stockfish] option ${name} = ${safeValue}`);
+    log.info(`option ${name} = ${safeValue}`);
   }
 
   /** Get current settings (for syncing to UI). */
@@ -294,7 +302,7 @@ class StockfishBridge {
     if (!this.ready) return;
     this._send("setoption name Clear Hash");
     this._send("isready");
-    console.log("[stockfish] hash cleared");
+    log.info("hash cleared");
   }
 
   /** Stop the engine process. */
@@ -325,7 +333,7 @@ class StockfishBridge {
       setTimeout(() => {
         try { if (!proc.killed) proc.kill("SIGKILL"); } catch {}
       }, 2000);
-      console.log("[stockfish] stopped");
+      log.info("stopped");
     }
   }
 
@@ -334,7 +342,7 @@ class StockfishBridge {
     if (this._stopped) return Promise.resolve(); // stop() was called, don't revive
     if (this._restartPromise) return this._restartPromise;
     this._restartPromise = (async () => {
-      console.log("[stockfish] restarting engine...");
+      log.info("restarting engine...");
       if (this.process) {
         try { this.process.kill("SIGKILL"); } catch {}
         this.process = null;
@@ -363,9 +371,9 @@ class StockfishBridge {
             }
           };
         });
-        console.log("[stockfish] engine restarted successfully");
+        log.info("engine restarted successfully");
       } catch (err) {
-        console.error("[stockfish] failed to restart:", err.message);
+        log.error("failed to restart:", err.message);
       } finally {
         this._restartPromise = null;
       }
@@ -377,68 +385,34 @@ class StockfishBridge {
 
   _send(cmd) {
     if (!this.process) return;
-    console.log(`[stockfish] >>> ${cmd}`);
+    log.info(`>>> ${cmd}`);
     try {
       this.process.stdin.write(cmd + "\n");
     } catch (err) {
-      console.error("[stockfish] stdin write error:", err.message);
+      log.error("stdin write error:", err.message);
     }
   }
 
   _defaultLineHandler(line) {
     // Collect info lines with multipv data
     if (line.startsWith("info") && line.includes(" pv ")) {
-      // Only log at key depth milestones to reduce noise
-      const _depthMatch = line.match(/\bdepth (\d+)/);
-      const _d = _depthMatch ? parseInt(_depthMatch[1], 10) : 0;
-      if (_d <= 2 || _d >= (this._pendingTargetDepth || 15) - 1) {
-        const _cpMatch = line.match(/\bscore cp (-?\d+)/);
-        const _mateMatch = line.match(/\bscore mate (-?\d+)/);
-        const _nodesMatch = line.match(/\bnodes (\d+)/);
-        const score = _mateMatch ? `M${_mateMatch[1]}` : (_cpMatch ? `cp ${_cpMatch[1]}` : "?");
-        const nodes = _nodesMatch ? _nodesMatch[1] : "?";
-        console.log(`[stockfish] depth ${_d}, ${score}, nodes ${nodes}`);
-      }
-
-      // Parse: info depth D ... multipv N score cp X ... pv MOVE1 MOVE2 ...
-      // or:   info depth D ... multipv N score mate M ... pv MOVE1 ...
-      const depthMatch = line.match(/\bdepth (\d+)/);
-      const pvIdxMatch = line.match(/\bmultipv (\d+)/);
-      const cpMatch = line.match(/\bscore cp (-?\d+)/);
-      const mateMatch = line.match(/\bscore mate (-?\d+)/);
-      const pvMatch = line.match(/\bpv (.+)/);
-
-      if (depthMatch && pvMatch) {
-        const d = parseInt(depthMatch[1], 10);
-        const idx = pvIdxMatch ? parseInt(pvIdxMatch[1], 10) : 1;
-        const pv = pvMatch[1].trim().split(/\s+/);
-        const entry = { move: pv[0], pv, depth: d };
-
-        if (cpMatch) entry.score = parseInt(cpMatch[1], 10);
-        if (mateMatch) entry.mate = parseInt(mateMatch[1], 10);
-
-        // Parse nodes and nps for confidence metrics
-        const nodesMatch = line.match(/\bnodes (\d+)/);
-        const npsMatch = line.match(/\bnps (\d+)/);
-        const timeMatch = line.match(/\btime (\d+)/);
-        if (nodesMatch) entry.nodes = parseInt(nodesMatch[1], 10);
-        if (npsMatch) entry.nps = parseInt(npsMatch[1], 10);
-        if (timeMatch) entry.timeMs = parseInt(timeMatch[1], 10);
-
-        // Parse WDL if present: "wdl 553 367 80"
-        const wdlMatch = line.match(/\bwdl (\d+) (\d+) (\d+)/);
-        if (wdlMatch) {
-          entry.wdl = {
-            win: parseInt(wdlMatch[1], 10),
-            draw: parseInt(wdlMatch[2], 10),
-            loss: parseInt(wdlMatch[3], 10),
-          };
+      const entry = parseInfoLine(line);
+      if (entry) {
+        // Log at key depth milestones to reduce noise
+        const targetDepth = this._pendingTargetDepth || 15;
+        if (entry.depth <= 2 || entry.depth >= targetDepth - 1) {
+          const score = entry.mate != null
+            ? `M${entry.mate}`
+            : (entry.score != null ? `cp ${entry.score}` : "?");
+          const nodes = entry.nodes != null ? entry.nodes : "?";
+          log.info(`depth ${entry.depth}, ${score}, nodes ${nodes}`);
         }
 
+        const idx = entry.multipv;
         // Keep latest (highest depth) per multipv index
         if (this._pendingPV) {
           const prev = this._pendingPV[idx];
-          if (!prev || d >= prev.depth) {
+          if (!prev || entry.depth >= prev.depth) {
             this._pendingPV[idx] = entry;
           }
           // Emit intermediate results when all PVs updated at this depth
@@ -446,23 +420,27 @@ class StockfishBridge {
             const mpv = this._pendingMultiPV || 1;
             const filledCount = Object.keys(this._pendingPV).length;
             if (filledCount >= mpv) {
-              const lines = Object.keys(this._pendingPV).map(Number).sort((a, b) => a - b).map(i => this._pendingPV[i]);
-              this._onInfoCallback({ bestmove: lines[0].move, lines, depth: d });
+              const lines = Object.keys(this._pendingPV)
+                .map(Number)
+                .sort((a, b) => a - b)
+                .map((i) => this._pendingPV[i]);
+              this._onInfoCallback({ bestmove: lines[0].move, lines, depth: entry.depth });
             }
           }
         }
       }
     } else if (line.startsWith("info")) {
-      console.log(`[stockfish] ${line}`);
+      log.info(`${line}`);
     }
 
     // The bestmove line resolves the pending promise
     if (line.startsWith("bestmove")) {
-      console.log(`[stockfish] ${line}`);
+      log.info(`${line}`);
       clearTimeout(this._evalTimeout);
       clearTimeout(this._stopFallback);
       clearTimeout(this._abortTimeout);
-      const bestmove = line.split(" ")[1];
+      const parsed = parseBestmoveLine(line);
+      const bestmove = parsed ? parsed.bestmove : null;
 
       // Build lines array from collected PV data
       const lines = [];

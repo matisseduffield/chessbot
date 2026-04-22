@@ -85,6 +85,7 @@ export default defineConfig([
     files: ['**/*.test.{js,ts}', '**/*.spec.{js,ts}'],
     languageOptions: {
       globals: { ...globals.node },
+      sourceType: 'module',
     },
   },
 ]);

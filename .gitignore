@@ -3,9 +3,9 @@ dist/
 build/
 coverage/
 *.tsbuildinfo
-engine/
-books/
-syzygy/
+/engine/
+/books/
+/syzygy/
 dashboard-*.png
 .playwright-mcp/
 plans/
