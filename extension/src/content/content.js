@@ -32,6 +32,10 @@ import {
   translateToSquare,
   pieceCenterToSquare,
 } from "./lichessBoard.js";
+import {
+  classifyVariantColors,
+  nextTurnAfterMove,
+} from "./chesscomBoard.js";
 
 function gridToFenBoard(grid, pocket) {
   const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
@@ -1951,9 +1955,9 @@ let _variantColorMap = null;
 let _variantColorMapKey = null;
 
 function buildVariantColorMap(pieces, boardRect, flipped) {
-  // Group pieces by data-color and compute average Y position
-  // Only consider pieces whose center is within the board area
-  const groups = {};
+  // Extract pure (dataColor, cy) samples; skip pieces outside the board area
+  // (bank/captured pieces in drop variants).
+  const samples = [];
   for (const p of pieces) {
     const dc = p.getAttribute("data-color");
     if (!dc) continue;
@@ -1961,42 +1965,17 @@ function buildVariantColorMap(pieces, boardRect, flipped) {
     if (r.height === 0) continue;
     const cx = r.left + r.width / 2 - boardRect.left;
     const cy = r.top + r.height / 2 - boardRect.top;
-    // Skip pieces outside the board area (bank/captured pieces)
-    if (cx < -5 || cx > boardRect.width + 5 || cy < -5 || cy > boardRect.height + 5) continue;
-    if (!groups[dc]) groups[dc] = { sumY: 0, count: 0 };
-    groups[dc].sumY += cy;
-    groups[dc].count++;
+    if (
+      cx < -5 ||
+      cx > boardRect.width + 5 ||
+      cy < -5 ||
+      cy > boardRect.height + 5
+    )
+      continue;
+    samples.push({ dataColor: dc, cy });
   }
-  const keys = Object.keys(groups);
-  if (keys.length === 2) {
-    const avg0 = groups[keys[0]].sumY / groups[keys[0]].count;
-    const avg1 = groups[keys[1]].sumY / groups[keys[1]].count;
-    // Higher avg Y = bottom of visual board
-    const bottomKey = avg0 > avg1 ? keys[0] : keys[1];
-    const topKey = avg0 > avg1 ? keys[1] : keys[0];
-    // Non-flipped: bottom = white; flipped: bottom = black
-    const whiteKey = flipped ? topKey : bottomKey;
-    const blackKey = flipped ? bottomKey : topKey;
-    return { white: whiteKey, black: blackKey };
-  }
-  // Fallback: try literal color names, then sort numerically, lower = white
-  const keysLower = keys.map(k => k.toLowerCase());
-  if (keysLower.includes("white") || keysLower.includes("w")) {
-    const wk = keys[keysLower.indexOf("white")] || keys[keysLower.indexOf("w")];
-    const bk = keys.find(k => k !== wk) || keys[0];
-    return { white: wk, black: bk };
-  }
-  if (keysLower.includes("black") || keysLower.includes("b")) {
-    const bk = keys[keysLower.indexOf("black")] || keys[keysLower.indexOf("b")];
-    const wk = keys.find(k => k !== bk) || keys[0];
-    return { white: wk, black: bk };
-  }
-  keys.sort((a, b) => {
-    const na = parseInt(a), nb = parseInt(b);
-    if (isNaN(na) || isNaN(nb)) return a < b ? -1 : a > b ? 1 : 0;
-    return na - nb;
-  });
-  return { white: keys[0], black: keys[1] || keys[0] };
+  const result = classifyVariantColors(samples, flipped);
+  return result || { white: null, black: null };
 }
 
 function chesscomBoardToFen() {
@@ -2827,7 +2806,7 @@ function detectTurnFromHighlights() {
             const pm = pcls.match(/\b([wb])[prnbqk]\b/);
             if (pm) {
               // This color just moved → other color's turn
-              return pm[1] === "w" ? "b" : "w";
+              return nextTurnAfterMove(pm[1]);
             }
           }
         }
@@ -2862,8 +2841,8 @@ function detectTurnFromHighlights() {
             const pr = Math.round(parseFloat(m[2]) / squareH);
             if (pf === vf && pr === vr) {
               const cl = p.className;
-              if (cl.includes("white")) return "b";
-              if (cl.includes("black")) return "w";
+              if (cl.includes("white")) return nextTurnAfterMove("w");
+              if (cl.includes("black")) return nextTurnAfterMove("b");
             }
           }
         }
