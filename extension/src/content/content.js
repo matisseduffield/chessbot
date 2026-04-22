@@ -20,6 +20,8 @@ import {
   plyCountToTurn,
   parseLastRowTurn,
 } from "./moveText.js";
+import { applyUciMoveToBoard } from "./fenApply.js";
+import { formatScore, isLineLosing } from "./evalFormat.js";
 
 function gridToFenBoard(grid, pocket) {
   const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
@@ -3668,64 +3670,7 @@ function drawTrainingHint(uci, bestLine, source) {
  * Handles standard moves, captures, castling, en passant, and promotions.
  */
 function applyUciMove(fen, uci) {
-  if (!fen || !uci || uci.length < 4) return null;
-  const parts = fen.split(" ");
-  const board = parts[0];
-  const rows = board.split("/");
-  // Expand FEN rows into 8x8 grid
-  const grid = rows.map(row => {
-    let expanded = "";
-    for (const ch of row) {
-      if (ch >= "1" && ch <= "8") expanded += ".".repeat(parseInt(ch));
-      else expanded += ch;
-    }
-    return expanded.split("");
-  });
-
-  const fc = uci.charCodeAt(0) - 97; // from col 0-7
-  const fr = 8 - parseInt(uci[1]);    // from row 0-7 (0=rank8)
-  const tc = uci.charCodeAt(2) - 97;
-  const tr = 8 - parseInt(uci[3]);
-  const promo = uci.length > 4 ? uci[4] : null;
-
-  const piece = grid[fr][fc];
-  if (piece === ".") return null;
-
-  // Check if destination square was empty before moving (needed for en passant detection)
-  const destWasEmpty = grid[tr][tc] === ".";
-
-  // Move the piece
-  grid[fr][fc] = ".";
-  let placed = piece;
-  if (promo) placed = piece === piece.toUpperCase() ? promo.toUpperCase() : promo.toLowerCase();
-  grid[tr][tc] = placed;
-
-  // Castling — move the rook
-  if (piece.toLowerCase() === "k" && Math.abs(fc - tc) === 2) {
-    if (tc > fc) { grid[fr][7] = "."; grid[fr][5] = piece === "K" ? "R" : "r"; } // kingside
-    else { grid[fr][0] = "."; grid[fr][3] = piece === "K" ? "R" : "r"; }         // queenside
-  }
-
-  // En passant — remove captured pawn
-  // A pawn moving diagonally to an empty square must be en passant
-  if (piece.toLowerCase() === "p" && fc !== tc && destWasEmpty) {
-    const epRow = piece === "P" ? tr + 1 : tr - 1;
-    if (epRow >= 0 && epRow < 8) {
-      const captured = grid[epRow][tc];
-      if (captured.toLowerCase() === "p" && captured !== piece) grid[epRow][tc] = ".";
-    }
-  }
-
-  // Compress grid back to FEN board part
-  return grid.map(row => {
-    let s = "", empty = 0;
-    for (const c of row) {
-      if (c === ".") empty++;
-      else { if (empty) { s += empty; empty = 0; } s += c; }
-    }
-    if (empty) s += empty;
-    return s;
-  }).join("/");
+  return applyUciMoveToBoard(fen, uci);
 }
 
 /** Check if the user's move matched the engine's suggestion */
@@ -4006,24 +3951,6 @@ const EVAL_COLORS = [
   "#e74c3c", // 4th — red
   "#9b59b6", // 5th — purple
 ];
-
-function formatScore(line) {
-  if (line.mate !== undefined && line.mate !== null) {
-    return (line.mate >= 0 ? "+" : "\u2212") + "M" + Math.abs(line.mate);
-  }
-  if (line.score !== undefined && line.score !== null) {
-    const val = line.score / 100;
-    return (val >= 0 ? "+" : "") + val.toFixed(1);
-  }
-  return "?";
-}
-
-/** Is this line losing for the side to move? */
-function isLineLosing(line) {
-  if (line.mate !== undefined && line.mate !== null) return line.mate < 0;
-  if (line.score !== undefined && line.score !== null) return line.score < -50;
-  return false;
-}
 
 function drawMultiPV(lines) {
   clearArrow();
