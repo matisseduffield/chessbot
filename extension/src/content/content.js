@@ -5,6 +5,14 @@
    and draws best-move arrows.
    ───────────────────────────────────────────────────────────── */
 
+import {
+  countPieces,
+  fenBoardToGrid,
+  uciToSquares,
+  squareTopLeft,
+  squareCenter,
+} from "./boardMath.js";
+
 const WS_URL = "ws://localhost:8080";
 
 // Variants that support piece drops (captured pieces placed back on the board)
@@ -1671,16 +1679,6 @@ function hasPremoveElements() {
   return false;
 }
 
-function countPieces(boardFen) {
-  let n = 0;
-  // Strip pocket notation [...] before counting
-  const cleaned = boardFen.replace(/\[.*?\]$/g, "");
-  for (const ch of cleaned) {
-    if (ch !== "/" && ch !== "+" && ch !== "~" && (ch < "0" || ch > "9")) n++;
-  }
-  return n;
-}
-
 function readAndSend() {
   if (!boardReady) return;
 
@@ -3027,29 +3025,6 @@ function detectWhoMoved(prevFen, currFen) {
   return null;
 }
 
-function fenBoardToGrid(boardFen) {
-  const grid = [];
-  // Strip pocket notation [...] (crazyhouse, shogi, etc.)
-  const cleaned = boardFen.replace(/\[.*?\]$/g, "");
-  const rows = cleaned.split("/");
-  for (const row of rows) {
-    const rank = [];
-    let numBuf = "";
-    for (const ch of row) {
-      if (ch >= "0" && ch <= "9") {
-        numBuf += ch;
-      } else {
-        if (numBuf) { for (let i = 0; i < parseInt(numBuf); i++) rank.push(null); numBuf = ""; }
-        // Skip promoted piece markers (+ and ~ in Shogi/Fairy FENs)
-        if (ch !== "+" && ch !== "~") rank.push(ch);
-      }
-    }
-    if (numBuf) { for (let i = 0; i < parseInt(numBuf); i++) rank.push(null); }
-    grid.push(rank);
-  }
-  return grid;
-}
-
 function detectTurnFromClocks() {
   if (IS_CHESSGROUND) {
     const clocks = document.querySelectorAll(".rclock");
@@ -3275,30 +3250,6 @@ function boardToFen() {
 
 // ── Arrow overlay ────────────────────────────────────────────
 
-function uciToSquares(uci) {
-  if (!uci || uci.length < 3) return null;
-  // Handle drop notation: P@e4 (piece @ destination square)
-  const dropMatch = uci.match(/^([PNBRQK])@([a-z])(\d+)$/i);
-  if (dropMatch) {
-    const tf = dropMatch[2].charCodeAt(0) - 97;
-    const tr = parseInt(dropMatch[3], 10) - 1;
-    if (tf < 0 || tr < 0) return null;
-    return { from: null, to: { file: tf, rank: tr }, drop: dropMatch[1].toUpperCase() };
-  }
-  // Parse UCI move — supports multi-digit ranks for larger boards (e.g. a10b10)
-  const m = uci.match(/^([a-z])(\d+)([a-z])(\d+)/);
-  if (!m) return null;
-  const ff = m[1].charCodeAt(0) - 97;
-  const fr = parseInt(m[2], 10) - 1;
-  const tf = m[3].charCodeAt(0) - 97;
-  const tr = parseInt(m[4], 10) - 1;
-  if (ff < 0 || fr < 0 || tf < 0 || tr < 0) return null;
-  return {
-    from: { file: ff, rank: fr },
-    to:   { file: tf, rank: tr },
-  };
-}
-
 /** Clear move arrows and eval badges, but keep the eval bar. */
 function clearMoveIndicators() {
   // Check both document and shadow root for our overlay elements
@@ -3354,17 +3305,6 @@ function getBoardGeometry() {
   _geoCache = { board, rect, sqSize, flipped };
   _geoCacheKey = key;
   return _geoCache;
-}
-
-function squareTopLeft(file, rank, sqSize, flipped) {
-  const f = flipped ? 7 - file : file;
-  const r = flipped ? rank : 7 - rank;
-  return { x: f * sqSize, y: r * sqSize };
-}
-
-function squareCenter(file, rank, sqSize, flipped) {
-  const tl = squareTopLeft(file, rank, sqSize, flipped);
-  return { x: tl.x + sqSize / 2, y: tl.y + sqSize / 2 };
 }
 
 // ── Arrow drawing helper ─────────────────────────────────
