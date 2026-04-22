@@ -5,6 +5,8 @@ import {
   uciToSquares,
   squareTopLeft,
   squareCenter,
+  detectWhoMoved,
+  gridToFenBoard,
 } from './boardMath.js';
 
 describe('countPieces', () => {
@@ -85,5 +87,83 @@ describe('squareTopLeft / squareCenter', () => {
   });
   it('squareCenter is offset by sqSize/2', () => {
     expect(squareCenter(0, 0, 100, false)).toEqual({ x: 50, y: 750 });
+  });
+});
+
+const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+const AFTER_E4 = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR';
+const AFTER_E4_E5 = 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR';
+
+describe('detectWhoMoved', () => {
+  it('returns "w" after white plays e4', () => {
+    expect(detectWhoMoved(START, AFTER_E4)).toBe('w');
+  });
+  it('returns "b" after black plays e5', () => {
+    expect(detectWhoMoved(AFTER_E4, AFTER_E4_E5)).toBe('b');
+  });
+  it('returns null when boards are identical', () => {
+    expect(detectWhoMoved(START, START)).toBe(null);
+  });
+  it('returns null for atomic-style both-sides-disappear', () => {
+    const before = 'k7/8/8/8/4P3/4p3/8/K7';
+    const after = 'k7/8/8/8/8/8/8/K7';
+    expect(detectWhoMoved(before, after)).toBe(null);
+  });
+  it('handles castling (2-piece move)', () => {
+    const before = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/R3K2R';
+    const after = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/R4RK1';
+    expect(detectWhoMoved(before, after)).toBe('w');
+  });
+});
+
+describe('gridToFenBoard', () => {
+  it('round-trips the starting position', () => {
+    const grid = [
+      ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'],
+      ['p', 'p', 'p', 'p', 'p', 'p', 'p', 'p'],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      ['P', 'P', 'P', 'P', 'P', 'P', 'P', 'P'],
+      ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'],
+    ];
+    const fen = gridToFenBoard(grid, '');
+    expect(fen).toBe('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+  });
+  it('omits castling when noCastling=true', () => {
+    const grid = [
+      ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'],
+    ];
+    const fen = gridToFenBoard(grid, '', { noCastling: true });
+    expect(fen).toContain(' w - -');
+  });
+  it('appends pocket notation for drop variants', () => {
+    const grid = [
+      [null, null, null, null, 'k', null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, 'K', null, null, null],
+    ];
+    const fen = gridToFenBoard(grid, '[PPnn]');
+    expect(fen).toContain('[PPnn]');
+  });
+  it('compresses empty runs correctly', () => {
+    const grid = Array.from({ length: 8 }, () => Array(8).fill(null));
+    grid[7][0] = 'K';
+    grid[0][7] = 'k';
+    const fen = gridToFenBoard(grid, '');
+    expect(fen.startsWith('7k/8/8/8/8/8/8/K7')).toBe(true);
   });
 });

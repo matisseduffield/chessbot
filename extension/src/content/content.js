@@ -11,7 +11,14 @@ import {
   uciToSquares,
   squareTopLeft,
   squareCenter,
+  detectWhoMoved,
+  gridToFenBoard as _gridToFenBoard,
 } from "./boardMath.js";
+
+function gridToFenBoard(grid, pocket) {
+  const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
+  return _gridToFenBoard(grid, pocket, { noCastling });
+}
 
 const WS_URL = "ws://localhost:8080";
 
@@ -2961,70 +2968,6 @@ function detectTurnFromHighlights() {
   return null;
 }
 
-function detectWhoMoved(prevFen, currFen) {
-  const prev = fenBoardToGrid(prevFen);
-  const curr = fenBoardToGrid(currFen);
-
-  // Count squares where a piece of each color newly appeared
-  // Use dynamic grid dimensions to support non-8x8 variants
-  let whiteAppeared = 0;
-  let blackAppeared = 0;
-  let whiteDisappeared = 0;
-  let blackDisappeared = 0;
-
-  const ranks = Math.max(prev.length, curr.length);
-  for (let r = 0; r < ranks; r++) {
-    const prevRank = prev[r] || [];
-    const currRank = curr[r] || [];
-    const files = Math.max(prevRank.length, currRank.length);
-    for (let f = 0; f < files; f++) {
-      const p = prevRank[f] || null;
-      const c = currRank[f] || null;
-      if (p === c) continue;
-
-      // Something left this square
-      if (p) {
-        if (p === p.toUpperCase()) whiteDisappeared++;
-        else blackDisappeared++;
-      }
-      // Something arrived at this square
-      if (c) {
-        if (c === c.toUpperCase()) whiteAppeared++;
-        else blackAppeared++;
-      }
-    }
-  }
-
-  // The side that moved will have pieces disappear from old square and
-  // appear on new square. For a normal move: 1 disappear + 1 appear.
-  // For castling: 2 disappear + 2 appear (king + rook).
-  // The OTHER side might have 1 disappear (capture) but 0 appear.
-  const whiteMoved = whiteDisappeared > 0 && whiteAppeared > 0;
-  const blackMoved = blackDisappeared > 0 && blackAppeared > 0;
-
-  if (whiteMoved && !blackMoved) return "w";
-  if (blackMoved && !whiteMoved) return "b";
-
-  // Atomic chess: captures cause explosions where the capturing piece also
-  // disappears. Both sides lose pieces but neither "appears" on a new square.
-  // In this case, the side that lost MORE pieces likely had the explosion on
-  // their opponent's territory (opponent's pieces got destroyed). The side
-  // with fewer disappearances is the one that got captured = the non-mover.
-  // Actually, the capturing side loses exactly 1 piece (the capturer), while
-  // the captured side loses 1+ (the captured piece + any adjacent friendlies).
-  // But adjacent pieces of BOTH colors explode, so use net disappearance.
-  if (!whiteMoved && !blackMoved && (whiteDisappeared > 0 || blackDisappeared > 0)) {
-    // Explosion detected — fall through to other turn detection methods
-    return null;
-  }
-
-  // Both or neither — use net movement as tiebreaker
-  if (whiteAppeared > blackAppeared) return "w";
-  if (blackAppeared > whiteAppeared) return "b";
-
-  return null;
-}
-
 function detectTurnFromClocks() {
   if (IS_CHESSGROUND) {
     const clocks = document.querySelectorAll(".rclock");
@@ -3199,45 +3142,6 @@ function readPocketChessCom() {
     }
   }
   return "[" + whitePocket + blackPocket + "]";
-}
-
-function gridToFenBoard(grid, pocket) {
-  const rows = [];
-  const numRanks = grid.length;
-  for (let r = 0; r < numRanks; r++) {
-    let row = "";
-    let empty = 0;
-    const numFiles = grid[r].length;
-    for (let f = 0; f < numFiles; f++) {
-      if (grid[r][f]) {
-        if (empty) { row += empty; empty = 0; }
-        row += grid[r][f];
-      } else {
-        empty++;
-      }
-    }
-    if (empty) row += empty;
-    rows.push(row);
-  }
-  // Derive castling rights from king/rook positions (only for 8x8 boards)
-  // Some variants never have castling (antichess, racing kings, horde)
-  // grid[0] = rank 8 (top), grid[7] = rank 1 (bottom)
-  let castling = "";
-  const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
-  if (!noCastling && numRanks === 8 && (grid[7] || []).length >= 8) {
-    if (grid[7][4] === "K") { // white king on e1
-      if (grid[7][7] === "R") castling += "K";
-      if (grid[7][0] === "R") castling += "Q";
-    }
-    if (grid[0][4] === "k") { // black king on e8
-      if (grid[0][7] === "r") castling += "k";
-      if (grid[0][0] === "r") castling += "q";
-    }
-  }
-  if (!castling) castling = "-";
-  // Append pocket notation for drop variants (Crazyhouse, etc.)
-  const pocketStr = pocket || "";
-  return rows.join("/") + pocketStr + " w " + castling + " - 0 1";
 }
 
 function boardToFen() {

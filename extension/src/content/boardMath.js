@@ -108,3 +108,106 @@ export function squareCenter(file, rank, sqSize, flipped) {
   const tl = squareTopLeft(file, rank, sqSize, flipped);
   return { x: tl.x + sqSize / 2, y: tl.y + sqSize / 2 };
 }
+
+/**
+ * Given two board FENs (boardonly, before & after), decide which side
+ * played the move. Works by counting disappearances / appearances per
+ * colour. Returns `"w"`, `"b"`, or `null` if ambiguous (e.g. atomic
+ * captures that explode pieces of both colours).
+ *
+ * @param {string} prevFen
+ * @param {string} currFen
+ * @returns {"w"|"b"|null}
+ */
+export function detectWhoMoved(prevFen, currFen) {
+  const prev = fenBoardToGrid(prevFen);
+  const curr = fenBoardToGrid(currFen);
+
+  let whiteAppeared = 0;
+  let blackAppeared = 0;
+  let whiteDisappeared = 0;
+  let blackDisappeared = 0;
+
+  const ranks = Math.max(prev.length, curr.length);
+  for (let r = 0; r < ranks; r++) {
+    const prevRank = prev[r] || [];
+    const currRank = curr[r] || [];
+    const files = Math.max(prevRank.length, currRank.length);
+    for (let f = 0; f < files; f++) {
+      const p = prevRank[f] || null;
+      const c = currRank[f] || null;
+      if (p === c) continue;
+      if (p) {
+        if (p === p.toUpperCase()) whiteDisappeared++;
+        else blackDisappeared++;
+      }
+      if (c) {
+        if (c === c.toUpperCase()) whiteAppeared++;
+        else blackAppeared++;
+      }
+    }
+  }
+
+  const whiteMoved = whiteDisappeared > 0 && whiteAppeared > 0;
+  const blackMoved = blackDisappeared > 0 && blackAppeared > 0;
+  if (whiteMoved && !blackMoved) return 'w';
+  if (blackMoved && !whiteMoved) return 'b';
+
+  // Atomic explosions: nobody "appears" because the capturing piece is
+  // also destroyed. Fall through to other detection strategies.
+  if (!whiteMoved && !blackMoved && (whiteDisappeared > 0 || blackDisappeared > 0)) {
+    return null;
+  }
+
+  if (whiteAppeared > blackAppeared) return 'w';
+  if (blackAppeared > whiteAppeared) return 'b';
+  return null;
+}
+
+/**
+ * Convert a 2-D grid of pieces (see {@link fenBoardToGrid}) back into
+ * the board part of a FEN. Optionally accepts a bracketed pocket
+ * suffix for drop variants. Castling rights are derived from king +
+ * rook positions on an 8×8 board only; pass `noCastling: true` for
+ * antichess / racing-kings / horde.
+ *
+ * @param {(string|null)[][]} grid
+ * @param {string} [pocket]  e.g. "[PPnn]" (include brackets) or ""
+ * @param {{ noCastling?: boolean }} [opts]
+ */
+export function gridToFenBoard(grid, pocket, opts = {}) {
+  const rows = [];
+  const numRanks = grid.length;
+  for (let r = 0; r < numRanks; r++) {
+    let row = '';
+    let empty = 0;
+    const numFiles = grid[r].length;
+    for (let f = 0; f < numFiles; f++) {
+      if (grid[r][f]) {
+        if (empty) {
+          row += empty;
+          empty = 0;
+        }
+        row += grid[r][f];
+      } else {
+        empty++;
+      }
+    }
+    if (empty) row += empty;
+    rows.push(row);
+  }
+  let castling = '';
+  if (!opts.noCastling && numRanks === 8 && (grid[7] || []).length >= 8) {
+    if (grid[7][4] === 'K') {
+      if (grid[7][7] === 'R') castling += 'K';
+      if (grid[7][0] === 'R') castling += 'Q';
+    }
+    if (grid[0][4] === 'k') {
+      if (grid[0][7] === 'r') castling += 'k';
+      if (grid[0][0] === 'r') castling += 'q';
+    }
+  }
+  if (!castling) castling = '-';
+  const pocketStr = pocket || '';
+  return rows.join('/') + pocketStr + ' w ' + castling + ' - 0 1';
+}
