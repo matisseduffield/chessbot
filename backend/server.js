@@ -20,6 +20,7 @@ const { PROTOCOL_VERSION } = require("@chessbot/shared");
 const { safeSend, broadcast: wsBroadcast } = require("./src/ws/send");
 const { createRateLimiter } = require("./src/ws/rateLimit");
 const serverLogger = require("./src/logger");
+const { pickSearchLimits } = require("./src/engine/searchLimits");
 
 // ── Server log buffer ────────────────────────────────────
 serverLogger.install();
@@ -556,12 +557,7 @@ async function main() {
           }
         }
 
-        const depth = (msg.depth !== undefined && msg.depth !== null) ? Number(msg.depth) : config.defaultDepth;
-        const searchOptions = {};
-        if (msg.movetime) searchOptions.movetime = Number(msg.movetime);
-        else if (config.searchMovetime) searchOptions.movetime = Number(config.searchMovetime);
-        else if (msg.nodes) searchOptions.nodes = Number(msg.nodes);
-        else if (config.searchNodes) searchOptions.nodes = Number(config.searchNodes);
+        const { depth, options: searchOptions } = pickSearchLimits(msg, config);
         const gen = ++evalGeneration;
         const variantGen = globalVariantGen; // snapshot for staleness check
         const evalVariant = currentVariant; // snapshot variant for this eval (prevents stale reads)
