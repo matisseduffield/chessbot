@@ -23,7 +23,7 @@ function createRateLimiter({
     count = 0;
     warned = false;
   }, windowMs);
-  if (timer && typeof /** @type {any} */ (timer).unref === 'function') {
+  if (timer && typeof (/** @type {any} */ (timer).unref) === 'function') {
     /** @type {any} */ (timer).unref();
   }
 

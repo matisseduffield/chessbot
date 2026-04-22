@@ -23,7 +23,7 @@ const _warned = new Set();
 function _warnOnce(key, msg) {
   if (_warned.has(key)) return;
   _warned.add(key);
-   
+
   console.warn(`[chessbot] selector registry: ${key} — ${msg}`);
 }
 
