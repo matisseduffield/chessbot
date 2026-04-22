@@ -1,0 +1,10 @@
+Add extension content utils: timing + tagged logger
+
+timing.js exports debounce/throttle/sleep with .cancel(); logger.js
+wraps console.* with a [chessbot] tag and toggleable debug level.
+No content.js changes yet - modules are pure and unit-tested so
+incremental adoption is low-risk.
+
+Tests: 76 pass (was 64). Extension build clean.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
