@@ -14,6 +14,8 @@ const {
   toEpd,
   parseFen,
 } = require("@chessbot/shared");
+const { EvalCache } = require("./src/engine/evalCache");
+const { LichessBook } = require("./src/book/lichess");
 
 // ── Server log buffer ────────────────────────────────────
 const SERVER_LOG_MAX = 1000;
@@ -94,38 +96,18 @@ function listSyzygyDirs() {
 }
 
 // ── Evaluation cache ─────────────────────────────────────
-const _evalCache = new Map();
-const EVAL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-const EVAL_CACHE_MAX = 500;
+const _evalCache = new EvalCache({ ttlMs: 5 * 60 * 1000, max: 500 });
 
 function getCachedEval(fen, variant, depth, multiPV) {
-  const key = `${fen}:${variant}:${depth}:${multiPV}`;
-  const entry = _evalCache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.ts > EVAL_CACHE_TTL) { _evalCache.delete(key); return null; }
-  // Move to end of Map for LRU eviction
-  _evalCache.delete(key);
-  _evalCache.set(key, entry);
-  return entry.result;
+  return _evalCache.get(fen, variant, depth, multiPV);
 }
 
 function setCachedEval(fen, variant, depth, multiPV, result) {
-  const key = `${fen}:${variant}:${depth}:${multiPV}`;
-  if (_evalCache.size >= EVAL_CACHE_MAX) {
-    // Evict oldest entry
-    const oldest = _evalCache.keys().next().value;
-    _evalCache.delete(oldest);
-  }
-  _evalCache.set(key, { result, ts: Date.now() });
+  _evalCache.set(fen, variant, depth, multiPV, result);
 }
 
 // Periodically purge expired cache entries to prevent memory buildup
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of _evalCache) {
-    if (now - entry.ts > EVAL_CACHE_TTL) _evalCache.delete(key);
-  }
-}, 60_000);
+setInterval(() => _evalCache.purgeExpired(), 60_000);
 
 async function main() {
   // ── 0. Load ECO opening database ──────────────────────
@@ -235,40 +217,12 @@ async function main() {
   // ── 2. Load opening book (optional) ───────────────────
   let book = new OpeningBook(config.openingBookPath);
   await book.init();
-  let lichessBookEnabled = false; // Lichess opening explorer API
-  let lichessInFlight = 0;       // concurrent request limiter
-  const LICHESS_MAX_CONCURRENT = 2;
+  const lichessBook = new LichessBook({ maxConcurrent: 2, timeoutMs: 5000 });
 
   /** Query Lichess opening explorer for a FEN.
    *  Returns best UCI move string or null. */
-  async function lichessLookup(fen) {
-    if (!lichessBookEnabled) return null;
-    if (lichessInFlight >= LICHESS_MAX_CONCURRENT) return null; // rate limit
-    lichessInFlight++;
-    try {
-      const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}&topGames=0&recentGames=0`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-      if (!res.ok) return null;
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        console.warn("[lichess-book] invalid JSON response");
-        return null;
-      }
-      if (!data.moves || data.moves.length === 0) return null;
-      // Pick the move with the most total games
-      const best = data.moves.reduce((a, b) =>
-        (a.white + a.draws + a.black) >= (b.white + b.draws + b.black) ? a : b
-      );
-      console.log(`[lichess-book] hit: ${best.uci} (${best.san}, ${best.white + best.draws + best.black} games)`);
-      return best.uci;
-    } catch (err) {
-      console.warn(`[lichess-book] lookup failed: ${err.message}`);
-      return null;
-    } finally {
-      lichessInFlight--;
-    }
+  function lichessLookup(fen) {
+    return lichessBook.lookup(fen);
   }
 
   // ── 3. Start HTTP + WebSocket server ────────────────────
@@ -792,8 +746,8 @@ async function main() {
 
       // ── Lichess opening explorer toggle ────────────────
       if (msg.type === "set_lichess_book") {
-        lichessBookEnabled = !!msg.value;
-        console.log(`[server] Lichess opening book: ${lichessBookEnabled ? "enabled" : "disabled"}`);
+        lichessBook.setEnabled(!!msg.value);
+        console.log(`[server] Lichess opening book: ${lichessBook.enabled ? "enabled" : "disabled"}`);
       }
 
       if (msg.type === "get_settings") {
@@ -804,7 +758,7 @@ async function main() {
           activeEngine: path.basename(config.stockfishPath),
           activeBook: book.enabled ? path.basename(book.bookPath) : null,
           activeSyzygy: config.syzygyPath || null,
-          lichessBook: lichessBookEnabled,
+          lichessBook: lichessBook.enabled,
           engines: getCachedFiles().engines.map((e) => e.name),
           books: getCachedFiles().books.map((b) => b.name),
           syzygy: getCachedFiles().syzygy.map((s) => s.name),
