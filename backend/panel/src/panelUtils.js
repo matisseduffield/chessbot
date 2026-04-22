@@ -94,3 +94,146 @@ export function parseBoardDimensions(fen) {
   }
   return { files: maxFiles || 8, ranks: ranks || 8 };
 }
+
+// ── PV move formatting ──────────────────────────────────────
+const PV_PIECE_GLYPHS = {
+  K: '\u2654',
+  Q: '\u2655',
+  R: '\u2656',
+  B: '\u2657',
+  N: '\u2658',
+};
+
+/**
+ * Wrap leading piece letter in a span with the piece glyph.
+ * Pure: operates on an already-escaped SAN string.
+ * @param {string} sanEscaped
+ * @returns {string}
+ */
+export function decorateMove(sanEscaped) {
+  return String(sanEscaped).replace(
+    /^([KQRBN])/,
+    (_, p) => `<span class="pv-piece">${PV_PIECE_GLYPHS[p]}</span>`,
+  );
+}
+
+/**
+ * Format a principal variation move list as HTML with alternating move
+ * numbers. `moves` is an array of SAN strings. `fen` supplies the starting
+ * side-to-move + fullmove number.
+ * @param {string[]} moves
+ * @param {string} fen
+ * @returns {string}
+ */
+export function formatPVMoves(moves, fen) {
+  if (!moves || !moves.length) return '';
+  const parts = fen ? fen.split(' ') : [];
+  let moveNum = parseInt(parts[5]) || 1;
+  let isBlack = parts[1] === 'b';
+  let html = '';
+  for (let i = 0; i < moves.length; i++) {
+    const m = moves[i];
+    if (!isBlack || i === 0) {
+      html += `<span class="pv-movenum">${moveNum}${isBlack && i === 0 ? '...' : '.'}</span>`;
+    }
+    html += `<span class="pv-move">${decorateMove(escHtml(m))}</span>`;
+    if (isBlack) moveNum++;
+    isBlack = !isBlack;
+  }
+  return html;
+}
+
+// ── Material calculation ────────────────────────────────────
+const PIECE_VALUES = {
+  p: 1,
+  n: 3,
+  b: 3,
+  r: 5,
+  q: 9,
+  P: 1,
+  N: 3,
+  B: 3,
+  R: 5,
+  Q: 9,
+};
+const MATERIAL_ICONS = {
+  p: '\u265f',
+  n: '\u265e',
+  b: '\u265d',
+  r: '\u265c',
+  q: '\u265b',
+  P: '\u2659',
+  N: '\u2658',
+  B: '\u2657',
+  R: '\u2656',
+  Q: '\u2655',
+};
+const MATERIAL_BASELINE = {
+  p: 8,
+  n: 2,
+  b: 2,
+  r: 2,
+  q: 1,
+  P: 8,
+  N: 2,
+  B: 2,
+  R: 2,
+  Q: 1,
+};
+
+/**
+ * Compute total material value and per-piece counts for each side from a FEN.
+ * @param {string} fen
+ * @returns {{ white: number, black: number, whitePieces: Record<string, number>, blackPieces: Record<string, number>, diff: number }}
+ */
+export function calculateMaterial(fen) {
+  if (!fen) {
+    return { white: 0, black: 0, whitePieces: {}, blackPieces: {}, diff: 0 };
+  }
+  const board = fen.split(' ')[0];
+  const whitePieces = {};
+  const blackPieces = {};
+  let whiteVal = 0;
+  let blackVal = 0;
+  for (const ch of board) {
+    if ('PNBRQ'.includes(ch)) {
+      whitePieces[ch] = (whitePieces[ch] || 0) + 1;
+      whiteVal += PIECE_VALUES[ch];
+    } else if ('pnbrq'.includes(ch)) {
+      blackPieces[ch] = (blackPieces[ch] || 0) + 1;
+      blackVal += PIECE_VALUES[ch];
+    }
+  }
+  return {
+    white: whiteVal,
+    black: blackVal,
+    whitePieces,
+    blackPieces,
+    diff: whiteVal - blackVal,
+  };
+}
+
+/**
+ * Render the "captured opponent pieces" icon strip for one side.
+ * `myColor` is "w" or "b" — the side whose captures we're showing.
+ * @param {Record<string, number>} _myPieces
+ * @param {Record<string, number>} oppPieces
+ * @param {"w" | "b"} myColor
+ * @returns {string}
+ */
+export function materialAdvantageHtml(_myPieces, oppPieces, myColor) {
+  const oppKeys = myColor === 'w' ? 'pnbrq' : 'PNBRQ';
+  const captured = {};
+  for (const ch of oppKeys) {
+    const have = oppPieces[ch] || 0;
+    const diff = MATERIAL_BASELINE[ch] - have;
+    if (diff > 0) captured[ch] = diff;
+  }
+  let html = '';
+  for (const [ch, count] of Object.entries(captured)) {
+    for (let i = 0; i < count; i++) {
+      html += `<span style="opacity:0.7">${MATERIAL_ICONS[ch]}</span>`;
+    }
+  }
+  return html;
+}

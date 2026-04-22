@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { escHtml, hexToRgb, lighten, formatScore, parseBoardDimensions } from './panelUtils.js';
+import {
+  escHtml,
+  hexToRgb,
+  lighten,
+  formatScore,
+  parseBoardDimensions,
+  decorateMove,
+  formatPVMoves,
+  calculateMaterial,
+  materialAdvantageHtml,
+} from './panelUtils.js';
 
 describe('escHtml', () => {
   it('escapes &, <, >, "', () => {
@@ -83,5 +93,84 @@ describe('parseBoardDimensions', () => {
   });
   it("ignores '+' and '~' promotion markers", () => {
     expect(parseBoardDimensions('+P+P+P+P+P+P+P+P/8 w - - 0 1').files).toBe(8);
+  });
+});
+
+describe('decorateMove', () => {
+  it('wraps leading piece letter with glyph span', () => {
+    expect(decorateMove('Nf3')).toBe('<span class="pv-piece">\u2658</span>f3');
+    expect(decorateMove('Qxd5')).toBe('<span class="pv-piece">\u2655</span>xd5');
+  });
+  it('leaves pawn moves untouched', () => {
+    expect(decorateMove('e4')).toBe('e4');
+    expect(decorateMove('exd5')).toBe('exd5');
+  });
+  it('leaves castling untouched (not a piece letter)', () => {
+    expect(decorateMove('O-O')).toBe('O-O');
+  });
+});
+
+describe('formatPVMoves', () => {
+  const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  it('returns empty for empty moves', () => {
+    expect(formatPVMoves([], startFen)).toBe('');
+  });
+  it("prefixes white's move with '1.'", () => {
+    const html = formatPVMoves(['e4'], startFen);
+    expect(html).toContain('1.');
+    expect(html).toContain('e4');
+    expect(html).not.toContain('1...');
+  });
+  it("prefixes black's first move with '1...'", () => {
+    const fenBlack = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+    const html = formatPVMoves(['e5'], fenBlack);
+    expect(html).toContain('1...');
+  });
+  it('increments move number after black plays', () => {
+    const html = formatPVMoves(['e4', 'e5', 'Nf3'], startFen);
+    expect(html).toContain('1.');
+    expect(html).toContain('2.');
+  });
+});
+
+describe('calculateMaterial', () => {
+  it('starting position is balanced', () => {
+    const m = calculateMaterial('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+    expect(m.white).toBe(m.black);
+    expect(m.diff).toBe(0);
+    expect(m.whitePieces.P).toBe(8);
+    expect(m.blackPieces.p).toBe(8);
+  });
+  it('empty fen returns zeros', () => {
+    expect(calculateMaterial('')).toEqual({
+      white: 0,
+      black: 0,
+      whitePieces: {},
+      blackPieces: {},
+      diff: 0,
+    });
+  });
+  it('material advantage reflected in diff', () => {
+    // White is missing a queen (−9)
+    const m = calculateMaterial('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR w KQkq - 0 1');
+    expect(m.diff).toBe(-9);
+  });
+});
+
+describe('materialAdvantageHtml', () => {
+  it('no captures → empty string', () => {
+    const html = materialAdvantageHtml({}, { p: 8, n: 2, b: 2, r: 2, q: 1 }, 'w');
+    expect(html).toBe('');
+  });
+  it('shows captured pawns for white', () => {
+    const html = materialAdvantageHtml({}, { p: 6, n: 2, b: 2, r: 2, q: 1 }, 'w');
+    // 2 captured black pawns
+    const count = (html.match(/\u265f/g) || []).length;
+    expect(count).toBe(2);
+  });
+  it('shows captured pieces for black', () => {
+    const html = materialAdvantageHtml({}, { P: 8, N: 1, B: 2, R: 2, Q: 1 }, 'b');
+    const count = (html.match(/\u2658/g) || []).length;
+    expect(count).toBe(1);
   });
 });
