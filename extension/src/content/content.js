@@ -22,6 +22,7 @@ import {
 } from "./moveText.js";
 import { applyUciMoveToBoard } from "./fenApply.js";
 import { formatScore, isLineLosing } from "./evalFormat.js";
+import { filterGhostPieces as _filterGhostPieces } from "./pieceFilter.js";
 
 function gridToFenBoard(grid, pocket) {
   const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
@@ -2309,12 +2310,7 @@ function isChesscomFlipped(board) {
 
 /** Filter out ghost/premove elements from a NodeList of pieces. */
 function filterGhostPieces(pieces) {
-  return Array.from(pieces).filter(el => {
-    const cls = typeof el.className === "string" ? el.className : (el.getAttribute("class") || "");
-    // chess.com ghost pieces: class contains "ghost", "premove", or "dragging"
-    if (/\b(ghost|premove)\b/i.test(cls)) return false;
-    return true;
-  });
+  return _filterGhostPieces(pieces);
 }
 
 /** Try every known way to find chess.com piece elements. */
