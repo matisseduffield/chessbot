@@ -2354,6 +2354,19 @@ function connect() {
     let msg;
     try { msg = JSON.parse(evt.data); } catch { return; }
 
+    // Protocol handshake (improvement-plan §7.4). If the server speaks a
+    // newer protocol, the panel is stale — warn the user once so they
+    // rebuild/refresh instead of silently seeing half-working behaviour.
+    if (msg.type === "server_hello") {
+      const EXPECTED = 1;
+      if (typeof msg.protocolVersion === "number" && msg.protocolVersion !== EXPECTED) {
+        console.warn(`[panel] protocol mismatch: panel=${EXPECTED} server=${msg.protocolVersion} — reload the panel after rebuilding.`);
+        const st = document.getElementById("status-text");
+        if (st) st.textContent = `Protocol mismatch (server v${msg.protocolVersion}, panel v${EXPECTED}) — reload`;
+      }
+      return;
+    }
+
     if (msg.type === "bestmove") {
       if (!msg.fen || typeof msg.fen !== "string") return;
       if (msg.lines && !Array.isArray(msg.lines)) return;

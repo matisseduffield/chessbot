@@ -971,6 +971,13 @@ function connectWS() {
   ws.onmessage = (evt) => {
     try {
       const msg = JSON.parse(evt.data);
+      if (msg.type === "server_hello") {
+        const EXPECTED = 1;
+        if (typeof msg.protocolVersion === "number" && msg.protocolVersion !== EXPECTED) {
+          console.warn(`[chessbot] protocol mismatch: extension=${EXPECTED} server=${msg.protocolVersion} — reload the extension.`);
+        }
+        return;
+      }
       if (msg.type === "error") {
         console.log(`[chessbot] server error: ${msg.message}`);
         pendingEval = false;

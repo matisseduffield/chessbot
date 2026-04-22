@@ -16,6 +16,7 @@ const {
 } = require("@chessbot/shared");
 const { EvalCache } = require("./src/engine/evalCache");
 const { LichessBook } = require("./src/book/lichess");
+const { PROTOCOL_VERSION } = require("@chessbot/shared");
 
 // ── Server log buffer ────────────────────────────────────
 const SERVER_LOG_MAX = 1000;
@@ -460,6 +461,29 @@ async function main() {
     const remote = req.socket.remoteAddress;
     console.log(`[server] client connected (${remote})`);
 
+    // Protocol hello: lets the panel/extension detect version mismatches
+    // (see improvement-plan §7.4). Best-effort; older clients ignore it.
+    safeSend(ws, {
+      type: "server_hello",
+      protocolVersion: PROTOCOL_VERSION,
+      serverVersion: require("./package.json").version,
+      engine: { name: "stockfish" },
+    });
+
+    // Per-connection rate limit (improvement-plan §11). Bounded counter
+    // reset on an interval; bursts above the ceiling get a single error
+    // frame and the message is dropped. Keeps one rogue client from
+    // stalling the engine for everyone else.
+    const RATE_WINDOW_MS = 10_000;
+    const RATE_MAX = 300;
+    let rateCount = 0;
+    let rateWarned = false;
+    const rateTimer = setInterval(() => {
+      rateCount = 0;
+      rateWarned = false;
+    }, RATE_WINDOW_MS);
+    rateTimer.unref && rateTimer.unref();
+
     // Send current depth setting so newly-connected clients sync immediately
     if (config.defaultDepth !== undefined) {
       safeSend(ws, { type: "set_depth", value: config.defaultDepth });
@@ -474,11 +498,27 @@ async function main() {
     let evaluationQueue = Promise.resolve();
 
     ws.on("message", async (data) => {
+      rateCount++;
+      if (rateCount > RATE_MAX) {
+        if (!rateWarned) {
+          rateWarned = true;
+          safeSend(ws, {
+            type: "error",
+            code: "rate_limited",
+            message: `Too many messages (max ${RATE_MAX} per ${RATE_WINDOW_MS / 1000}s).`,
+          });
+        }
+        return;
+      }
       let msg;
       try {
         msg = JSON.parse(data);
       } catch {
         console.warn("[server] received non-JSON message, ignoring");
+        return;
+      }
+      if (!msg || typeof msg !== "object" || typeof msg.type !== "string") {
+        safeSend(ws, { type: "error", code: "bad_frame", message: "Frames must be JSON objects with a string `type`." });
         return;
       }
 
@@ -971,6 +1011,7 @@ async function main() {
 
     ws.on("close", () => {
       console.log(`[server] client disconnected (${remote})`);
+      clearInterval(rateTimer);
       evalGeneration++; // discard any in-flight evals for this client
     });
 
