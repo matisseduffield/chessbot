@@ -1,7 +1,7 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import { resolve } from 'path'
-import { cpSync } from 'fs'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { resolve } from 'path';
+import { cpSync } from 'fs';
 
 export default defineConfig(({ mode }) => {
   // "content" mode builds the content script as a standalone IIFE
@@ -20,7 +20,7 @@ export default defineConfig(({ mode }) => {
           output: { extend: true },
         },
       },
-    }
+    };
   }
 
   // Default mode builds the popup (React)
@@ -32,5 +32,5 @@ export default defineConfig(({ mode }) => {
         input: { popup: resolve(__dirname, 'index.html') },
       },
     },
-  }
-})
+  };
+});
