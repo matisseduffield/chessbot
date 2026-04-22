@@ -19,22 +19,10 @@ const { LichessBook } = require("./src/book/lichess");
 const { PROTOCOL_VERSION } = require("@chessbot/shared");
 const { safeSend, broadcast: wsBroadcast } = require("./src/ws/send");
 const { createRateLimiter } = require("./src/ws/rateLimit");
+const serverLogger = require("./src/logger");
 
 // ── Server log buffer ────────────────────────────────────
-const SERVER_LOG_MAX = 1000;
-const serverLogBuffer = [];
-const _origConsoleLog = console.log;
-const _origConsoleWarn = console.warn;
-const _origConsoleError = console.error;
-function bufferServerLog(level, args) {
-  const ts = new Date().toISOString().slice(11, 23);
-  const line = `[${ts}] ${level}: ${Array.from(args).map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ")}`;
-  serverLogBuffer.push(line);
-  if (serverLogBuffer.length > SERVER_LOG_MAX) serverLogBuffer.shift();
-}
-console.log = function (...args) { bufferServerLog("LOG", args); _origConsoleLog.apply(console, args); };
-console.warn = function (...args) { bufferServerLog("WARN", args); _origConsoleWarn.apply(console, args); };
-console.error = function (...args) { bufferServerLog("ERR", args); _origConsoleError.apply(console, args); };
+serverLogger.install();
 
 // ── File scanner helpers ─────────────────────────────────
 
@@ -859,7 +847,7 @@ async function main() {
           `Settings: ${JSON.stringify(engine.getSettings())}`,
           "=== SERVER LOGS ===",
         ].join("\n");
-        safeSend(ws, { type: "server_logs", logs: header + "\n" + serverLogBuffer.join("\n") });
+        safeSend(ws, { type: "server_logs", logs: header + "\n" + serverLogger.getBuffer().join("\n") });
       }
 
       if (msg.type === "switch_variant" && msg.variant) {
