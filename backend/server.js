@@ -782,12 +782,54 @@ async function main() {
               if (depth === 0 && !searchOptions.movetime && !searchOptions.nodes) {
                 searchOptions.infinite = true;
               }
-              const result = await engine.evaluate(fen, depth, searchOptions);
+              let result = await engine.evaluate(fen, depth, searchOptions);
               // Check again after eval finishes — a newer FEN may have arrived
               if (gen !== evalGeneration) {
                 console.log(`[server] discarding stale result gen ${gen}`);
                 return;
               }
+
+              // If engine crashed due to a corrupt Syzygy tablebase, disable Syzygy
+              // and retry once so the user gets a valid move instead of a hang.
+              if (result && result.crashed && result.reason && result.reason.startsWith("corrupt_tablebase")) {
+                const corruptFile = result.reason.split(":").slice(1).join(":");
+                console.error(`[server] engine crashed: corrupt tablebase file ${corruptFile} — disabling Syzygy and retrying`);
+                safeSend(ws, {
+                  type: "warning",
+                  code: "corrupt_tablebase",
+                  message: `Corrupt Syzygy tablebase file detected (${corruptFile}). Syzygy has been disabled for this session; re-download the file to restore it.`,
+                  file: corruptFile,
+                });
+                try {
+                  await engine.setOption("SyzygyPath", "<empty>");
+                  config.syzygyPath = null;
+                } catch (e) {
+                  console.error("[server] failed to disable Syzygy after crash:", e.message);
+                }
+                if (gen === evalGeneration) {
+                  result = await engine.evaluate(fen, depth, searchOptions);
+                  if (gen !== evalGeneration) {
+                    console.log(`[server] discarding stale retry result gen ${gen}`);
+                    return;
+                  }
+                }
+              }
+
+              // If engine still crashed / returned null, surface a proper error
+              // instead of silently sending bestmove:null (which hangs the client).
+              if (!result || !result.bestmove) {
+                console.error(`[server] null bestmove (crashed=${result?.crashed}, reason=${result?.reason || "unknown"})`);
+                safeSend(ws, {
+                  type: "error",
+                  code: result?.crashed ? "engine_crash" : "engine_no_move",
+                  message: result?.crashed
+                    ? `Engine crashed during analysis (${result.reason || "unknown"}). The engine has been restarted — try again.`
+                    : "Engine returned no move for this position.",
+                  fen,
+                });
+                return;
+              }
+
               const enrichedLines = enrichLines(result.lines || [], fen);
               console.log(`[server] → bestmove (engine): ${result.bestmove}`);
 

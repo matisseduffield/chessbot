@@ -23,3 +23,6 @@ plans/
 test-results/
 playwright-report/
 playwright/.cache/
+
+# Scratch / temp test logs
+tests/*.log

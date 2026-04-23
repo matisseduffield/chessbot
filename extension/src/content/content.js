@@ -959,9 +959,19 @@ function connectWS() {
         }
         return;
       }
+      if (msg.type === "warning") {
+        console.warn(`[chessbot] server warning: ${msg.message}`);
+        return;
+      }
       if (msg.type === "error") {
         console.log(`[chessbot] server error: ${msg.message}`);
         pendingEval = false;
+        // If engine crashed, force re-send of current FEN after restart
+        if (msg.code === "engine_crash") {
+          lastSentFen = "";
+          setTimeout(() => readAndSend(), 1500);
+          return;
+        }
         // If engine not ready (restarting), retry after a short delay
         if (msg.message && msg.message.includes("not ready")) {
           lastSentFen = "";

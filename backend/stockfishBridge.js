@@ -74,7 +74,11 @@ class StockfishBridge {
           this._pendingResolve = null;
           this._pendingReject = null;
           this._pendingPV = null;
-          res({ bestmove: null, lines: [] });
+          const reason = this._lastCorruptTb
+            ? `corrupt_tablebase:${this._lastCorruptTb}`
+            : `engine_exit:code=${code}`;
+          res({ bestmove: null, lines: [], crashed: true, reason, stderr: this._lastStderr || null });
+          this._lastCorruptTb = null;
         }
         if (this._abortResolve) {
           this._abortResolve();
@@ -85,7 +89,14 @@ class StockfishBridge {
       });
 
       this.process.stderr.on("data", (data) => {
-        log.error({ stderr: data.toString().trim() }, "stderr");
+        const text = data.toString().trim();
+        if (text) {
+          this._lastStderr = text;
+          // Detect corrupt Syzygy tablebase files (Stockfish crashes with exit 1)
+          const m = text.match(/Corrupt tablebase file ([^\r\n]+)/i);
+          if (m) this._lastCorruptTb = m[1].trim();
+        }
+        log.error({ stderr: text }, "stderr");
       });
 
       let buffer = "";
