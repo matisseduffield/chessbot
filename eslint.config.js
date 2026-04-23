@@ -105,7 +105,7 @@ export default defineConfig([
     },
   },
   {
-    files: ['tests/e2e/**/*.{js,ts}', 'playwright.config.{js,ts}'],
+    files: ['tests/e2e/**/*.{js,ts}', 'config/playwright.config.{js,ts}'],
     languageOptions: {
       globals: { ...globals.node, ...globals.browser },
       sourceType: 'module',

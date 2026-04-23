@@ -8,7 +8,7 @@ import { defineConfig } from '@playwright/test';
  * regression net, not a pixel-perfect acceptance harness.
  */
 export default defineConfig({
-  testDir: './tests/e2e',
+  testDir: '../tests/e2e',
   timeout: 30_000,
   fullyParallel: false,
   workers: 1,
@@ -19,7 +19,7 @@ export default defineConfig({
   },
   webServer: {
     command: 'node server.js',
-    cwd: './backend',
+    cwd: '../backend',
     url: 'http://localhost:8080/healthz',
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
