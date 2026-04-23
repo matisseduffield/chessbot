@@ -20,11 +20,11 @@ Real-time chess analysis overlay for online chess sites. A Chrome extension read
 ![Best-move arrows on Chess.com](screenshots/arrows.png?v=2)
 
 - **Best-move arrows** — green (engine), gold (opening book), blue (Lichess Masters DB); **red arrows** for losing lines
-- **Multi-PV** — up to 8 candidate lines with eval badges, depth, nodes/NPS
+- **Multi-PV** — up to 8 candidate lines with faded secondary arrows, eval badges, depth, nodes/NPS
 - **Eval bar & WDL bar** — real-time evaluation alongside the board, plus Win/Draw/Loss percentage bar in the panel
-- **Opponent response arrows** — see the likely opponent reply after the best move
+- **Opponent response arrows** — see the likely opponent reply after the best move (pondered ahead automatically)
 - **Infinite analysis** — set depth to 0 for unlimited streaming analysis
-- **Eval caching** — positions cached for 5 min (up to 500 entries) to avoid re-analysis
+- **Eval caching** — positions cached in-memory (LRU + TTL) **and persisted to disk across restarts** for instant re-analysis
 
 ### Auto-Move (Bot Mode)
 
@@ -33,7 +33,16 @@ Real-time chess analysis overlay for online chess sites. A Chrome extension read
 - **Automatic move execution** — plays the engine's best move on the board for you
 - **Humanization** — configurable random delays (min/max ms) and 0–50% chance of picking a suboptimal move
 - **Bullet mode** — zero delay, no humanize, fast 500ms search limit for blitz/bullet
+- **Clock-aware time caps** — engine time is automatically capped below your remaining clock so you never flag
 - Works on all supported sites via native DOM events
+
+### Tools Panel
+
+A new **Tools** card on the dashboard exposes:
+
+- **Blunder Alerts** — client-side classification of eval drops, with configurable threshold (50–400 cp). Flags ⛔ blunder, ⚠️ mistake, ? inaccuracy in real time.
+- **PGN Import / Export** — paste a PGN to scrub through it, or export the current game's eval history as an annotated PGN (`{[%eval N.NN]}`) loadable into chess.com and lichess Study.
+- **Eval Cache** — live size / capacity, one-click clear, auto-refreshes every 15s.
 
 ### Opening Books & Endgame Tables
 
@@ -70,13 +79,13 @@ Drop variants feature full pocket piece detection and drop-move suggestions with
 
 ### Dashboard Panel
 
-Full settings UI at `http://localhost:8080` with a live board preview and three settings columns. All slider values are clickable for direct keyboard input. Includes a color picker to customize the accent color across the entire dashboard.
+Built with [Vite](https://vitejs.dev) — bundled, tree-shaken, hash-versioned. Full settings UI at `http://localhost:8080` with a live board preview, drag-reorderable settings cards, and a color picker to customize the accent color across the entire dashboard. All slider values are clickable for direct keyboard input.
 
 **Column 1 — Analysis:** Variant picker, depth (0–30), multi-PV (1–8), analyze for me/opponent/both, time & node limits, FEN display.
 
 **Column 2 — Engine & Training:** Engine selector, threads (1–16), hash (16–1024 MB), skill level (0–20), training mode with stats.
 
-**Column 3 — Display & Automation:** Auto-move with humanization, voice controls, eval bar/PV toggles, display mode, opening books, Syzygy tablebases.
+**Column 3 — Display & Automation:** Auto-move with humanization, voice controls, eval bar/PV toggles, display mode, opening books, Syzygy tablebases, **Tools** card (PGN, blunder alerts, cache).
 
 ### Extension Popup
 
@@ -119,19 +128,29 @@ Quick-access popup for toggling analysis on/off, checking connection status, swi
         ▼                                       ▼
 ┌───────────────────┐                   ┌──────────────────┐
 │  Extension Popup  │                   │  Dashboard Panel │
-│  (toggle + logs)  │                   │  (localhost:8080)│
+│  (toggle + logs)  │                   │  (Vite, :8080)   │
 └───────────────────┘                   └──────────────────┘
 ```
+
+Built as an npm workspaces monorepo with four packages:
+
+| Package | Purpose |
+|---|---|
+| `shared/` | TypeScript types + pure helpers (FEN, PGN, multipv, classify, clock, WS message schemas) |
+| `backend/` | Express + `ws` server, Stockfish UCI bridge, opening books, Syzygy, persistent eval cache |
+| `backend/panel/` | Vite-built dashboard (`@chessbot/panel`) |
+| `extension/` | Vite-built Chrome MV3 extension (content script + popup) |
 
 ## Quick Start
 
 ### 1. Clone & install
 
+Single install at the repo root — npm workspaces handle every package:
+
 ```bash
 git clone https://github.com/matisseduffield/chessbot.git
 cd chessbot
-cd backend && npm install
-cd ../extension && npm install && npm run build
+npm install
 ```
 
 ### 2. Download engines
@@ -153,22 +172,52 @@ Download from [stockfishchess.org](https://stockfishchess.org/download) and [Fai
 - **Opening books** — place `.bin` Polyglot books in `books/`
 - **Syzygy tablebases** — place `.rtbw`/`.rtbz` files in `syzygy/`
 
-### 4. Load the extension
+### 4. Build
+
+```bash
+npm run build
+```
+
+Builds the shared types, the Vite panel bundle, and the Vite-bundled extension in one shot.
+
+### 5. Load the extension
 
 1. Open `chrome://extensions/`
 2. Enable **Developer mode**
 3. Click **Load unpacked** → select `extension/dist`
 
-### 5. Start the server
+### 6. Start the server
 
 ```bash
 cd backend
 node server.js
 ```
 
-### 6. Play
+The server auto-serves the built panel from `backend/panel/dist/` when it exists, falling back to the source tree for local hacking.
+
+### 7. Play
 
 Open a game on any supported site. The extension auto-connects and shows best-move arrows. Open `http://localhost:8080` for the full settings dashboard.
+
+## Development
+
+```bash
+npm run dev            # backend + panel vite dev server with HMR
+npm test               # 393 vitest unit tests
+npm run e2e            # Playwright smoke tests against the built panel
+npm run typecheck      # tsc on shared + backend
+npm run lint           # eslint across all workspaces
+npm run format         # prettier write
+```
+
+The backend also exposes inspection endpoints useful during development:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /healthz` | engine readiness, book/tablebase state, client count |
+| `GET /selfcheck` | run a canned 8-ply analysis; verify engine + UCI pipeline |
+| `GET /api/cache/stats` | live eval cache size |
+| `POST /api/cache/clear` | flush eval cache |
 
 ## Configuration
 
@@ -188,28 +237,30 @@ All settings are adjustable at runtime from the dashboard. Environment variables
 
 ```
 chessbot/
+├── shared/                  # TS: FEN, PGN, clock, WS schemas
 ├── backend/
-│   ├── server.js            # HTTP + WebSocket server
-│   ├── stockfishBridge.js   # UCI engine communication
-│   ├── openingBook.js       # Polyglot book reader
-│   ├── eco.js               # ECO opening database
-│   ├── config.js            # Configuration
-│   ├── eco/                 # TSV opening classification files
-│   └── panel/index.html     # Dashboard UI
+│   ├── server.js            # HTTP + WebSocket entrypoint
+│   ├── src/                 # engine/, analysis/, book/, ws/, lib/
+│   │   ├── analysis/blunder.js
+│   │   ├── engine/{evalCache,searchLimits,uciParser,clockCap}.*
+│   │   ├── ws/{send,rateLimit,validateMessage}.*
+│   │   └── book/{eco,lichess}.js
+│   ├── panel/               # @chessbot/panel (Vite dashboard)
+│   │   ├── src/             # ES modules (state, board, evalGraph, PVs, ...)
+│   │   ├── index.html
+│   │   └── vite.config.js
+│   └── eco/                 # TSV opening classification files
 ├── extension/
 │   ├── src/
-│   │   ├── content/
-│   │   │   ├── content.js   # Board reader + overlay renderer
-│   │   │   └── content.css  # Overlay styles
-│   │   ├── App.jsx          # Popup UI
-│   │   └── main.jsx         # Popup entry point
-│   ├── public/
-│   │   └── manifest.json    # Chrome MV3 manifest
+│   │   ├── content/         # Content script modules (13 files)
+│   │   └── App.jsx          # Popup UI
+│   ├── public/manifest.json # Chrome MV3 manifest
 │   └── dist/                # Built extension (load in Chrome)
-├── engine/                  # Engine binaries
-├── books/                   # Opening books
-├── syzygy/                  # Endgame tablebases
-└── screenshots/             # README images
+├── installer/               # Windows Inno Setup script
+├── tests/e2e/               # Playwright smoke tests
+├── docs/                    # architecture.md, protocol.md, installer.md, ...
+├── engine/ books/ syzygy/   # user-supplied, gitignored
+└── screenshots/
 ```
 
 ## License

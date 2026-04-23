@@ -445,6 +445,21 @@ async function main() {
     }
   });
 
+  // ── Eval cache inspection / control (exposed in the panel Tools card) ───
+  app.get("/api/cache/stats", (_req, res) => {
+    res.json({
+      size: _evalCache.size,
+      max: _evalCache.max,
+      ttlMs: _evalCache.ttlMs,
+      path: _evalCachePath,
+    });
+  });
+  app.post("/api/cache/clear", (_req, res) => {
+    const prev = _evalCache.size;
+    _evalCache.clear();
+    res.json({ status: "ok", cleared: prev });
+  });
+
   // §2.1 Vite-built panel: prefer dist/ if present (production), fall back
   // to the source tree (dev — e.g. running `vite` separately on :5174, or
   // just editing src/ + hard-refreshing). Built dist is what `npm run build`
