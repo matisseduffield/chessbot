@@ -2313,11 +2313,26 @@ function connect() {
       if (msg.lines && msg.lines.length) {
         const best = msg.lines[0];
         const turn = msg.fen ? msg.fen.split(" ")[1] : "w";
-        let cp = best.score ?? 0;
-        if (turn === "b") cp = -cp;
-        if (best.mate !== undefined && best.mate !== null) cp = best.mate > 0 ? 1500 : -1500;
-        state.evalHistory.push({ move: state.evalHistory.length + 1, cp, fen: msg.fen });
-        if (state.evalHistory.length > 200) state.evalHistory.shift();
+        // Convert to white-absolute centipawns.
+        // Stockfish scores are always from the side-to-move perspective,
+        // so negate when it's black's turn to get white-absolute cp.
+        let cp;
+        if (best.mate !== undefined && best.mate !== null) {
+          // mate > 0 → side to move wins; apply turn flip to get white-absolute.
+          const mateCp = best.mate > 0 ? 1500 : -1500;
+          cp = turn === "b" ? -mateCp : mateCp;
+        } else {
+          cp = best.score ?? 0;
+          if (turn === "b") cp = -cp;
+        }
+        // Deduplicate: update the last entry if it's the same FEN (re-eval at deeper depth).
+        const last = state.evalHistory[state.evalHistory.length - 1];
+        if (last && last.fen === msg.fen) {
+          last.cp = cp;
+        } else {
+          state.evalHistory.push({ move: state.evalHistory.length + 1, cp, fen: msg.fen });
+          if (state.evalHistory.length > 200) state.evalHistory.shift();
+        }
         renderEvalGraph();
         if (typeof window.__blunderCheck === "function") window.__blunderCheck(cp);
       }
