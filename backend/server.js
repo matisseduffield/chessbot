@@ -20,6 +20,9 @@ const { LichessBook } = require("./src/book/lichess");
 const { PROTOCOL_VERSION } = require("@chessbot/shared");
 const { safeSend, broadcast: wsBroadcast } = require("./src/ws/send");
 const { createRateLimiter } = require("./src/ws/rateLimit");
+const { validateInbound } = require("./src/ws/validateMessage");
+const { computeSafeMovetime } = require("./src/engine/clockCap");
+const { parseClockText } = require("@chessbot/shared");
 const serverLogger = require("./src/logger");
 const { pickSearchLimits } = require("./src/engine/searchLimits");
 
@@ -512,6 +515,8 @@ async function main() {
     // Per-client generation counter — prevents cross-client eval interference
     let evalGeneration = 0;
     let evaluationQueue = Promise.resolve();
+    // Latest game_info received — used for clock-aware movetime caps (§8.3).
+    let lastGameInfo = null;
 
     ws.on("message", async (data) => {
       const gate = rateLimiter.hit();
@@ -534,6 +539,16 @@ async function main() {
       }
       if (!msg || typeof msg !== "object" || typeof msg.type !== "string") {
         safeSend(ws, { type: "error", code: "bad_frame", message: "Frames must be JSON objects with a string `type`." });
+        return;
+      }
+
+      // Plan §11: zod-validate all inbound frames. Reject unknown types and
+      // malformed payloads with a typed error. Known types with extra
+      // fields fall through unchanged — validation is a safety net, not
+      // a schema rewrite of the legacy protocol.
+      const gateResult = validateInbound(msg);
+      if (!gateResult.ok) {
+        safeSend(ws, { type: "error", code: gateResult.code, message: gateResult.message });
         return;
       }
 
@@ -571,6 +586,33 @@ async function main() {
         }
 
         const { depth, options: searchOptions } = pickSearchLimits(msg, config);
+
+        // §8.3 clock-aware movetime cap — when we have a live game_info with
+        // a clock for the side to move, never think longer than the user has.
+        try {
+          if (lastGameInfo && searchOptions.movetime) {
+            const sideToMove = fen.split(" ")[1];
+            const clockStr =
+              sideToMove === "w"
+                ? lastGameInfo.white && lastGameInfo.white.clock
+                : sideToMove === "b"
+                  ? lastGameInfo.black && lastGameInfo.black.clock
+                  : null;
+            const remainingMs = parseClockText(clockStr);
+            if (remainingMs != null && remainingMs > 0) {
+              const safe = computeSafeMovetime(searchOptions.movetime, remainingMs);
+              if (safe.capped) {
+                console.log(
+                  `[server] clock cap: requested=${searchOptions.movetime}ms → ${safe.effectiveMs}ms (remaining=${remainingMs}ms)`,
+                );
+                searchOptions.movetime = safe.effectiveMs;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("[server] clock cap failed:", e.message);
+        }
+
         const gen = ++evalGeneration;
         const variantGen = globalVariantGen; // snapshot for staleness check
         const evalVariant = currentVariant; // snapshot variant for this eval (prevents stale reads)
@@ -805,6 +847,7 @@ async function main() {
       // ── Broadcast — relay a message from panel to all other clients ──
       // ── Game info relay (player names, clocks) ────────
       if (msg.type === "game_info") {
+        lastGameInfo = msg;
         broadcast(ws, msg);
       }
 
