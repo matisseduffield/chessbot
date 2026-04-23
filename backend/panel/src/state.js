@@ -20,6 +20,8 @@ export const state = {
   },
   selectedPV: 1,
   evalHistory: /** @type {Array<{ cp: number }>} */ ([]),
+  // §8.2 show top-N MultiPV arrows as fading alternatives behind the selected one.
+  showMultiPVArrows: true,
 
   // Search config
   searchMovetime: /** @type {number | null} */ (null),

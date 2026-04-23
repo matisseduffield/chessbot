@@ -194,7 +194,25 @@ export function renderBoard() {
 
   const lines = state.currentData.lines || [];
   if (lines.length > 0) {
-    const line = lines[Math.min(state.selectedPV - 1, lines.length - 1)];
+    // §8.2 MultiPV arrows: when multiple lines are present, draw top-N as
+    // fading arrows so the user sees alternatives. Selected PV is drawn
+    // last + brightest to stay on top.
+    const selectedIdx = Math.min(state.selectedPV - 1, lines.length - 1);
+    const showAll = state.showMultiPVArrows !== false && lines.length > 1;
+    if (showAll) {
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (i === selectedIdx) continue;
+        const pv = lines[i].pv || [];
+        if (pv.length >= 1) {
+          // Non-selected lines: desaturated + translucent, colour encodes rank.
+          const opacity = Math.max(0.25, 0.55 - i * 0.1);
+          drawArrow(svg, pv[0], true, numFiles, numRanks, {
+            color: `hsla(45, 100%, 55%, ${opacity})`,
+          });
+        }
+      }
+    }
+    const line = lines[selectedIdx];
     const pv = line.pv || [];
     if (pv.length >= 1) drawArrow(svg, pv[0], true, numFiles, numRanks);
     if (pv.length >= 2) drawArrow(svg, pv[1], false, numFiles, numRanks);
@@ -205,9 +223,10 @@ export function renderBoard() {
   renderPlayerBars();
 }
 
-export function drawArrow(svg, uci, isOurMove, numFiles, numRanks) {
+export function drawArrow(svg, uci, isOurMove, numFiles, numRanks, opts = {}) {
   if (!uci || uci.length < 3) return;
   const sqSize = 100;
+  const overrideColor = opts.color;
 
   const dropMatch = uci.match(/^([PNBRQK])@([a-z])(\d+)$/i);
   if (dropMatch) {
@@ -217,7 +236,8 @@ export function drawArrow(svg, uci, isOurMove, numFiles, numRanks) {
     const cy = toR * sqSize + sqSize / 2;
     const tx = toF * sqSize;
     const ty = toR * sqSize;
-    const color = isOurMove ? 'hsla(145,100%,50%,0.8)' : 'hsla(350,100%,50%,0.7)';
+    const color =
+      overrideColor || (isOurMove ? 'hsla(145,100%,50%,0.8)' : 'hsla(350,100%,50%,0.7)');
     const radius = sqSize * 0.38;
     const sw = Math.max(2, sqSize * 0.04);
     const PIECE_SYMBOLS = {
@@ -320,7 +340,7 @@ export function drawArrow(svg, uci, isOurMove, numFiles, numRanks) {
   const px = -uy;
   const py = ux;
 
-  const color = isOurMove ? 'hsla(145,100%,50%,0.8)' : 'hsla(350,100%,50%,0.7)';
+  const color = overrideColor || (isOurMove ? 'hsla(145,100%,50%,0.8)' : 'hsla(350,100%,50%,0.7)');
   const shaftW = sqSize * 0.1;
   const headW = sqSize * 0.25;
   const headLen = sqSize * 0.35;

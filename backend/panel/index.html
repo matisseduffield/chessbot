@@ -1880,6 +1880,8 @@ import { renderEvalBar } from "./src/evalBar.js";
 import { renderPlayerBars } from "./src/playerBars.js";
 import { renderPVs, PV_COLORS } from "./src/pvCards.js";
 import { renderBoard, BOARD_THEMES, PIECE_SETS } from "./src/board.js";
+// Expose state on window for E2E tests + debugging (§3.1).
+window.state = state;
 // ── State ────────────────────────────────────────────────
 // State moved to ./src/state.js — read/write via `state.xxx`
 

@@ -18,3 +18,8 @@ plans/
 # scratch commit message files
 .commitmsg.txt
 
+
+# Playwright artifacts
+test-results/
+playwright-report/
+playwright/.cache/
