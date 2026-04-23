@@ -76,6 +76,13 @@ export default defineConfig([
     },
   },
   {
+    files: ['backend/panel/vite.config.{js,mjs}', 'backend/panel/scripts/**/*.{js,mjs}'],
+    languageOptions: {
+      globals: { ...globals.node },
+      sourceType: 'module',
+    },
+  },
+  {
     // Panel is browser-side ESM served statically; override the backend
     // commonjs default so import/export parse correctly.
     files: ['backend/panel/src/**/*.{js,mjs}'],

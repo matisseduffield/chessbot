@@ -445,7 +445,15 @@ async function main() {
     }
   });
 
-  app.use(express.static(path.join(__dirname, "panel")));
+  // §2.1 Vite-built panel: prefer dist/ if present (production), fall back
+  // to the source tree (dev — e.g. running `vite` separately on :5174, or
+  // just editing src/ + hard-refreshing). Built dist is what `npm run build`
+  // produces; CI checks for it so `extension.builds → backend.builds` chain.
+  const panelSrc = path.join(__dirname, "panel");
+  const panelDist = path.join(__dirname, "panel", "dist");
+  const panelRoot = fs.existsSync(path.join(panelDist, "index.html")) ? panelDist : panelSrc;
+  console.log(`[server] serving panel from ${panelRoot === panelDist ? "dist (built)" : "src (dev)"}`);
+  app.use(express.static(panelRoot));
   const server = http.createServer(app);
 
   // Handle PNA preflight at the raw HTTP level (before ws upgrade intercepts)
