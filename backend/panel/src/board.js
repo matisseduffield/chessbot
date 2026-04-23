@@ -208,16 +208,17 @@ export function renderBoard() {
           const opacity = Math.max(0.25, 0.55 - i * 0.1);
           drawArrow(svg, pv[0], true, numFiles, numRanks, {
             color: `hsla(45, 100%, 55%, ${opacity})`,
+            flipped,
           });
         }
       }
     }
     const line = lines[selectedIdx];
     const pv = line.pv || [];
-    if (pv.length >= 1) drawArrow(svg, pv[0], true, numFiles, numRanks);
-    if (pv.length >= 2) drawArrow(svg, pv[1], false, numFiles, numRanks);
+    if (pv.length >= 1) drawArrow(svg, pv[0], true, numFiles, numRanks, { flipped });
+    if (pv.length >= 2) drawArrow(svg, pv[1], false, numFiles, numRanks, { flipped });
   } else if (state.currentData.bestmove && state.currentData.bestmove.length >= 3) {
-    drawArrow(svg, state.currentData.bestmove, true, numFiles, numRanks);
+    drawArrow(svg, state.currentData.bestmove, true, numFiles, numRanks, { flipped });
   }
 
   renderPlayerBars();
@@ -227,11 +228,14 @@ export function drawArrow(svg, uci, isOurMove, numFiles, numRanks, opts = {}) {
   if (!uci || uci.length < 3) return;
   const sqSize = 100;
   const overrideColor = opts.color;
+  const flipped = opts.flipped || false;
 
   const dropMatch = uci.match(/^([PNBRQK])@([a-z])(\d+)$/i);
   if (dropMatch) {
-    const toF = dropMatch[2].charCodeAt(0) - 97;
-    const toR = numRanks - parseInt(dropMatch[3]);
+    const rawF = dropMatch[2].charCodeAt(0) - 97;
+    const rawR = numRanks - parseInt(dropMatch[3]);
+    const toF = flipped ? numFiles - 1 - rawF : rawF;
+    const toR = flipped ? numRanks - 1 - rawR : rawR;
     const cx = toF * sqSize + sqSize / 2;
     const cy = toR * sqSize + sqSize / 2;
     const tx = toF * sqSize;
@@ -321,10 +325,15 @@ export function drawArrow(svg, uci, isOurMove, numFiles, numRanks, opts = {}) {
 
   const m = uci.match(/^([a-z])(\d+)([a-z])(\d+)/);
   if (!m) return;
-  const fromF = m[1].charCodeAt(0) - 97;
-  const fromR = numRanks - parseInt(m[2]);
-  const toF = m[3].charCodeAt(0) - 97;
-  const toR = numRanks - parseInt(m[4]);
+  const rawFromF = m[1].charCodeAt(0) - 97;
+  const rawFromR = numRanks - parseInt(m[2]);
+  const rawToF = m[3].charCodeAt(0) - 97;
+  const rawToR = numRanks - parseInt(m[4]);
+
+  const fromF = flipped ? numFiles - 1 - rawFromF : rawFromF;
+  const fromR = flipped ? numRanks - 1 - rawFromR : rawFromR;
+  const toF = flipped ? numFiles - 1 - rawToF : rawToF;
+  const toR = flipped ? numRanks - 1 - rawToR : rawToR;
 
   const x1 = fromF * sqSize + sqSize / 2;
   const y1 = fromR * sqSize + sqSize / 2;
