@@ -1,0 +1,100 @@
+name: Bug report
+description: Report a reproducible problem with the extension, backend, or panel
+title: '[bug] '
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Please fill out the details below so it's easier to reproduce and fix.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of Chessbot is causing the issue?
+      options:
+        - Extension overlay
+        - Backend server
+        - Dashboard panel
+        - Auto-move
+        - Training mode
+        - Opening books / tablebases
+        - Build / installation
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: site
+    attributes:
+      label: Site
+      description: Where did the issue happen?
+      options:
+        - chess.com
+        - lichess.org
+        - playstrategy.org
+        - chesstempo.com
+        - Local dashboard only
+        - Multiple sites
+        - Not site-specific
+    validations:
+      required: true
+  - type: input
+    id: variant
+    attributes:
+      label: Variant
+      description: Standard, Chess960, Atomic, 3-check, etc.
+      placeholder: Standard chess
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly and concisely.
+      placeholder: The overlay connected, but arrows were drawn on the wrong squares after the board flipped.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: Arrows should stay aligned with the board after orientation changes.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide a short, reliable reproduction path.
+      placeholder: |
+        1. Start the backend
+        2. Load the unpacked extension
+        3. Open a puzzle on chess.com
+        4. Flip the board
+        5. Observe the overlay
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Share the versions and platform details you are using.
+      placeholder: |
+        - Extension version:
+        - Backend version (`GET /healthz`):
+        - Node.js version:
+        - OS:
+        - Browser + version:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, screenshots, or extra context
+      description: Paste relevant server logs, console output, screenshots, or screen recordings.
+      placeholder: Panel "Show server logs" output, extension DevTools errors, or screenshots.
+      render: shell
+    validations:
+      required: false

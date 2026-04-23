@@ -1,0 +1,54 @@
+name: Feature request
+description: Suggest an improvement to the extension, backend, or dashboard
+title: '[feature] '
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Explain the problem you are trying to solve and what a good outcome looks like.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Where would this feature live?
+      options:
+        - Extension overlay
+        - Backend server
+        - Dashboard panel
+        - Auto-move
+        - Training mode
+        - Opening books / tablebases
+        - Installer / setup
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      placeholder: I want to...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      placeholder: Describe the behavior, UI, or workflow you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: Describe any workaround or alternative approach you've tried.
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      placeholder: Mockups, examples, screenshots, related tools, or prior discussion.
+    validations:
+      required: false
