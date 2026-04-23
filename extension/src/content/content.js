@@ -1275,8 +1275,9 @@ function scrapeGameInfo() {
       const topClockText = topClock ? topClock.textContent.trim() : "";
       const bottomClockText = bottomClock ? bottomClock.textContent.trim() : "";
 
-      // On Lichess, if we're playing black, the board is flipped (black at bottom)
-      const flipped = !!document.querySelector(".cg-wrap.orientation-black");
+      // On Lichess, if we're playing black, the board is flipped (black at bottom).
+      // Use the richer detection so puzzle/analysis boards are covered.
+      const flipped = isLichessFlipped();
       Object.assign(
         info,
         assignPlayersByOrientation({
@@ -1300,9 +1301,10 @@ function scrapeGameInfo() {
       const topClockText = topClock ? topClock.textContent.trim() : "";
       const bottomClockText = bottomClock ? bottomClock.textContent.trim() : "";
 
-      // Chess.com: check if board is flipped
-      const board = document.querySelector(".board, chess-board");
-      const flipped = board ? board.classList.contains("flipped") : false;
+      // Chess.com: use robust flip detection (handles puzzles/variants where
+      // the .flipped class isn't always present on the board element itself).
+      const board = document.querySelector(".board, chess-board, wc-chess-board");
+      const flipped = board ? isChesscomFlipped(board) : false;
       Object.assign(
         info,
         assignPlayersByOrientation({

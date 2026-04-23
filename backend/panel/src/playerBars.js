@@ -10,7 +10,7 @@ export function renderPlayerBars() {
   const moveNum = parseInt(state.currentData.fen.split(' ')[5]) || 1;
   const activeSide = state.currentData.fen.split(' ')[1];
 
-  const flipped = state.currentData.flipped || false;
+  const flipped = state.boardFlipped || state.currentData.flipped || false;
   const topColor = flipped ? 'white' : 'black';
   const bottomColor = flipped ? 'black' : 'white';
 

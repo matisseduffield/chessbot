@@ -26,7 +26,7 @@ export function renderEvalBar() {
   topEl.style.background = '#333';
   scoreEl.style.transform = '';
 
-  const boardFlipped = state.currentData.flipped || false;
+  const boardFlipped = state.boardFlipped || state.currentData.flipped || false;
   const evalBarTop = document.getElementById('eval-bar-top');
   const evalBarBot = document.getElementById('eval-bar-bot');
   if (boardFlipped) {

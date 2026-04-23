@@ -2303,7 +2303,11 @@ function connect() {
     if (msg.type === "bestmove") {
       if (!msg.fen || typeof msg.fen !== "string") return;
       if (msg.lines && !Array.isArray(msg.lines)) return;
+      // Preserve previously-known orientation across eval responses
+      // (bestmove frames don't include board orientation).
+      const prevFlipped = state.currentData && state.currentData.flipped;
       state.currentData = msg;
+      if (prevFlipped !== undefined) state.currentData.flipped = prevFlipped;
       state.selectedPV = 1;
       // Track eval history for sparkline
       if (msg.lines && msg.lines.length) {
@@ -2335,7 +2339,12 @@ function connect() {
       if (msg.white) state.gameInfo.white = msg.white;
       if (msg.black) state.gameInfo.black = msg.black;
       if (msg.moveNumber) state.gameInfo.moveNumber = msg.moveNumber;
-      if (msg.flipped !== undefined && state.currentData) state.currentData.flipped = msg.flipped;
+      if (msg.flipped !== undefined) {
+        const changed = state.boardFlipped !== msg.flipped;
+        state.boardFlipped = !!msg.flipped;
+        if (state.currentData) state.currentData.flipped = !!msg.flipped;
+        if (changed && state.currentData && state.currentData.fen) renderBoard();
+      }
       renderPlayerBars();
     }
     if (msg.type === "settings") {

@@ -18,6 +18,10 @@ export const state = {
     fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     lines: [],
   },
+  // Board orientation (true = black at bottom / user plays black).
+  // Persists across bestmove frames so puzzle side switches survive
+  // the currentData replacement that happens on every eval response.
+  boardFlipped: false,
   selectedPV: 1,
   evalHistory: /** @type {Array<{ cp: number }>} */ ([]),
   // §8.2 show top-N MultiPV arrows as fading alternatives behind the selected one.

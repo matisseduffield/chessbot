@@ -94,7 +94,7 @@ export function renderBoard() {
   container.style.setProperty('--board-aspect', `${numFiles} / ${numRanks}`);
 
   const theme = getBoardColors();
-  const flipped = state.currentData.flipped || false;
+  const flipped = state.boardFlipped || state.currentData.flipped || false;
 
   for (let r = 0; r < numRanks; r++) {
     for (let f = 0; f < numFiles; f++) {
