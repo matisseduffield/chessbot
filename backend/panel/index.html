@@ -2325,16 +2325,24 @@ function connect() {
           cp = best.score ?? 0;
           if (turn === "b") cp = -cp;
         }
-        // Deduplicate: update the last entry if it's the same FEN (re-eval at deeper depth).
-        const last = state.evalHistory[state.evalHistory.length - 1];
-        if (last && last.fen === msg.fen) {
-          last.cp = cp;
-        } else {
-          state.evalHistory.push({ move: state.evalHistory.length + 1, cp, fen: msg.fen });
-          if (state.evalHistory.length > 200) state.evalHistory.shift();
+        // For streaming (infinite analysis), skip shallow depths to avoid noisy spikes.
+        // At depth 1-5 the engine hasn't seen the opponent's response, so scores are
+        // inflated and look like the side to move gets a free extra turn.
+        const MIN_STREAMING_DEPTH = 10;
+        const isStreaming = !!msg.streaming;
+        const searchDepth = msg.depth || 0;
+        if (!isStreaming || searchDepth >= MIN_STREAMING_DEPTH) {
+          // Deduplicate: update the last entry if it's the same FEN (re-eval at deeper depth).
+          const last = state.evalHistory[state.evalHistory.length - 1];
+          if (last && last.fen === msg.fen) {
+            last.cp = cp;
+          } else {
+            state.evalHistory.push({ move: state.evalHistory.length + 1, cp, fen: msg.fen });
+            if (state.evalHistory.length > 200) state.evalHistory.shift();
+          }
+          renderEvalGraph();
+          if (typeof window.__blunderCheck === "function") window.__blunderCheck(cp);
         }
-        renderEvalGraph();
-        if (typeof window.__blunderCheck === "function") window.__blunderCheck(cp);
       }
       // Clear progress indicator on final result
       const progEl = document.getElementById("eval-progress");
