@@ -420,6 +420,50 @@
     z-index: 99999;
     pointer-events: none;
   }
+
+  /* Panel toast notifications */
+  @keyframes panelToastIn {
+    from { opacity: 0; transform: translateY(12px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .panel-toast {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    max-width: 320px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font: 600 13px/1.4 system-ui, sans-serif;
+    color: #fff;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+    z-index: 100000;
+    pointer-events: none;
+    animation: panelToastIn 0.2s ease;
+  }
+  .panel-toast.error   { background: #c0392b; }
+  .panel-toast.warning { background: #e67e22; }
+  .panel-toast.info    { background: #2980b9; }
+
+  /* Quick analysis presets */
+  .preset-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .preset-btn {
+    flex: 1 1 auto;
+    padding: 5px 8px;
+    font: 600 11px/1 system-ui, sans-serif;
+    background: var(--bg-200);
+    color: var(--text-200);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    white-space: nowrap;
+  }
+  .preset-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
   #status-text {
     font-size: 11px;
     font-weight: 600;
@@ -1520,6 +1564,13 @@
           <label><input type="radio" name="run-for" value="opponent"><span>Opponent</span></label>
           <label><input type="radio" name="run-for" value="both"><span>Both</span></label>
         </div>
+        <div class="sub-label" style="margin-top:10px">Quick Presets</div>
+        <div class="preset-row">
+          <button class="preset-btn" data-preset="bullet"    title="Bullet: depth 12, 1 PV — fast moves">⚡ Bullet</button>
+          <button class="preset-btn" data-preset="blitz"     title="Blitz: depth 18, 2 PVs">🔥 Blitz</button>
+          <button class="preset-btn" data-preset="classical" title="Classical: depth 24, 3 PVs — deep analysis">🎯 Classical</button>
+          <button class="preset-btn" data-preset="puzzle"    title="Puzzle: depth 24, 1 PV, training mode on">🧩 Puzzle</button>
+        </div>
       </div>
 
       <!-- 2. Search Limits -->
@@ -2421,7 +2472,30 @@ function connect() {
       const fireIcon = document.getElementById("training-streak-icon");
       fireIcon.style.display = (s.streak >= 3) ? "inline" : "none";
     }
+    if (msg.type === "error") {
+      showPanelToast(msg.message || "An engine error occurred", "error");
+    }
+    if (msg.type === "warning") {
+      showPanelToast(msg.message || "Warning", "warning");
+    }
+    if (msg.type === "engine_restarted") {
+      showPanelToast(msg.message || "Engine auto-restarted — retry analysis", "info");
+    }
   };
+}
+
+// ── Panel Toast ──────────────────────────────────────────
+let _panelToastTimer = null;
+function showPanelToast(text, level = "info") {
+  if (_panelToastTimer) clearTimeout(_panelToastTimer);
+  const existing = document.getElementById("panel-toast");
+  if (existing) existing.remove();
+  const el = document.createElement("div");
+  el.id = "panel-toast";
+  el.className = `panel-toast ${level}`;
+  el.textContent = text;
+  document.body.appendChild(el);
+  _panelToastTimer = setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity 0.4s"; setTimeout(() => el.remove(), 400); }, 4000);
 }
 
 // ── Render ───────────────────────────────────────────────
@@ -2569,6 +2643,36 @@ document.getElementById("multipv-slider").addEventListener("input", (e) => {
 document.getElementById("multipv-slider").addEventListener("change", (e) => {
   sendOpt("MultiPV", parseInt(e.target.value));
   saveSettings();
+});
+
+// ── Quick Analysis Presets ────────────────────────────────
+const ANALYSIS_PRESETS = {
+  bullet:    { depth: 12, multiPV: 1 },
+  blitz:     { depth: 18, multiPV: 2 },
+  classical: { depth: 24, multiPV: 3 },
+  puzzle:    { depth: 24, multiPV: 1, training: true },
+};
+document.querySelectorAll(".preset-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const preset = ANALYSIS_PRESETS[btn.dataset.preset];
+    if (!preset) return;
+    const depthEl = document.getElementById("depth-slider");
+    const depthVal = document.getElementById("depth-value");
+    const pvEl = document.getElementById("multipv-slider");
+    const pvVal = document.getElementById("multipv-value");
+    depthEl.value = preset.depth;
+    depthVal.textContent = preset.depth;
+    pvEl.value = preset.multiPV;
+    pvVal.textContent = preset.multiPV;
+    sendOpt("depth", preset.depth);
+    sendOpt("MultiPV", preset.multiPV);
+    if (preset.training) {
+      const chk = document.getElementById("chk-training-mode");
+      if (chk && !chk.checked) { chk.checked = true; chk.dispatchEvent(new Event("change")); }
+    }
+    saveSettings();
+    showPanelToast(`Preset: ${btn.dataset.preset.charAt(0).toUpperCase() + btn.dataset.preset.slice(1)} applied`, "info");
+  });
 });
 
 document.getElementById("threads-slider").addEventListener("input", (e) => {

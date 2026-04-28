@@ -18,6 +18,7 @@ class StockfishBridge {
     this._restartPromise = null; // set while engine is restarting
     this._stopped = false; // set by stop() to prevent _restart() from reviving
     this._stopping = false; // set when stop() is called to suppress exit error
+    this.onRestarted = null; // optional callback invoked after a successful auto-restart
     this._pendingResolve = null;
     this._pendingReject = null;
     this._handleLine = this._defaultLineHandler.bind(this);
@@ -383,6 +384,7 @@ class StockfishBridge {
           };
         });
         log.info("engine restarted successfully");
+        if (typeof this.onRestarted === 'function') this.onRestarted();
       } catch (err) {
         log.error("failed to restart:", err.message);
       } finally {

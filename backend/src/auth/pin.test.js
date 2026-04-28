@@ -82,11 +82,11 @@ describe('createPinAuth (enabled)', () => {
     expect(auth.wsUpgradeAllowed(mockReq({ ip: '127.0.0.1' }))).toBe(true);
   });
 
-  it('blocks non-loopback without cookie/PIN with 401', () => {
+  it('blocks non-loopback without cookie/PIN with 401', async () => {
     const auth = build();
     const handler = capture(auth);
     const res = mockRes();
-    handler(mockReq({ ip: '192.168.1.42' }), res, () => {
+    await handler(mockReq({ ip: '192.168.1.42' }), res, () => {
       throw new Error('next called');
     });
     expect(res.statusCode).toBe(401);
@@ -116,11 +116,11 @@ describe('createPinAuth (enabled)', () => {
     expect(String(res.headers['set-cookie'])).toContain('chessbot_pin=');
   });
 
-  it('rejects the wrong PIN', () => {
+  it('rejects the wrong PIN', async () => {
     const auth = build();
     const handler = capture(auth);
     const res = mockRes();
-    handler(mockReq({ ip: '192.168.1.42', query: { pin: '000000' } }), res, () => {});
+    await handler(mockReq({ ip: '192.168.1.42', query: { pin: '000000' } }), res, () => {});
     expect(res.statusCode).toBe(401);
     expect(res.body).toContain('Wrong PIN');
   });

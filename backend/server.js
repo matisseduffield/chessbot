@@ -303,12 +303,14 @@ async function main() {
         engine = new StockfishBridge();
         try {
           await engine.start();
+          bindEngineHandlers();
         } catch (err) {
           // Rollback
           currentVariant = previousVariant;
           config.stockfishPath = oldPath;
           engine = new StockfishBridge();
           await engine.start();
+          bindEngineHandlers();
           return { switched: false, error: `Failed to start ${needEngine}: ${err.message}` };
         }
         // Re-apply preserved settings to new engine
@@ -577,6 +579,13 @@ async function main() {
   function broadcast(senderWs, message) {
     return wsBroadcast(wss, senderWs, message);
   }
+
+  /** (Re-)attach event hooks whenever the engine instance is replaced. */
+  function bindEngineHandlers() {
+    engine.onRestarted = () =>
+      wsBroadcast(wss, null, { type: "engine_restarted", message: "Engine auto-restarted — retry analysis" });
+  }
+  bindEngineHandlers();
 
   // safeSend is imported from src/ws/send; it no-ops on closed sockets
   // and stringifies objects on the fly.
@@ -1121,6 +1130,7 @@ async function main() {
             engine.setOption("UCI_Variant", VARIANTS[currentVariant].uciVariant);
           }
           evalGeneration++;
+          bindEngineHandlers();
           safeSend(ws, { type: "engine_switched", name: found.name });
         } catch (err) {
           console.error(`[server] failed to switch engine: ${err.message}`);
@@ -1130,6 +1140,7 @@ async function main() {
           try {
             engine = new StockfishBridge();
             await engine.start();
+            bindEngineHandlers();
             console.log("[server] rolled back to previous engine successfully");
           } catch (rollbackErr) {
             console.error("[server] CRITICAL: rollback also failed:", rollbackErr.message);

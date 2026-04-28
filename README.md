@@ -225,6 +225,7 @@ to `.env` in the repo root.
 - `docs\installer.md`
 - `docs\wasm-fallback.md`
 - `docs\streaming.md` — keeping the dashboard off-stream
+- `docs\privacy.md` — privacy policy (no telemetry, fully local)
 
 ## License
 

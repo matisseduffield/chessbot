@@ -25,8 +25,15 @@
 
 const crypto = require('node:crypto');
 
+let QRCode = null;
+try {
+  QRCode = require('qrcode');
+} catch {
+  /* optional — QR won't show if missing */
+}
+
 const COOKIE = 'chessbot_pin';
-const PIN_PAGE = (msg) => `<!doctype html>
+const PIN_PAGE = (msg, qrDataUri) => `<!doctype html>
 <meta charset="utf-8">
 <title>chessbot — pair this device</title>
 <style>
@@ -36,9 +43,13 @@ const PIN_PAGE = (msg) => `<!doctype html>
   button { margin-top: 12px; padding: 10px 16px; background: #4d8cf5; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
   .err { color: #ff7676; margin-top: 10px; min-height: 1em; }
   .hint { opacity: 0.6; font-size: 12px; margin-top: 16px; }
+  .qr { text-align: center; margin: 20px 0; }
+  .qr img { border-radius: 8px; width: 180px; height: 180px; background: #fff; padding: 8px; }
+  .qr small { display: block; opacity: 0.5; font-size: 11px; margin-top: 6px; }
 </style>
 <h1>chessbot — pair this device</h1>
 <p>Enter the 6-digit PIN printed in the backend's server log to allow this device to use the dashboard.</p>
+${qrDataUri ? `<div class="qr"><img src="${qrDataUri}" alt="Scan to pair"><small>Or scan to auto-fill PIN</small></div>` : ''}
 <form method="get" action="/">
   <input name="pin" autocomplete="off" autofocus inputmode="numeric" pattern="[0-9]{6}" maxlength="6" />
   <button type="submit">Pair</button>
@@ -100,7 +111,7 @@ function createPinAuth({ enabled, logger = console }) {
     token,
 
     installHttp(app) {
-      app.use((req, res, next) => {
+      app.use(async (req, res, next) => {
         if (isAuthed(req)) return next();
 
         const provided = req.query?.pin;
@@ -123,10 +134,19 @@ function createPinAuth({ enabled, logger = console }) {
 
         const accept = req.headers['accept'] || '';
         if (accept.includes('text/html')) {
+          let qrDataUri = null;
+          if (QRCode) {
+            try {
+              const pairingUrl = `http://${req.headers.host || 'localhost'}/?pin=${pin}`;
+              qrDataUri = await QRCode.toDataURL(pairingUrl, { width: 180, margin: 1 });
+            } catch {
+              /* QR optional */
+            }
+          }
           res
             .status(401)
             .set('Content-Type', 'text/html; charset=utf-8')
-            .end(PIN_PAGE(provided ? 'Wrong PIN — try again.' : ''));
+            .end(PIN_PAGE(provided ? 'Wrong PIN — try again.' : '', qrDataUri));
         } else {
           res.status(401).json({ error: 'pin_required' });
         }
