@@ -72,9 +72,14 @@ cd chessbot
 npm install
 ```
 
-### 2. Add engine binaries
+### 2. Add engine binaries (required)
 
-The backend defaults expect these Windows paths:
+**The repo does not ship Stockfish or Fairy-Stockfish — you must download them yourself.**
+Without them the backend will exit on startup with an `ENOENT` error.
+
+1. Download Stockfish from <https://stockfishchess.org/download/> (and Fairy-Stockfish from
+   <https://fairy-stockfish.github.io/> if you want non-standard variants).
+2. Drop the binaries into `engine\` so the layout matches the Windows defaults below:
 
 ```text
 engine\

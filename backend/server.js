@@ -216,9 +216,19 @@ async function main() {
   // ── 1. Start the Stockfish engine ──────────────────────
   let engine = new StockfishBridge();
   try {
+    if (!fs.existsSync(config.stockfishPath)) {
+      throw new Error(
+        `Stockfish binary not found at:\n    ${config.stockfishPath}\n\n` +
+          `The engine binary is not bundled with this repo and must be downloaded separately.\n` +
+          `  1. Download Stockfish from https://stockfishchess.org/download/\n` +
+          `  2. Place the .exe at the path above (default: engine/stockfish/), OR\n` +
+          `  3. Set STOCKFISH_PATH in backend/.env to point at your binary.\n` +
+          `See README "Add engine binaries" for details.`,
+      );
+    }
     await engine.start();
   } catch (err) {
-    console.error("[server] could not start Stockfish – exiting.", err.message);
+    console.error("[server] could not start Stockfish – exiting.\n" + err.message);
     process.exit(1);
   }
 
