@@ -92,6 +92,13 @@ export default defineConfig([
     },
   },
   {
+    files: ['scripts/**/*.{js,mjs,cjs}'],
+    languageOptions: {
+      globals: { ...globals.node },
+      sourceType: 'module',
+    },
+  },
+  {
     files: ['shared/**/*.{js,mjs,ts}'],
     languageOptions: {
       globals: { ...globals.node },

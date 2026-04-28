@@ -507,8 +507,15 @@ async function main() {
     process.exit(1);
   });
 
-  server.listen(config.port, () => {
-    console.log(`[server] listening on http://localhost:${config.port} (HTTP + WS)`);
+  server.listen(config.port, config.bindHost, () => {
+    const host = config.bindHost === "0.0.0.0" ? "0.0.0.0" : "localhost";
+    console.log(`[server] listening on http://${host}:${config.port} (HTTP + WS)`);
+    if (config.bindHost === "0.0.0.0") {
+      console.log(
+        `[server] LAN mode: dashboard reachable from other devices on this network. ` +
+          `Use BIND_HOST=127.0.0.1 to restrict to loopback only.`,
+      );
+    }
   });
 
   /** Broadcast a message to all OTHER connected clients (for panel sync). */

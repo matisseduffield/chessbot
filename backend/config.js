@@ -20,6 +20,8 @@ const EnvSchema = z.object({
   FAIRY_STOCKFISH_PATH: z.string().optional(),
   OPENING_BOOK_PATH: z.string().optional(),
   SYZYGY_PATH: z.string().optional(),
+  BIND_HOST: z.string().optional(),
+  LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).optional(),
 });
 const envResult = EnvSchema.safeParse(process.env);
 if (!envResult.success) {
@@ -38,13 +40,91 @@ function findFirstBook(dir) {
   } catch { return null; }
 }
 
+/**
+ * Auto-detect an engine binary in the given directory.
+ *
+ * Looks for files whose name starts with the brand prefix (e.g. "stockfish",
+ * "fairy-stockfish") and matches the host platform's executable convention.
+ * On Windows we require .exe; elsewhere we accept extension-less binaries.
+ * Returns the first match (full path) or null if none found.
+ */
+function findEngineBinary(dir, brandPrefix) {
+  if (!fs.existsSync(dir)) return null;
+  const want = brandPrefix.toLowerCase();
+  const isWin = process.platform === "win32";
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+
+  // Walk one level deep too so we can find ./engine/stockfish/<file>.
+  const candidates = [];
+  for (const entry of entries) {
+    const abs = path.join(dir, entry.name);
+    if (entry.isFile()) {
+      candidates.push(abs);
+    } else if (entry.isDirectory()) {
+      try {
+        for (const sub of fs.readdirSync(abs, { withFileTypes: true })) {
+          if (sub.isFile()) candidates.push(path.join(abs, sub.name));
+        }
+      } catch { /* ignore unreadable sub-dir */ }
+    }
+  }
+
+  const matches = candidates.filter((p) => {
+    const base = path.basename(p).toLowerCase();
+    if (!base.startsWith(want)) return false;
+    if (isWin) return base.endsWith(".exe");
+    // On *nix, accept either no extension or an explicit one; reject .exe
+    return !base.endsWith(".exe");
+  });
+
+  if (matches.length === 0) return null;
+
+  // Prefer binaries with CPU-feature suffixes our host likely supports.
+  // This is best-effort — we just rank candidates; the user can still
+  // override via STOCKFISH_PATH / FAIRY_STOCKFISH_PATH.
+  const score = (p) => {
+    const b = path.basename(p).toLowerCase();
+    let s = 0;
+    if (b.includes("avx2")) s += 3;
+    if (b.includes("bmi2")) s += 3;
+    if (b.includes("modern")) s += 2;
+    if (b.includes("popcnt")) s += 1;
+    return s;
+  };
+  matches.sort((a, b) => score(b) - score(a));
+  return matches[0];
+}
+
+const engineDir = env.ENGINE_DIR || path.join(__dirname, "..", "engine");
 const booksDir = env.BOOKS_DIR || path.join(__dirname, "..", "books");
+
+// Sensible Windows defaults (preserved for backwards compat); on other
+// platforms we rely on findEngineBinary's probe.
+const winStockfishDefault = path.join(engineDir, "stockfish", "stockfish-windows-x86-64-avx2.exe");
+const winFairyDefault = path.join(engineDir, "fairy-stockfish", "fairy-stockfish_x86-64-bmi2.exe");
+
+function resolveStockfish() {
+  if (env.STOCKFISH_PATH) return env.STOCKFISH_PATH;
+  const probed = findEngineBinary(path.join(engineDir, "stockfish"), "stockfish")
+    || findEngineBinary(engineDir, "stockfish");
+  if (probed) return probed;
+  // Last resort: fall back to the Windows default path so the existing
+  // "binary not found" error message still points users somewhere obvious.
+  return winStockfishDefault;
+}
+
+function resolveFairyStockfish() {
+  if (env.FAIRY_STOCKFISH_PATH) return env.FAIRY_STOCKFISH_PATH;
+  const probed = findEngineBinary(path.join(engineDir, "fairy-stockfish"), "fairy-stockfish")
+    || findEngineBinary(engineDir, "fairy-stockfish");
+  if (probed) return probed;
+  return winFairyDefault;
+}
 
 module.exports = {
   // ── Directories (for scanning available files) ────────
-  engineDir:
-    env.ENGINE_DIR ||
-    path.join(__dirname, "..", "engine"),
+  engineDir,
 
   booksDir,
 
@@ -53,13 +133,15 @@ module.exports = {
     path.join(__dirname, "..", "syzygy"),
 
   // ── Engine ────────────────────────────────────────────
-  stockfishPath:
-    env.STOCKFISH_PATH ||
-    path.join(__dirname, "..", "engine", "stockfish", "stockfish-windows-x86-64-avx2.exe"),
+  // Auto-detected from engineDir on non-Windows platforms; users can
+  // always override with STOCKFISH_PATH / FAIRY_STOCKFISH_PATH.
+  stockfishPath: resolveStockfish(),
+  fairyStockfishPath: resolveFairyStockfish(),
 
-  fairyStockfishPath:
-    env.FAIRY_STOCKFISH_PATH ||
-    path.join(__dirname, "..", "engine", "fairy-stockfish", "fairy-stockfish_x86-64-bmi2.exe"),
+  // ── Network ───────────────────────────────────────────
+  // Default to loopback for safety. Set BIND_HOST=0.0.0.0 to expose
+  // the dashboard to other devices on the LAN (see docs/streaming.md).
+  bindHost: env.BIND_HOST || "127.0.0.1",
 
   // ── Opening Book (Polyglot .bin) ──────────────────────
   // Auto-detects the first .bin in books/ if OPENING_BOOK_PATH is not set.
@@ -74,6 +156,9 @@ module.exports = {
 
   // ── Server ────────────────────────────────────────────
   port: env.PORT || 8080,
+
+  // ── Logging ───────────────────────────────────────────
+  logLevel: env.LOG_LEVEL || "info",
 
   // ── Analysis defaults ─────────────────────────────────
   defaultDepth: 15,

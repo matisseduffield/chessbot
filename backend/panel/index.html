@@ -3142,13 +3142,26 @@ function applySettings(msg) {
       document.getElementById("auto-move-humanize-chance-value").textContent = Math.round(saved.autoMoveHumanizeChance * 100) + "%";
     }
 
-    // Board theme & piece set
+    // Board theme & piece set — restore both the state and the visible UI
+    // (active swatch + select value), then re-render the board so the
+    // change is visible immediately rather than only on the next eval.
+    let appearanceChanged = false;
     if (saved.boardTheme && BOARD_THEMES[saved.boardTheme]) {
       state.currentBoardTheme = saved.boardTheme;
+      appearanceChanged = true;
     }
     if (saved.pieceSet && PIECE_SETS[saved.pieceSet]) {
       state.currentPieceSet = saved.pieceSet;
-      document.getElementById("piece-set-select").value = saved.pieceSet;
+      const pieceSel = document.getElementById("piece-set-select");
+      if (pieceSel) pieceSel.value = saved.pieceSet;
+      appearanceChanged = true;
+    }
+    if (appearanceChanged) {
+      // Re-paint the swatch active state to reflect the loaded theme.
+      initThemeGrid();
+      // Force a redraw using the new theme/piece set so the user sees
+      // their saved appearance even before the first WS eval arrives.
+      try { renderBoard(); } catch {}
     }
 
     // Book / Syzygy — only restore for standard chess

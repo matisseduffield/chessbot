@@ -77,6 +77,15 @@ npm install
 **The repo does not ship Stockfish or Fairy-Stockfish — you must download them yourself.**
 Without them the backend will exit on startup with an `ENOENT` error.
 
+The fastest path is to run:
+
+```powershell
+npm run setup:engine
+```
+
+This prints the recommended download URL for your OS and verifies any binary you've already
+placed in `engine\stockfish\`. Manual steps:
+
 1. Download Stockfish from <https://stockfishchess.org/download/> (and Fairy-Stockfish from
    <https://fairy-stockfish.github.io/> if you want non-standard variants).
 2. Drop the binaries into `engine\` so the layout matches the Windows defaults below:
@@ -89,8 +98,14 @@ engine\
     fairy-stockfish_x86-64-bmi2.exe
 ```
 
-If your binaries live elsewhere or use different filenames, copy `backend\.env.example` to
-`backend\.env` and set `STOCKFISH_PATH` and `FAIRY_STOCKFISH_PATH`.
+On macOS / Linux, just drop the platform-appropriate binary into the same folder — the backend
+auto-detects any file starting with `stockfish` (and `chmod +x` it after extracting).
+
+If your binaries live elsewhere or use different filenames, copy `.env.example` to `.env` and
+set `STOCKFISH_PATH` / `FAIRY_STOCKFISH_PATH`.
+
+> **Tip.** Run `npm run doctor` at any time to verify your Node version, shared build, engine
+> binary, and that port 8080 is free.
 
 ### 3. Optional resources
 
@@ -161,6 +176,9 @@ npm run dev --workspace extension
 
 ## Diagnostics
 
+Run `npm run doctor` from the repo root to verify your Node version, shared build, Stockfish
+binary, and that port 8080 is free. The script prints actionable hints for anything that fails.
+
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /healthz` | Backend status, engine readiness, book state, connected clients |
@@ -170,17 +188,19 @@ npm run dev --workspace extension
 
 ## Configuration
 
-Most runtime settings live in the dashboard. For startup-time configuration, use
-`backend\.env` based on `backend\.env.example`.
+Most runtime settings live in the dashboard. For startup-time configuration, copy `.env.example`
+to `.env` in the repo root.
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PORT` | `8080` | Backend HTTP / WS port |
+| `BIND_HOST` | `127.0.0.1` | Address to bind to. Set to `0.0.0.0` for LAN access (see `docs\streaming.md`) |
+| `LOG_LEVEL` | `info` | `fatal` / `error` / `warn` / `info` / `debug` / `trace` / `silent` |
 | `ENGINE_DIR` | `engine\` | Directory scanned for engine binaries |
 | `BOOKS_DIR` | `books\` | Directory scanned for Polyglot books |
 | `SYZYGY_DIR` | `syzygy\` | Directory scanned for tablebase folders |
-| `STOCKFISH_PATH` | auto-detect default Windows path | Explicit Stockfish binary path |
-| `FAIRY_STOCKFISH_PATH` | auto-detect default Windows path | Explicit Fairy-Stockfish binary path |
+| `STOCKFISH_PATH` | auto-detect | Explicit Stockfish binary path |
+| `FAIRY_STOCKFISH_PATH` | auto-detect | Explicit Fairy-Stockfish binary path |
 | `OPENING_BOOK_PATH` | first `.bin` in `BOOKS_DIR` | Explicit opening-book path |
 | `SYZYGY_PATH` | `syzygy\` | Value passed to the engine `SyzygyPath` UCI option |
 | `CHESSBOT_DATA_DIR` | `%USERPROFILE%\.chessbot` | Directory used for persistent eval-cache data |
@@ -203,6 +223,7 @@ Most runtime settings live in the dashboard. For startup-time configuration, use
 - `docs\protocol.md`
 - `docs\installer.md`
 - `docs\wasm-fallback.md`
+- `docs\streaming.md` — keeping the dashboard off-stream
 
 ## License
 
