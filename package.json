@@ -14,7 +14,7 @@
     "build": "npm run build --workspaces --if-present",
     "build:shared": "npm run build --workspace @chessbot/shared",
     "start": "npm run build:shared && node backend/server.js",
-    "dev": "npm run build:shared && node backend/server.js",
+    "dev": "npm run build:shared && concurrently -n backend,panel -c blue,magenta \"node backend/server.js\" \"npm run dev --workspace @chessbot/panel\"",
     "doctor": "node scripts/doctor.mjs",
     "setup:engine": "node scripts/setup-engine.mjs",
     "postinstall": "npm run build:shared --if-present",

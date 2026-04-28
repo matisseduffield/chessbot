@@ -25,6 +25,7 @@ const { computeSafeMovetime } = require("./src/engine/clockCap");
 const { parseClockText } = require("@chessbot/shared");
 const serverLogger = require("./src/logger");
 const { pickSearchLimits } = require("./src/engine/searchLimits");
+const { createPinAuth } = require("./src/auth/pin");
 
 // ── Server log buffer ────────────────────────────────────
 serverLogger.install();
@@ -50,7 +51,19 @@ function scanFiles(dir, extensions) {
 }
 
 function listEngines() {
-  return scanFiles(config.engineDir, [".exe"]);
+  if (process.platform === "win32") {
+    return scanFiles(config.engineDir, [".exe"]);
+  }
+  // On macOS / Linux engine binaries are typically extension-less. Walk the
+  // tree and keep only files that look like binaries (no obvious doc/config
+  // extension). This is best-effort — users can always set STOCKFISH_PATH.
+  const SKIP_EXT = new Set([".md", ".txt", ".json", ".log", ".html", ".sh"]);
+  const all = scanFiles(config.engineDir, [""]);
+  return all.filter((f) => {
+    const dot = f.name.lastIndexOf(".");
+    if (dot < 0) return true;
+    return !SKIP_EXT.has(f.name.slice(dot).toLowerCase());
+  });
 }
 
 function listBooks() {
@@ -375,6 +388,39 @@ async function main() {
 
   const app = express();
 
+  // ── LAN PIN gate ───────────────────────────────────────
+  // No-op when BIND_HOST is loopback. When LAN-exposed, every non-loopback
+  // request must present a 6-digit PIN (printed once on startup) before any
+  // route — including WS upgrade — is reachable.
+  const pinAuth = createPinAuth({ enabled: config.bindHost === "0.0.0.0" });
+  pinAuth.installHttp(app);
+
+  // ── CSRF guard on mutating endpoints ──────────────────
+  // POSTs must come from the dashboard (same-origin) or from one of the
+  // explicitly trusted browser-extension origins. Stops other localhost
+  // pages or LAN devices from clearing the cache via a forged form post.
+  const TRUSTED_POST_ORIGINS = new Set([
+    `http://localhost:${config.port}`,
+    `http://127.0.0.1:${config.port}`,
+    "https://www.chess.com",
+    "https://lichess.org",
+    "https://playstrategy.org",
+    "https://chesstempo.com",
+  ]);
+  app.use((req, res, next) => {
+    if (req.method !== "POST") return next();
+    const origin = req.headers.origin;
+    if (origin && !TRUSTED_POST_ORIGINS.has(origin)) {
+      // Allow same-host origins on whatever LAN IP the user bound to —
+      // this matches "the dashboard pinned itself open from this device".
+      const host = req.headers.host;
+      if (!host || origin !== `http://${host}`) {
+        return res.status(403).json({ error: "forbidden_origin" });
+      }
+    }
+    next();
+  });
+
   // ── CORS / Private Network Access ──────────────────────
   // Chrome requires a preflight response with Access-Control-Allow-Private-Network
   // before allowing WebSocket connections from HTTPS pages to localhost.
@@ -483,8 +529,12 @@ async function main() {
 
   // Handle PNA preflight at the raw HTTP level (before ws upgrade intercepts)
   server.on("upgrade", (req, socket, head) => {
-    // Log all upgrade attempts for debugging
     console.log(`[server] WS upgrade from origin=${req.headers.origin || "none"} ip=${req.socket.remoteAddress}`);
+    if (!pinAuth.wsUpgradeAllowed(req)) {
+      console.warn(`[server] rejecting WS upgrade from ${req.socket.remoteAddress}: PIN required`);
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+    }
   });
 
   const wss = new WebSocketServer({
@@ -515,6 +565,11 @@ async function main() {
         `[server] LAN mode: dashboard reachable from other devices on this network. ` +
           `Use BIND_HOST=127.0.0.1 to restrict to loopback only.`,
       );
+      if (pinAuth.enabled) {
+        console.log(
+          `[server] pair other devices with: http://<your-lan-ip>:${config.port}/?pin=${pinAuth.pin}`,
+        );
+      }
     }
   });
 

@@ -73,4 +73,27 @@ describe('LichessBook.lookup', () => {
     resolveFetch({ ok: true, json: async () => ({ moves: [] }) });
     expect(await p1).toBeNull();
   });
+
+  it('caches hits and serves them without refetching', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ moves: [{ uci: 'e2e4', san: 'e4', white: 1, draws: 0, black: 0 }] }),
+    });
+    const b = new LichessBook({ fetchImpl });
+    b.setEnabled(true);
+    expect(await b.lookup('fenA')).toBe('e2e4');
+    expect(await b.lookup('fenA')).toBe('e2e4');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(b.stats.hits).toBe(1);
+    expect(b.stats.misses).toBe(1);
+  });
+
+  it('caches "no opening data" misses too', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ moves: [] }) });
+    const b = new LichessBook({ fetchImpl });
+    b.setEnabled(true);
+    expect(await b.lookup('fenZ')).toBeNull();
+    expect(await b.lookup('fenZ')).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });

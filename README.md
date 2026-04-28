@@ -152,6 +152,7 @@ Visit one of the supported sites, start a game or puzzle, and open
 | Command | Purpose |
 | --- | --- |
 | `npm run build` | Build all workspaces that expose a build script |
+| `npm run dev` | Run the backend **and** panel Vite dev server together (uses `concurrently`) |
 | `npm run lint` | Run ESLint across the repository |
 | `npm run test` | Run the Vitest suite from `config\vitest.config.ts` |
 | `npm run e2e` | Run Playwright smoke tests against the backend dashboard |
@@ -194,7 +195,7 @@ to `.env` in the repo root.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PORT` | `8080` | Backend HTTP / WS port |
-| `BIND_HOST` | `127.0.0.1` | Address to bind to. Set to `0.0.0.0` for LAN access (see `docs\streaming.md`) |
+| `BIND_HOST` | `127.0.0.1` | Address to bind to. Set to `0.0.0.0` for LAN access; the backend prints a 6-digit pairing PIN at startup (see `docs\streaming.md`) |
 | `LOG_LEVEL` | `info` | `fatal` / `error` / `warn` / `info` / `debug` / `trace` / `silent` |
 | `ENGINE_DIR` | `engine\` | Directory scanned for engine binaries |
 | `BOOKS_DIR` | `books\` | Directory scanned for Polyglot books |

@@ -54,14 +54,19 @@ your capture software, since it lives on a different device entirely.
 
 3. Find your PC's LAN IP (e.g. `ipconfig` on Windows, `ip a` on Linux,
    `ifconfig` on macOS). Look for something like `192.168.1.42`.
-4. On the secondary device's browser, go to
-   `http://<your-lan-ip>:8080/`.
+4. **Pair the secondary device with the PIN.** When LAN mode is active the
+   backend prints a 6-digit PIN to its log, e.g.
+   `[server] LAN PIN: 147065`. On the secondary device, browse to
+   `http://<your-lan-ip>:8080/?pin=147065` (or open `http://<your-lan-ip>:8080/`
+   and type the PIN into the prompt page). The pairing is stored as a 30-day
+   cookie so you only do this once per device.
 5. Make sure your firewall allows inbound connections to port 8080 on
    the local network.
 
-> **Heads-up.** LAN mode trusts every device on your network. Don't run
-> with `BIND_HOST=0.0.0.0` on untrusted networks (coffee shop Wi-Fi,
-> conferences, etc.). A PIN gate is on the roadmap.
+> **Heads-up.** The PIN gate covers HTTP requests and WebSocket upgrades,
+> but anyone on the same Wi-Fi who guesses the 6-digit PIN gets in. Don't
+> run with `BIND_HOST=0.0.0.0` on untrusted networks (coffee shop Wi-Fi,
+> conferences, etc.).
 
 ## Things to double-check before going live
 
@@ -77,6 +82,10 @@ your capture software, since it lives on a different device entirely.
 - **Dashboard isn't reachable from the secondary device.**
   Ensure `BIND_HOST=0.0.0.0`, that both devices are on the same network,
   and that the host firewall isn't blocking port 8080.
+- **Secondary device shows a "pair this device" page.**
+  That's expected — type the 6-digit PIN from the backend log into the
+  prompt (or visit the URL with `?pin=…`). The PIN persists for the lifetime
+  of the backend process; restarting the server rotates it.
 - **OBS still captures the dashboard.**
   You're almost certainly using Display Capture. Switch to Window Capture
   or move the dashboard to a different monitor / device.
