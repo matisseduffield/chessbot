@@ -103,11 +103,15 @@ This builds the shared package, dashboard, and unpacked extension output.
 ### 5. Start the local backend
 
 ```powershell
-npm start --workspace backend
+npm start
 ```
 
 The backend listens on `http://localhost:8080`, serves the dashboard, and accepts extension
-connections from supported sites.
+connections from supported sites. The root `npm start` script also rebuilds the shared package
+first, so it works on a clean checkout.
+
+> If you prefer to target the workspace explicitly, you can also run
+> `npm start --workspace backend`.
 
 ### 6. Load the extension
 
@@ -138,13 +142,13 @@ Visit one of the supported sites, start a game or puzzle, and open
 ### Common workspace workflows
 
 ```powershell
-npm start --workspace backend
+npm start
 npm run dev --workspace @chessbot/panel
 npm run build --workspace extension
 npm run dev --workspace extension
 ```
 
-- `backend` serves the app on `http://localhost:8080`
+- `npm start` builds `@chessbot/shared` and runs the backend on `http://localhost:8080`
 - `@chessbot/panel` runs a Vite dev server on `http://localhost:5174` and proxies API / WS
   traffic to the backend
 - `extension build` refreshes the unpacked extension assets in `extension\dist`

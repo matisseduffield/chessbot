@@ -13,6 +13,8 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "build:shared": "npm run build --workspace @chessbot/shared",
+    "start": "npm run build:shared && node backend/server.js",
+    "postinstall": "npm run build:shared --if-present",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

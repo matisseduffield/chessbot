@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "prestart": "npm run build --workspace @chessbot/shared --if-present",
     "build": "npm run build --workspace @chessbot/panel",
     "test": "vitest run",
     "typecheck": "tsc -p . --noEmit"
