@@ -25,7 +25,7 @@
     "test:watch": "vitest --config config/vitest.config.ts",
     "e2e": "playwright test --config config/playwright.config.js",
     "e2e:ui": "playwright test --config config/playwright.config.js --ui",
-    "typecheck": "tsc -b && npm run typecheck --workspace backend",
+    "typecheck": "tsc -b && npm run typecheck --workspace backend && npm run typecheck --workspace extension",
     "prepare": "husky"
   },
   "devDependencies": {

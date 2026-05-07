@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Pure timeout calculator for a pending engine evaluation.
  * Extracted from content.js (plan §2.1) so it can be unit-tested.

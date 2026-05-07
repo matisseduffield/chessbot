@@ -1,4 +1,9 @@
 'use strict';
+// @ts-check
+
+/**
+ * @typedef {'timeout'|'http_error'|'parse_error'|'not_found'|'network_error'} LichessErrorReason
+ */
 
 /**
  * Lichess opening-explorer adapter (masters database).
@@ -34,13 +39,40 @@ class LichessBook {
     this._cache = new Map(); // fen -> { uci: string|null, ts: number }
     this._cacheMax = cacheSize;
     this._cacheTtlMs = cacheTtlMs;
-    this.stats = { hits: 0, misses: 0, fetchErrors: 0 };
+    this.stats = {
+      hits: 0,
+      misses: 0,
+      // Bucketed failure counters so an operator can tell whether the
+      // explorer is timing out, returning 5xx, or just has no opening
+      // data for the position. `fetchErrors` is the legacy total; the
+      // per-reason counters break it down.
+      fetchErrors: 0,
+      errorsByReason: {
+        timeout: 0,
+        http_error: 0,
+        parse_error: 0,
+        not_found: 0,
+        network_error: 0,
+      },
+    };
   }
 
+  /**
+   * @param {LichessErrorReason} reason
+   * @param {Record<string, unknown>} [fields]
+   */
+  _recordError(reason, fields) {
+    this.stats.fetchErrors++;
+    this.stats.errorsByReason[reason] = (this.stats.errorsByReason[reason] || 0) + 1;
+    log.warn({ reason, ...(fields || {}) }, 'lichess book lookup failed');
+  }
+
+  /** @param {unknown} v */
   setEnabled(v) {
     this.enabled = !!v;
   }
 
+  /** @param {string} fen */
   _cacheGet(fen) {
     const e = this._cache.get(fen);
     if (!e) return undefined;
@@ -54,6 +86,10 @@ class LichessBook {
     return e.uci;
   }
 
+  /**
+   * @param {string} fen
+   * @param {string | null} uci
+   */
   _cacheSet(fen, uci) {
     if (this._cache.size >= this._cacheMax) {
       const oldest = this._cache.keys().next().value;
@@ -83,18 +119,24 @@ class LichessBook {
       const res = await this._fetch(url, { signal: AbortSignal.timeout(this.timeoutMs) });
       if (!res.ok) {
         // Don't cache transient errors — try again next time.
+        this._recordError('http_error', { status: res.status });
         return null;
       }
       let data;
       try {
         data = await res.json();
-      } catch {
-        log.warn('invalid JSON response');
+      } catch (parseErr) {
+        const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+        this._recordError('parse_error', { err: msg });
         return null;
       }
       const best = pickBestMove(data);
       if (!best) {
         // Cache "no opening data" misses too — saves the next call.
+        // Bucketed as `not_found` (vs. transport errors) so the operator
+        // can tell "explorer is healthy, position is just out of book"
+        // apart from "explorer is down".
+        this.stats.errorsByReason.not_found++;
         this._cacheSet(fen, null);
         return null;
       }
@@ -105,8 +147,14 @@ class LichessBook {
       this._cacheSet(fen, best.uci);
       return best.uci;
     } catch (err) {
-      this.stats.fetchErrors++;
-      log.warn({ err: err.message }, 'lookup failed');
+      // AbortError is what AbortSignal.timeout throws when the deadline
+      // is hit. Everything else (DNS, ECONNREFUSED, TLS, etc.) is a
+      // network-layer failure.
+      const e = err instanceof Error ? err : null;
+      const isTimeout = !!e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+      this._recordError(isTimeout ? 'timeout' : 'network_error', {
+        err: e ? e.message : String(err),
+      });
       return null;
     } finally {
       this._inFlight--;
@@ -115,8 +163,20 @@ class LichessBook {
 }
 
 /**
+ * @typedef {{
+ *   uci: string,
+ *   san: string,
+ *   white: number,
+ *   draws: number,
+ *   black: number,
+ * }} LichessMove
+ */
+
+/**
  * Given a Lichess response, return the entry with the most total games
  * or null if the response has no moves. Exposed for unit tests.
+ * @param {{ moves?: LichessMove[] } | null | undefined} data
+ * @returns {LichessMove | null}
  */
 function pickBestMove(data) {
   if (!data || !Array.isArray(data.moves) || data.moves.length === 0) return null;

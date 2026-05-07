@@ -1,4 +1,5 @@
 'use strict';
+// @ts-check
 
 /**
  * LAN-mode PIN authentication.
@@ -25,14 +26,24 @@
 
 const crypto = require('node:crypto');
 
+// `qrcode` ships no types and is wrapped in a try/require because the
+// QR is optional. Cast to any so the dynamic property access below
+// type-checks without us having to depend on @types/qrcode.
+/** @type {any} */
 let QRCode = null;
 try {
+  // @ts-ignore - qrcode ships no types and is optional; we don't add
+  // @types/qrcode just to load this module.
   QRCode = require('qrcode');
 } catch {
   /* optional — QR won't show if missing */
 }
 
 const COOKIE = 'chessbot_pin';
+/**
+ * @param {string} msg
+ * @param {string | null} qrDataUri
+ */
 const PIN_PAGE = (msg, qrDataUri) => `<!doctype html>
 <meta charset="utf-8">
 <title>chessbot — pair this device</title>
@@ -58,13 +69,31 @@ ${qrDataUri ? `<div class="qr"><img src="${qrDataUri}" alt="Scan to pair"><small
 <p class="hint">Only devices that pair are granted access. Cookie persists 30 days.</p>
 `;
 
+// Express request shape we touch — kept as a JSDoc typedef so we
+// don't need @types/express as a hard dep just for type hints.
+/**
+ * @typedef {{
+ *   ip?: string,
+ *   socket?: { remoteAddress?: string },
+ *   headers?: Record<string, string | string[] | undefined>,
+ *   query?: Record<string, unknown>,
+ *   originalUrl?: string,
+ * }} HttpReqLike
+ */
+
+/** @param {HttpReqLike} req */
 function isLoopback(req) {
   const raw = (req.ip || req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
   return raw === '127.0.0.1' || raw === '::1' || raw === 'localhost';
 }
 
+/**
+ * @param {Record<string, string | string[] | undefined> | undefined} headers
+ * @param {string} name
+ * @returns {string | null}
+ */
 function readCookie(headers, name) {
-  const raw = headers?.cookie;
+  const raw = /** @type {string | undefined} */ (headers?.cookie);
   if (!raw) return null;
   for (const part of raw.split(/;\s*/)) {
     const eq = part.indexOf('=');
@@ -100,6 +129,7 @@ function createPinAuth({ enabled, logger = console }) {
 
   logger.info(`[server] LAN PIN: ${pin}  (enter on first non-loopback connection)`);
 
+  /** @param {HttpReqLike} req */
   function isAuthed(req) {
     if (isLoopback(req)) return true;
     return readCookie(req.headers, COOKIE) === token;
@@ -110,8 +140,9 @@ function createPinAuth({ enabled, logger = console }) {
     pin,
     token,
 
+    /** @param {{ use(handler: any): void }} app */
     installHttp(app) {
-      app.use(async (req, res, next) => {
+      app.use(async (/** @type {any} */ req, /** @type {any} */ res, /** @type {any} */ next) => {
         if (isAuthed(req)) return next();
 
         const provided = req.query?.pin;
@@ -153,6 +184,7 @@ function createPinAuth({ enabled, logger = console }) {
       });
     },
 
+    /** @param {HttpReqLike} req */
     wsUpgradeAllowed(req) {
       return isAuthed(req);
     },

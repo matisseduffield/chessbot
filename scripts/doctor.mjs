@@ -7,6 +7,10 @@
 //  • A Stockfish binary can be found and is executable.
 //  • Default port (8080) is free.
 //
+// Flags:
+//  • --skip-engine   skip the Stockfish binary check (used by CI, which
+//                    doesn't ship the engine).
+//
 // Exits 0 if everything looks good, 1 if any check fails.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -16,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const skipEngine = process.argv.includes('--skip-engine');
 
 let failed = 0;
 const ok = (msg) => console.log(`  ✓ ${msg}`);
@@ -55,7 +60,9 @@ else bad(`shared/dist/index.js missing — run \`npm run build:shared\``);
 console.log('\nStockfish');
 const engineDir = path.join(root, 'engine', 'stockfish');
 let stockfishPath = null;
-if (existsSync(engineDir)) {
+if (skipEngine) {
+  warn('skipped (--skip-engine)');
+} else if (existsSync(engineDir)) {
   const isWin = process.platform === 'win32';
   const matches = readdirSync(engineDir).filter((f) => {
     const lower = f.toLowerCase();

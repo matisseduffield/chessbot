@@ -18,6 +18,16 @@
 
 const MATE_VALUE = 100_000;
 
+/**
+ * @typedef {{ cp?: number|null, mate?: number|null }} Score
+ * @typedef {{ blunder?: number, mistake?: number, inaccuracy?: number }} Thresholds
+ * @typedef {{ drop: number, severity: 'blunder'|'mistake'|'inaccuracy'|null }} Classification
+ */
+
+/**
+ * @param {Score | null | undefined} s
+ * @returns {number | null}
+ */
 function scoreToCp(s) {
   if (!s) return null;
   if (typeof s.mate === 'number' && Number.isFinite(s.mate)) {
@@ -27,6 +37,12 @@ function scoreToCp(s) {
   return null;
 }
 
+/**
+ * @param {Score | null | undefined} before
+ * @param {Score | null | undefined} after
+ * @param {Thresholds} [thresholds]
+ * @returns {Classification | null}
+ */
 function classifyMove(before, after, thresholds = {}) {
   const b = scoreToCp(before);
   const a = scoreToCp(after);
@@ -43,6 +59,10 @@ function classifyMove(before, after, thresholds = {}) {
   return { drop, severity: null };
 }
 
+/**
+ * @param {Score | null | undefined} bestBefore
+ * @param {Score | null | undefined} afterFromSame
+ */
 function classifyUserMove(bestBefore, afterFromSame) {
   return classifyMove(bestBefore, afterFromSame);
 }

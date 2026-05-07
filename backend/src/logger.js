@@ -8,7 +8,10 @@
  * using plain `console.log` / `console.warn` / `console.error`.
  */
 
+// @ts-check
+
 const SERVER_LOG_MAX = 1000;
+/** @type {string[]} */
 const buffer = [];
 const orig = {
   log: console.log.bind(console),
@@ -16,6 +19,10 @@ const orig = {
   error: console.error.bind(console),
 };
 
+/**
+ * @param {string} level
+ * @param {ArrayLike<unknown>} args
+ */
 function push(level, args) {
   const ts = new Date().toISOString().slice(11, 23);
   const line = `[${ts}] ${level}: ${Array.from(args)

@@ -21,6 +21,11 @@ const path = require('path');
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX = 500;
 
+// Bumped whenever the on-disk entry shape or key format changes. Files
+// from a different version are dropped on load instead of silently
+// loading garbage that no current key can hit.
+const CACHE_SCHEMA_VERSION = 1;
+
 /**
  * @template T
  * @typedef {{ result: T, ts: number }} CacheEntry
@@ -74,6 +79,64 @@ class EvalCache {
   }
 
   /**
+   * Like {@link get}, but on a miss for the exact depth, returns any
+   * cached entry for the same (fen, variant, multiPV) at depth ≥ minDepth.
+   * Picks the deepest matching entry, since deeper analysis subsumes
+   * shallower analysis at the same position. Returns `null` if no such
+   * entry exists or all candidates are expired.
+   *
+   * Designed for the case where a user toggles depth — a depth-25 hit
+   * answers a depth-15 request without a re-search.
+   *
+   * Implementation: keys are `${fen}:${variant}:${depth}:${multiPV}` and
+   * standard / variant FENs don't contain `:`, so we split on the
+   * fixed-shape suffix to recover (depth, multiPV) without storing them
+   * separately on each entry. Entries from disk that fail to parse are
+   * skipped silently (defensive — should never happen with our writer).
+   *
+   * @param {string} fen
+   * @param {string} variant
+   * @param {number} minDepth
+   * @param {number} multiPV
+   * @returns {{ result: T, depth: number } | null}
+   */
+  getAtLeast(fen, variant, minDepth, multiPV) {
+    const exact = this.get(fen, variant, minDepth, multiPV);
+    if (exact !== null) return { result: exact, depth: minDepth };
+
+    const prefix = `${fen}:${variant}:`;
+    const cutoff = this._now() - this.ttlMs;
+    let bestKey = null;
+    let bestEntry = null;
+    let bestDepth = -1;
+
+    for (const [key, entry] of this._map) {
+      if (!key.startsWith(prefix)) continue;
+      if (entry.ts <= cutoff) continue;
+      // Suffix shape: `${depth}:${multiPV}`. Both are integers.
+      const suffix = key.slice(prefix.length);
+      const sep = suffix.indexOf(':');
+      if (sep < 0) continue;
+      const d = Number(suffix.slice(0, sep));
+      const mp = Number(suffix.slice(sep + 1));
+      if (!Number.isFinite(d) || !Number.isFinite(mp)) continue;
+      if (mp !== multiPV) continue;
+      if (d < minDepth) continue;
+      if (d > bestDepth) {
+        bestDepth = d;
+        bestKey = key;
+        bestEntry = entry;
+      }
+    }
+
+    if (!bestEntry || bestKey === null) return null;
+    // LRU touch
+    this._map.delete(bestKey);
+    this._map.set(bestKey, bestEntry);
+    return { result: bestEntry.result, depth: bestDepth };
+  }
+
+  /**
    * @param {string} fen
    * @param {string} variant
    * @param {number} depth
@@ -116,7 +179,11 @@ class EvalCache {
     for (const [key, entry] of this._map) {
       if (entry.ts > cutoff) entries.push([key, entry]);
     }
-    const payload = JSON.stringify({ version: 1, ttlMs: this.ttlMs, entries });
+    const payload = JSON.stringify({
+      version: CACHE_SCHEMA_VERSION,
+      ttlMs: this.ttlMs,
+      entries,
+    });
     const dir = path.dirname(filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${filePath}.tmp`;
@@ -142,6 +209,7 @@ class EvalCache {
       return 0;
     }
     if (!parsed || !Array.isArray(parsed.entries)) return 0;
+    if (parsed.version !== CACHE_SCHEMA_VERSION) return 0;
     const cutoff = this._now() - this.ttlMs;
     let loaded = 0;
     for (const [key, entry] of parsed.entries) {

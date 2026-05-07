@@ -1,0 +1,41 @@
+# Normalise line endings to LF on commit. Without this, Windows
+# contributors check out files with CRLF (git's default core.autocrlf
+# behaviour on Windows), which clashes with `endOfLine: lf` in the
+# Prettier config and breaks `npm run format:check` on the Windows CI
+# matrix entry. Binaries and lockfiles are left alone.
+
+* text=auto eol=lf
+
+# Source files explicitly LF
+*.js     text eol=lf
+*.jsx    text eol=lf
+*.mjs    text eol=lf
+*.cjs    text eol=lf
+*.ts     text eol=lf
+*.tsx    text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.css    text eol=lf
+*.html   text eol=lf
+*.svg    text eol=lf
+
+# Windows-only scripts: keep CRLF so cmd.exe / .bat behaves correctly.
+*.cmd    text eol=crlf
+*.bat    text eol=crlf
+*.ps1    text eol=crlf
+
+# Binaries — never normalise.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.bin    binary
+*.exe    binary
+*.dll    binary
+*.woff   binary
+*.woff2  binary
+*.rtbw   binary
+*.rtbz   binary

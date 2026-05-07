@@ -31,34 +31,44 @@ const { createPinAuth } = require("./src/auth/pin");
 serverLogger.install();
 
 // ── File scanner helpers ─────────────────────────────────
+// All FS scans are async (fs.promises) and run off the request path:
+// a background refresher updates `_fileCache` every FILE_CACHE_TTL.
+// Callers read the cached snapshot synchronously, so the event loop
+// is never blocked by a directory walk.
 
-/** Recursively find files matching extensions in a directory */
-function scanFiles(dir, extensions) {
+const fsp = fs.promises;
+
+/** Recursively find files matching extensions in a directory (async) */
+async function scanFilesAsync(dir, extensions) {
   const results = [];
-  if (!fs.existsSync(dir)) return results;
-  const walk = (d) => {
-    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
-      const full = path.join(d, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-      } else if (extensions.some((ext) => entry.name.toLowerCase().endsWith(ext))) {
-        results.push({ name: entry.name, path: full });
-      }
+  let entries;
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    // Directory missing or unreadable — treat as empty.
+    return results;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const sub = await scanFilesAsync(full, extensions);
+      results.push(...sub);
+    } else if (extensions.some((ext) => entry.name.toLowerCase().endsWith(ext))) {
+      results.push({ name: entry.name, path: full });
     }
-  };
-  walk(dir);
+  }
   return results;
 }
 
-function listEngines() {
+async function listEnginesAsync() {
   if (process.platform === "win32") {
-    return scanFiles(config.engineDir, [".exe"]);
+    return scanFilesAsync(config.engineDir, [".exe"]);
   }
-  // On macOS / Linux engine binaries are typically extension-less. Walk the
-  // tree and keep only files that look like binaries (no obvious doc/config
-  // extension). This is best-effort — users can always set STOCKFISH_PATH.
+  // On macOS / Linux engine binaries are typically extension-less. Walk
+  // the tree and keep only files that look like binaries (no obvious
+  // doc/config extension). Best-effort — users can always set STOCKFISH_PATH.
   const SKIP_EXT = new Set([".md", ".txt", ".json", ".log", ".html", ".sh"]);
-  const all = scanFiles(config.engineDir, [""]);
+  const all = await scanFilesAsync(config.engineDir, [""]);
   return all.filter((f) => {
     const dot = f.name.lastIndexOf(".");
     if (dot < 0) return true;
@@ -66,42 +76,69 @@ function listEngines() {
   });
 }
 
-function listBooks() {
-  return scanFiles(config.booksDir, [".bin"]);
+async function listBooksAsync() {
+  return scanFilesAsync(config.booksDir, [".bin"]);
 }
 
-// ── Cached file listing (avoids repeated fs walks on every WS request) ──
-const _fileCache = { engines: null, books: null, syzygy: null, ts: 0 };
-const FILE_CACHE_TTL = 10_000; // 10 seconds
-
-function getCachedFiles() {
-  const now = Date.now();
-  if (_fileCache.ts && now - _fileCache.ts < FILE_CACHE_TTL) return _fileCache;
-  _fileCache.engines = listEngines();
-  _fileCache.books = listBooks();
-  _fileCache.syzygy = listSyzygyDirs();
-  _fileCache.ts = now;
-  return _fileCache;
-}
-
-function listSyzygyDirs() {
+async function listSyzygyDirsAsync() {
   // Return directories that contain .rtbw or .rtbz files
   const results = [];
-  if (!fs.existsSync(config.syzygyDir)) return results;
-  // Check root
-  const rootFiles = fs.readdirSync(config.syzygyDir);
-  const hasTB = rootFiles.some((f) => f.endsWith(".rtbw") || f.endsWith(".rtbz"));
-  if (hasTB) results.push({ name: path.basename(config.syzygyDir), path: config.syzygyDir });
+  let rootEntries;
+  try {
+    rootEntries = await fsp.readdir(config.syzygyDir, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+  // Check root itself
+  const hasTB = rootEntries.some(
+    (e) => !e.isDirectory() && (e.name.endsWith(".rtbw") || e.name.endsWith(".rtbz")),
+  );
+  if (hasTB) {
+    results.push({ name: path.basename(config.syzygyDir), path: config.syzygyDir });
+  }
   // Check subdirs
-  for (const entry of fs.readdirSync(config.syzygyDir, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      const subPath = path.join(config.syzygyDir, entry.name);
-      const subFiles = fs.readdirSync(subPath);
-      const subHasTB = subFiles.some((f) => f.endsWith(".rtbw") || f.endsWith(".rtbz"));
-      if (subHasTB) results.push({ name: entry.name, path: subPath });
+  for (const entry of rootEntries) {
+    if (!entry.isDirectory()) continue;
+    const subPath = path.join(config.syzygyDir, entry.name);
+    let subFiles;
+    try {
+      subFiles = await fsp.readdir(subPath);
+    } catch {
+      continue;
     }
+    const subHasTB = subFiles.some((f) => f.endsWith(".rtbw") || f.endsWith(".rtbz"));
+    if (subHasTB) results.push({ name: entry.name, path: subPath });
   }
   return results;
+}
+
+// ── Cached file listing (background-refreshed) ──
+const _fileCache = { engines: [], books: [], syzygy: [], ts: 0 };
+const FILE_CACHE_TTL = 10_000; // refresh interval (ms)
+
+async function refreshFileCache() {
+  try {
+    const [engines, books, syzygy] = await Promise.all([
+      listEnginesAsync(),
+      listBooksAsync(),
+      listSyzygyDirsAsync(),
+    ]);
+    _fileCache.engines = engines;
+    _fileCache.books = books;
+    _fileCache.syzygy = syzygy;
+    _fileCache.ts = Date.now();
+  } catch (err) {
+    console.warn("[server] file-cache refresh failed:", err.message);
+  }
+}
+
+/**
+ * Caller-friendly: returns the latest cached snapshot synchronously.
+ * The cache is refreshed by a background poller (started in main()),
+ * so no request handler ever blocks the event loop on a fs walk.
+ */
+function getCachedFiles() {
+  return _fileCache;
 }
 
 // ── Evaluation cache ─────────────────────────────────────
@@ -123,6 +160,17 @@ function getCachedEval(fen, variant, depth, multiPV) {
   return _evalCache.get(fen, variant, depth, multiPV);
 }
 
+/**
+ * Like getCachedEval but accepts any cached entry at depth >= the
+ * requested depth (same fen/variant/multiPV). Lets a deep prior search
+ * answer a shallower request without another engine round-trip — the
+ * common case when the user toggles the depth slider down.
+ * Returns { result, depth } on hit, null on miss.
+ */
+function getCachedEvalAtLeast(fen, variant, depth, multiPV) {
+  return _evalCache.getAtLeast(fen, variant, depth, multiPV);
+}
+
 function setCachedEval(fen, variant, depth, multiPV, result) {
   _evalCache.set(fen, variant, depth, multiPV, result);
 }
@@ -133,6 +181,15 @@ setInterval(() => _evalCache.purgeExpired(), 60_000);
 async function main() {
   // ── 0. Load ECO opening database ──────────────────────
   eco.loadEco(path.join(__dirname, "eco"));
+
+  // ── 0a. Warm the file cache and start background refresher ──
+  // First scan is awaited so the first request after startup never sees
+  // an empty cache. After that the poller refreshes off the request path.
+  await refreshFileCache();
+  const fileCacheTimer = setInterval(() => {
+    void refreshFileCache();
+  }, FILE_CACHE_TTL);
+  fileCacheTimer.unref();
 
   // ── Variant definitions ────────────────────────────────
   // category: "standard" | "popular" | "chess" | "regional" | "shogi" | "mini" | "other"
@@ -526,7 +583,23 @@ async function main() {
   const panelDist = path.join(__dirname, "panel", "dist");
   const panelRoot = fs.existsSync(path.join(panelDist, "index.html")) ? panelDist : panelSrc;
   console.log(`[server] serving panel from ${panelRoot === panelDist ? "dist (built)" : "src (dev)"}`);
-  app.use(express.static(panelRoot));
+  // Cache strategy: HTML must never be cached (it's the entry point and
+  // pins the JS/CSS hashes); Vite-emitted hashed assets in assets/ are
+  // safe to cache forever; everything else gets a revalidate hint so a
+  // backend upgrade doesn't strand users on a stale dashboard.
+  app.use(
+    express.static(panelRoot, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith(".html")) {
+          res.setHeader("Cache-Control", "no-store");
+        } else if (/[\\/]assets[\\/].+-[A-Za-z0-9_]{8,}\.(?:js|css|woff2?|png|svg)$/i.test(filePath)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        } else {
+          res.setHeader("Cache-Control", "no-cache, must-revalidate");
+        }
+      },
+    }),
+  );
   const server = http.createServer(app);
 
   // Handle PNA preflight at the raw HTTP level (before ws upgrade intercepts)
@@ -547,6 +620,36 @@ async function main() {
       return true;
     },
   });
+
+  // ── WS heartbeat ─────────────────────────────────────────
+  // Half-open TCP connections (laptop lid closed, NAT timeout, etc.)
+  // can keep a dead client in wss.clients for minutes, leaking memory
+  // and pushing broadcast traffic into a dead socket. Send a low-level
+  // ping every 30s and reap clients that miss two pings (60s).
+  // Browsers auto-respond to ping frames per the WS spec, so the
+  // extension/panel need no client-side change.
+  const HEARTBEAT_MS = 30_000;
+  const heartbeat = setInterval(() => {
+    for (const ws of wss.clients) {
+      if (ws.isAlive === false) {
+        console.warn("[server] terminating unresponsive WS client");
+        try {
+          ws.terminate();
+        } catch {
+          /* ignore */
+        }
+        continue;
+      }
+      ws.isAlive = false;
+      try {
+        ws.ping();
+      } catch {
+        /* socket already dying */
+      }
+    }
+  }, HEARTBEAT_MS);
+  heartbeat.unref();
+  wss.on("close", () => clearInterval(heartbeat));
 
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
@@ -593,6 +696,14 @@ async function main() {
   wss.on("connection", (ws, req) => {
     const remote = req.socket.remoteAddress;
     console.log(`[server] client connected (${remote})`);
+
+    // Heartbeat: mark alive on connect, refresh whenever we receive a
+    // pong. The interval above flips this to false before each ping;
+    // a missing pong leaves it false and the next tick reaps the socket.
+    ws.isAlive = true;
+    ws.on("pong", () => {
+      ws.isAlive = true;
+    });
 
     // Protocol hello: lets the panel/extension detect version mismatches
     // (see improvement-plan §7.4). Best-effort; older clients ignore it.
@@ -653,6 +764,15 @@ async function main() {
       const gateResult = validateInbound(msg);
       if (!gateResult.ok) {
         safeSend(ws, { type: "error", code: gateResult.code, message: gateResult.message });
+        return;
+      }
+
+      // During shutdown, refuse anything that would enqueue engine work
+      // — we've already bumped evalGeneration and are tearing down. Cheap
+      // utility frames (hello, get_settings) still pass through so the
+      // client can render a sensible disconnect state.
+      if (shuttingDown && (msg.type === "fen" || msg.type === "switch_variant" || msg.type === "switch_engine")) {
+        safeSend(ws, { type: "error", code: "shutting_down", message: "Server is shutting down" });
         return;
       }
 
@@ -793,7 +913,22 @@ async function main() {
             // Fall back to Stockfish — check eval cache first (skip for infinite analysis)
             const multiPV = Number(engine.getSettings().MultiPV) || 1;
             if (depth > 0) {
-              const cached = getCachedEval(fen, evalVariant, depth, multiPV);
+              // First try the exact depth, then fall back to any deeper
+              // cached entry (deeper analysis subsumes shallower at the
+              // same position). Tag the source as "cache" so the client
+              // can show that the line came from a deeper prior search.
+              let cached = getCachedEval(fen, evalVariant, depth, multiPV);
+              let cachedFromDepth = depth;
+              if (!cached) {
+                const fallback = getCachedEvalAtLeast(fen, evalVariant, depth, multiPV);
+                if (fallback) {
+                  cached = fallback.result;
+                  cachedFromDepth = fallback.depth;
+                  console.log(
+                    `[server] cache depth-fallback: requested ${depth}, served ${cachedFromDepth}`,
+                  );
+                }
+              }
               if (cached) {
                 console.log(`[server] → bestmove (cache): ${cached.bestmove}`);
                 const cacheMsg = {
@@ -807,6 +942,9 @@ async function main() {
                   ecoCode: posEco ? posEco.code : null,
                   tablebase: cached.tablebase,
                   cached: true,
+                  // Set when we satisfied the request from a deeper
+                  // cached entry; clients can render a small badge.
+                  ...(cachedFromDepth > depth ? { cachedFromDepth } : {}),
                 };
                 safeSend(ws, cacheMsg);
                 broadcast(ws, cacheMsg);
@@ -1224,22 +1362,51 @@ async function main() {
   });
 
   // ── 4. Graceful shutdown ───────────────────────────────
-  function shutdown() {
+  let shuttingDown = false;
+  async function shutdown() {
+    if (shuttingDown) return; // ignore repeated SIGINTs
+    shuttingDown = true;
     console.log("\n[server] shutting down…");
+    clearInterval(heartbeat);
+    clearInterval(fileCacheTimer);
+
+    // Tell connected clients we're going away so they can show a
+    // "reconnecting" UX instead of a hard close. evalGeneration is
+    // per-connection, so we don't bump it here — the `shuttingDown`
+    // flag at the message-handler entry point is what stops new
+    // engine work from being enqueued.
+    for (const client of wss.clients) {
+      safeSend(client, { type: "server_shutdown" });
+    }
+
     try {
       const count = _evalCache.saveToDisk(_evalCachePath);
       console.log(`[server] saved ${count} eval cache entries → ${_evalCachePath}`);
     } catch (err) {
       console.error("[server] failed to save eval cache:", err.message);
     }
-    engine.stop();
-    book.close();
-    wss.close(() => process.exit(0));
-    // Force exit after 5s if graceful close hangs
-    setTimeout(() => {
+
+    // Force exit after 5s no matter what so a stuck `wss.close` or
+    // engine doesn't leave the process pinned.
+    const forceExit = setTimeout(() => {
       console.error("[server] shutdown timeout — forcing exit");
       process.exit(1);
-    }, 5000).unref();
+    }, 5000);
+    forceExit.unref();
+
+    try {
+      // Wait for the engine PID to actually exit before we let Node
+      // exit; otherwise the next start can race a stale stockfish
+      // process for the same hash file / port-on-stdin etc.
+      await engine.stop();
+    } catch (err) {
+      console.error("[server] engine stop failed:", err.message);
+    }
+    book.close();
+    wss.close(() => {
+      clearTimeout(forceExit);
+      process.exit(0);
+    });
   }
 
   process.on("SIGINT", shutdown);
