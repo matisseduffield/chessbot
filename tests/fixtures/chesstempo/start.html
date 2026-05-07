@@ -1,0 +1,60 @@
+<!--
+  ChessTempo board fixture — initial position, white at bottom.
+  Markup differs from Lichess / PlayStrategy:
+    - Container is `<chess-board>`, not `<cg-board>`.
+    - Pieces are positioned with percentage `left` / `top` (each square
+      is 12.5%).
+    - Class shape: `ct-pieceClass ct-piece-<color><type>` — e.g.
+      `ct-pieceClass ct-piece-whiterook`.
+    - Coord labels: `<div class="ct-file-coord">a</div>` etc.
+
+  Position: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR
+-->
+<chess-board>
+  <div class="ct-board-inner-holder">
+    <div class="ct-file-coord">a</div>
+    <div class="ct-file-coord">b</div>
+    <div class="ct-file-coord">c</div>
+    <div class="ct-file-coord">d</div>
+    <div class="ct-file-coord">e</div>
+    <div class="ct-file-coord">f</div>
+    <div class="ct-file-coord">g</div>
+    <div class="ct-file-coord">h</div>
+  </div>
+  <!-- Rank 8 (top) — black back rank, top:0% -->
+  <div class="ct-pieceClass ct-piece-blackrook" style="left: 0%; top: 0%"></div>
+  <div class="ct-pieceClass ct-piece-blackknight" style="left: 12.5%; top: 0%"></div>
+  <div class="ct-pieceClass ct-piece-blackbishop" style="left: 25%; top: 0%"></div>
+  <div class="ct-pieceClass ct-piece-blackqueen" style="left: 37.5%; top: 0%"></div>
+  <div class="ct-pieceClass ct-piece-blackking" style="left: 50%; top: 0%"></div>
+  <div class="ct-pieceClass ct-piece-blackbishop" style="left: 62.5%; top: 0%"></div>
+  <div class="ct-pieceClass ct-piece-blackknight" style="left: 75%; top: 0%"></div>
+  <div class="ct-pieceClass ct-piece-blackrook" style="left: 87.5%; top: 0%"></div>
+  <!-- Rank 7 — black pawns, top:12.5% -->
+  <div class="ct-pieceClass ct-piece-blackpawn" style="left: 0%; top: 12.5%"></div>
+  <div class="ct-pieceClass ct-piece-blackpawn" style="left: 12.5%; top: 12.5%"></div>
+  <div class="ct-pieceClass ct-piece-blackpawn" style="left: 25%; top: 12.5%"></div>
+  <div class="ct-pieceClass ct-piece-blackpawn" style="left: 37.5%; top: 12.5%"></div>
+  <div class="ct-pieceClass ct-piece-blackpawn" style="left: 50%; top: 12.5%"></div>
+  <div class="ct-pieceClass ct-piece-blackpawn" style="left: 62.5%; top: 12.5%"></div>
+  <div class="ct-pieceClass ct-piece-blackpawn" style="left: 75%; top: 12.5%"></div>
+  <div class="ct-pieceClass ct-piece-blackpawn" style="left: 87.5%; top: 12.5%"></div>
+  <!-- Rank 2 — white pawns, top:75% -->
+  <div class="ct-pieceClass ct-piece-whitepawn" style="left: 0%; top: 75%"></div>
+  <div class="ct-pieceClass ct-piece-whitepawn" style="left: 12.5%; top: 75%"></div>
+  <div class="ct-pieceClass ct-piece-whitepawn" style="left: 25%; top: 75%"></div>
+  <div class="ct-pieceClass ct-piece-whitepawn" style="left: 37.5%; top: 75%"></div>
+  <div class="ct-pieceClass ct-piece-whitepawn" style="left: 50%; top: 75%"></div>
+  <div class="ct-pieceClass ct-piece-whitepawn" style="left: 62.5%; top: 75%"></div>
+  <div class="ct-pieceClass ct-piece-whitepawn" style="left: 75%; top: 75%"></div>
+  <div class="ct-pieceClass ct-piece-whitepawn" style="left: 87.5%; top: 75%"></div>
+  <!-- Rank 1 — white back rank, top:87.5% -->
+  <div class="ct-pieceClass ct-piece-whiterook" style="left: 0%; top: 87.5%"></div>
+  <div class="ct-pieceClass ct-piece-whiteknight" style="left: 12.5%; top: 87.5%"></div>
+  <div class="ct-pieceClass ct-piece-whitebishop" style="left: 25%; top: 87.5%"></div>
+  <div class="ct-pieceClass ct-piece-whitequeen" style="left: 37.5%; top: 87.5%"></div>
+  <div class="ct-pieceClass ct-piece-whiteking" style="left: 50%; top: 87.5%"></div>
+  <div class="ct-pieceClass ct-piece-whitebishop" style="left: 62.5%; top: 87.5%"></div>
+  <div class="ct-pieceClass ct-piece-whiteknight" style="left: 75%; top: 87.5%"></div>
+  <div class="ct-pieceClass ct-piece-whiterook" style="left: 87.5%; top: 87.5%"></div>
+</chess-board>

@@ -1,0 +1,14 @@
+<!--
+  ChessTempo emits an accessibility heading containing the full FEN
+  for screen readers. When present, the reader takes the fast path
+  and trusts that string outright (it's the only source that
+  captures side-to-move, castling, and en passant in one shot).
+
+  This fixture verifies that path: the heading wins, even when the
+  piece elements would produce a different layout.
+-->
+<chess-board>
+  <h2>FEN: r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1</h2>
+  <!-- Bogus piece elements — should be ignored because the heading wins. -->
+  <div class="ct-pieceClass ct-piece-whitepawn" style="left: 0%; top: 0%"></div>
+</chess-board>
