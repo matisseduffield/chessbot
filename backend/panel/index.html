@@ -2012,6 +2012,11 @@ import { renderPlayerBars } from "./src/playerBars.js";
 import { renderPVs, PV_COLORS } from "./src/pvCards.js";
 import { renderBoard, BOARD_THEMES, PIECE_SETS } from "./src/board.js";
 import { buildPgnFromHistory } from "./src/pgn.js";
+import {
+  showProtocolMismatchBanner,
+  hideProtocolMismatchBanner,
+} from "./src/protocolBanner.js";
+import { PROTOCOL_VERSION, isProtocolMismatch } from "@chessbot/shared";
 // Expose state on window for E2E tests + debugging (§3.1).
 window.state = state;
 // ── State ────────────────────────────────────────────────
@@ -2389,15 +2394,21 @@ function connect() {
     let msg;
     try { msg = JSON.parse(evt.data); } catch { return; }
 
-    // Protocol handshake (improvement-plan §7.4). If the server speaks a
-    // newer protocol, the panel is stale — warn the user once so they
-    // rebuild/refresh instead of silently seeing half-working behaviour.
+    // Protocol handshake (improvement-plan §7.4 / P4.A). If the server
+    // speaks a different protocol, render a sticky banner so the user
+    // notices instead of silently seeing half-working behaviour. The
+    // banner clears on a clean reconnect (mismatch resolved).
     if (msg.type === "server_hello") {
-      const EXPECTED = 1;
-      if (typeof msg.protocolVersion === "number" && msg.protocolVersion !== EXPECTED) {
-        console.warn(`[panel] protocol mismatch: panel=${EXPECTED} server=${msg.protocolVersion} — reload the panel after rebuilding.`);
-        const st = document.getElementById("status-text");
-        if (st) st.textContent = `Protocol mismatch (server v${msg.protocolVersion}, panel v${EXPECTED}) — reload`;
+      if (isProtocolMismatch(PROTOCOL_VERSION, msg.protocolVersion)) {
+        console.warn(
+          `[panel] protocol mismatch: panel=${PROTOCOL_VERSION} server=${msg.protocolVersion} — reload the panel after rebuilding.`,
+        );
+        showProtocolMismatchBanner({
+          panelVersion: PROTOCOL_VERSION,
+          serverVersion: msg.protocolVersion,
+        });
+      } else {
+        hideProtocolMismatchBanner();
       }
       return;
     }
