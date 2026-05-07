@@ -71,6 +71,81 @@ describe('EvalCache', () => {
     expect(c.size).toBe(0);
   });
 
+  describe('getAtLeast (depth fallback)', () => {
+    it('returns null when nothing matches', () => {
+      const c = new EvalCache();
+      expect(c.getAtLeast('f', 'chess', 10, 1)).toBeNull();
+    });
+
+    it('returns the exact-depth entry when present', () => {
+      const c = new EvalCache();
+      c.set('f', 'chess', 10, 1, { bestmove: 'e2e4' });
+      const r = c.getAtLeast('f', 'chess', 10, 1);
+      expect(r).toEqual({ result: { bestmove: 'e2e4' }, depth: 10 });
+    });
+
+    it('falls back to a deeper entry on shallower miss', () => {
+      const c = new EvalCache();
+      c.set('f', 'chess', 18, 1, { bestmove: 'd2d4' });
+      const r = c.getAtLeast('f', 'chess', 12, 1);
+      expect(r).toEqual({ result: { bestmove: 'd2d4' }, depth: 18 });
+    });
+
+    it('picks the deepest available when multiple are deeper', () => {
+      const c = new EvalCache();
+      c.set('f', 'chess', 14, 1, 'shallow');
+      c.set('f', 'chess', 22, 1, 'deepest');
+      c.set('f', 'chess', 18, 1, 'mid');
+      const r = c.getAtLeast('f', 'chess', 10, 1);
+      expect(r).toEqual({ result: 'deepest', depth: 22 });
+    });
+
+    it('does not cross multiPV boundaries', () => {
+      const c = new EvalCache();
+      c.set('f', 'chess', 22, 4, 'multipv4');
+      expect(c.getAtLeast('f', 'chess', 10, 1)).toBeNull();
+    });
+
+    it('does not cross variant boundaries', () => {
+      const c = new EvalCache();
+      c.set('f', 'atomic', 22, 1, 'atomic22');
+      expect(c.getAtLeast('f', 'chess', 10, 1)).toBeNull();
+    });
+
+    it('does not cross fen boundaries', () => {
+      const c = new EvalCache();
+      c.set('fA', 'chess', 22, 1, 'A');
+      expect(c.getAtLeast('fB', 'chess', 10, 1)).toBeNull();
+    });
+
+    it('returns null when only shallower entries exist', () => {
+      const c = new EvalCache();
+      c.set('f', 'chess', 8, 1, 'X');
+      expect(c.getAtLeast('f', 'chess', 12, 1)).toBeNull();
+    });
+
+    it('skips expired candidates', () => {
+      let t = 1_000_000;
+      const c = new EvalCache({ ttlMs: 1000, now: () => t });
+      c.set('f', 'chess', 22, 1, 'old');
+      t += 2000;
+      expect(c.getAtLeast('f', 'chess', 10, 1)).toBeNull();
+    });
+
+    it('LRU-touches the chosen entry', () => {
+      const c = new EvalCache({ max: 3 });
+      c.set('a', 'chess', 22, 1, 'A22');
+      c.set('b', 'chess', 10, 1, 'B10');
+      c.set('c', 'chess', 10, 1, 'C10');
+      // Pull A via fallback — should bump it to most-recent.
+      expect(c.getAtLeast('a', 'chess', 10, 1)).toEqual({ result: 'A22', depth: 22 });
+      // Inserting d should now evict B (oldest), not A.
+      c.set('d', 'chess', 10, 1, 'D');
+      expect(c.get('a', 'chess', 22, 1)).toBe('A22');
+      expect(c.get('b', 'chess', 10, 1)).toBeNull();
+    });
+  });
+
   it('overwrites without double-counting against max', () => {
     const c = new EvalCache({ max: 2 });
     c.set('a', 'chess', 10, 1, 'A');

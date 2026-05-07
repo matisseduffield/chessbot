@@ -96,4 +96,59 @@ describe('LichessBook.lookup', () => {
     expect(await b.lookup('fenZ')).toBeNull();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  it('classifies an HTTP non-2xx response as http_error', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 503 });
+    const b = new LichessBook({ fetchImpl });
+    b.setEnabled(true);
+    expect(await b.lookup('fen')).toBeNull();
+    expect(b.stats.errorsByReason.http_error).toBe(1);
+    expect(b.stats.fetchErrors).toBe(1);
+  });
+
+  it('classifies a JSON parse failure as parse_error', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => {
+        throw new Error('bad json');
+      },
+    });
+    const b = new LichessBook({ fetchImpl });
+    b.setEnabled(true);
+    expect(await b.lookup('fen')).toBeNull();
+    expect(b.stats.errorsByReason.parse_error).toBe(1);
+  });
+
+  it('classifies an empty moves response as not_found', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ moves: [] }),
+    });
+    const b = new LichessBook({ fetchImpl });
+    b.setEnabled(true);
+    expect(await b.lookup('fen')).toBeNull();
+    expect(b.stats.errorsByReason.not_found).toBe(1);
+    // not_found is not a transport failure, so the legacy total stays at 0.
+    expect(b.stats.fetchErrors).toBe(0);
+  });
+
+  it('classifies an AbortError as timeout', async () => {
+    const fetchImpl = vi.fn().mockImplementation(() => {
+      const err = new Error('aborted');
+      err.name = 'TimeoutError';
+      throw err;
+    });
+    const b = new LichessBook({ fetchImpl });
+    b.setEnabled(true);
+    expect(await b.lookup('fen')).toBeNull();
+    expect(b.stats.errorsByReason.timeout).toBe(1);
+  });
+
+  it('classifies other thrown errors as network_error', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    const b = new LichessBook({ fetchImpl });
+    b.setEnabled(true);
+    expect(await b.lookup('fen')).toBeNull();
+    expect(b.stats.errorsByReason.network_error).toBe(1);
+  });
 });

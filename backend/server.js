@@ -123,6 +123,17 @@ function getCachedEval(fen, variant, depth, multiPV) {
   return _evalCache.get(fen, variant, depth, multiPV);
 }
 
+/**
+ * Like getCachedEval but accepts any cached entry at depth >= the
+ * requested depth (same fen/variant/multiPV). Lets a deep prior search
+ * answer a shallower request without another engine round-trip — the
+ * common case when the user toggles the depth slider down.
+ * Returns { result, depth } on hit, null on miss.
+ */
+function getCachedEvalAtLeast(fen, variant, depth, multiPV) {
+  return _evalCache.getAtLeast(fen, variant, depth, multiPV);
+}
+
 function setCachedEval(fen, variant, depth, multiPV, result) {
   _evalCache.set(fen, variant, depth, multiPV, result);
 }
@@ -809,7 +820,22 @@ async function main() {
             // Fall back to Stockfish — check eval cache first (skip for infinite analysis)
             const multiPV = Number(engine.getSettings().MultiPV) || 1;
             if (depth > 0) {
-              const cached = getCachedEval(fen, evalVariant, depth, multiPV);
+              // First try the exact depth, then fall back to any deeper
+              // cached entry (deeper analysis subsumes shallower at the
+              // same position). Tag the source as "cache" so the client
+              // can show that the line came from a deeper prior search.
+              let cached = getCachedEval(fen, evalVariant, depth, multiPV);
+              let cachedFromDepth = depth;
+              if (!cached) {
+                const fallback = getCachedEvalAtLeast(fen, evalVariant, depth, multiPV);
+                if (fallback) {
+                  cached = fallback.result;
+                  cachedFromDepth = fallback.depth;
+                  console.log(
+                    `[server] cache depth-fallback: requested ${depth}, served ${cachedFromDepth}`,
+                  );
+                }
+              }
               if (cached) {
                 console.log(`[server] → bestmove (cache): ${cached.bestmove}`);
                 const cacheMsg = {
@@ -823,6 +849,9 @@ async function main() {
                   ecoCode: posEco ? posEco.code : null,
                   tablebase: cached.tablebase,
                   cached: true,
+                  // Set when we satisfied the request from a deeper
+                  // cached entry; clients can render a small badge.
+                  ...(cachedFromDepth > depth ? { cachedFromDepth } : {}),
                 };
                 safeSend(ws, cacheMsg);
                 broadcast(ws, cacheMsg);

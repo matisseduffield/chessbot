@@ -34,7 +34,28 @@ class LichessBook {
     this._cache = new Map(); // fen -> { uci: string|null, ts: number }
     this._cacheMax = cacheSize;
     this._cacheTtlMs = cacheTtlMs;
-    this.stats = { hits: 0, misses: 0, fetchErrors: 0 };
+    this.stats = {
+      hits: 0,
+      misses: 0,
+      // Bucketed failure counters so an operator can tell whether the
+      // explorer is timing out, returning 5xx, or just has no opening
+      // data for the position. `fetchErrors` is the legacy total; the
+      // per-reason counters break it down.
+      fetchErrors: 0,
+      errorsByReason: {
+        timeout: 0,
+        http_error: 0,
+        parse_error: 0,
+        not_found: 0,
+        network_error: 0,
+      },
+    };
+  }
+
+  _recordError(reason, fields) {
+    this.stats.fetchErrors++;
+    this.stats.errorsByReason[reason] = (this.stats.errorsByReason[reason] || 0) + 1;
+    log.warn({ reason, ...fields }, 'lichess book lookup failed');
   }
 
   setEnabled(v) {
@@ -83,18 +104,23 @@ class LichessBook {
       const res = await this._fetch(url, { signal: AbortSignal.timeout(this.timeoutMs) });
       if (!res.ok) {
         // Don't cache transient errors — try again next time.
+        this._recordError('http_error', { status: res.status });
         return null;
       }
       let data;
       try {
         data = await res.json();
-      } catch {
-        log.warn('invalid JSON response');
+      } catch (parseErr) {
+        this._recordError('parse_error', { err: parseErr.message });
         return null;
       }
       const best = pickBestMove(data);
       if (!best) {
         // Cache "no opening data" misses too — saves the next call.
+        // Bucketed as `not_found` (vs. transport errors) so the operator
+        // can tell "explorer is healthy, position is just out of book"
+        // apart from "explorer is down".
+        this.stats.errorsByReason.not_found++;
         this._cacheSet(fen, null);
         return null;
       }
@@ -105,8 +131,13 @@ class LichessBook {
       this._cacheSet(fen, best.uci);
       return best.uci;
     } catch (err) {
-      this.stats.fetchErrors++;
-      log.warn({ err: err.message }, 'lookup failed');
+      // AbortError is what AbortSignal.timeout throws when the deadline
+      // is hit. Everything else (DNS, ECONNREFUSED, TLS, etc.) is a
+      // network-layer failure.
+      const isTimeout = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
+      this._recordError(isTimeout ? 'timeout' : 'network_error', {
+        err: err && err.message,
+      });
       return null;
     } finally {
       this._inFlight--;
