@@ -11,7 +11,33 @@ const { forModule } = require("./src/lib/logger");
 const log = forModule("stockfish");
 
 class StockfishBridge {
-  constructor() {
+  /**
+   * @param {{
+   *   spawnFn?: typeof spawn,
+   *   binPath?: string,
+   *   syzygyPath?: string,
+   *   handshakeTimeoutMs?: number,
+   *   restartReadyTimeoutMs?: number,
+   *   abortTimeoutMs?: number,
+   *   stopFallbackMs?: number,
+   *   killTimeoutMs?: number,
+   * }} [opts]
+   */
+  constructor(opts = {}) {
+    // Dependency injection points so tests can drive the bridge with a
+    // fake child_process and shrunken timeouts. Defaults preserve the
+    // exact prior behaviour for production callers (server.js never
+    // passes opts).
+    this._spawn = opts.spawnFn || spawn;
+    this._binPathFn = () => (opts.binPath !== undefined ? opts.binPath : config.stockfishPath);
+    this._syzygyPathFn = () =>
+      opts.syzygyPath !== undefined ? opts.syzygyPath : config.syzygyPath;
+    this._handshakeTimeoutMs = opts.handshakeTimeoutMs ?? 15_000;
+    this._restartReadyTimeoutMs = opts.restartReadyTimeoutMs ?? 10_000;
+    this._abortTimeoutMs = opts.abortTimeoutMs ?? 3_000;
+    this._stopFallbackMs = opts.stopFallbackMs ?? 2_000;
+    this._killTimeoutMs = opts.killTimeoutMs ?? 2_000;
+
     this.process = null;
     this.ready = false;
     this._processGen = 0; // incremented on each spawn to discard stale exit events
@@ -40,8 +66,9 @@ class StockfishBridge {
       let settled = false;
       const settle = (fn, val) => { if (!settled) { settled = true; fn(val); } };
 
-      log.info(`spawning: ${config.stockfishPath}`);
-      this.process = spawn(config.stockfishPath);
+      const binPath = this._binPathFn();
+      log.info(`spawning: ${binPath}`);
+      this.process = this._spawn(binPath);
 
       // Catch EPIPE / broken pipe on stdin to prevent crashing Node
       this.process.stdin.on("error", (err) => {
@@ -117,14 +144,19 @@ class StockfishBridge {
         }
       });
 
-      // Handshake timeout: if engine never responds, reject after 15s
+      // Handshake timeout: if engine never responds, reject after the
+      // configured deadline (default 15 s).
       const handshakeTimeout = setTimeout(() => {
         if (!settled) {
-          log.error("UCI handshake timeout (15s) — killing engine");
-          try { if (this.process) this.process.kill("SIGKILL"); } catch {}
+          log.error(`UCI handshake timeout (${this._handshakeTimeoutMs}ms) — killing engine`);
+          try {
+            if (this.process) this.process.kill("SIGKILL");
+          } catch {
+            /* already dead */
+          }
           settle(reject, new Error("UCI handshake timeout"));
         }
-      }, 15_000);
+      }, this._handshakeTimeoutMs);
 
       // Kick off UCI handshake
       this._send("uci");
@@ -142,9 +174,10 @@ class StockfishBridge {
           this._handleLine = onLine; // restore
 
           // Configure Syzygy tablebases if the path exists
-          if (config.syzygyPath && fs.existsSync(config.syzygyPath)) {
-            this._send(`setoption name SyzygyPath value ${config.syzygyPath}`);
-            log.info(`Syzygy tablebases: ${config.syzygyPath}`);
+          const syzygyPath = this._syzygyPathFn();
+          if (syzygyPath && fs.existsSync(syzygyPath)) {
+            this._send(`setoption name SyzygyPath value ${syzygyPath}`);
+            log.info(`Syzygy tablebases: ${syzygyPath}`);
           } else {
             log.info("Syzygy tablebases: not configured");
           }
@@ -227,7 +260,8 @@ class StockfishBridge {
         if (this._pendingResolve) {
           log.warn(`evaluation timeout (${timeoutMs}ms) — forcing stop`);
           this._send("stop");
-          // If stop doesn't produce bestmove within 2s, force-resolve and restart
+          // If stop doesn't produce bestmove within stopFallbackMs,
+          // force-resolve and restart.
           this._stopFallback = setTimeout(() => {
             if (this._pendingResolve) {
               log.error("engine unresponsive — force-resolving eval and restarting");
@@ -238,7 +272,7 @@ class StockfishBridge {
               // Restart the engine so subsequent evals work
               this._restart();
             }
-          }, 2000);
+          }, this._stopFallbackMs);
         }
       }, timeoutMs);
       }
@@ -274,7 +308,7 @@ class StockfishBridge {
           this._pendingPV = null;
           resolve();
         }
-      }, 3000);
+      }, this._abortTimeoutMs);
     });
   }
 
@@ -358,8 +392,9 @@ class StockfishBridge {
     this._send("quit");
     this.process = null;
     this.ready = false;
-    // Force-kill fallback if quit doesn't drain within 2s. The promise
-    // still resolves via the "exit" listener once the SIGKILL takes effect.
+    // Force-kill fallback if quit doesn't drain within killTimeoutMs.
+    // The promise still resolves via the "exit" listener once the
+    // SIGKILL takes effect.
     setTimeout(() => {
       if (!exited) {
         try {
@@ -368,7 +403,7 @@ class StockfishBridge {
           /* already dead */
         }
       }
-    }, 2000);
+    }, this._killTimeoutMs);
     log.info("stopped");
     return exitPromise;
   }
@@ -394,7 +429,7 @@ class StockfishBridge {
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(() => {
             reject(new Error("isready timeout during restart"));
-          }, 10_000);
+          }, this._restartReadyTimeoutMs);
           this._send("isready");
           const prev = this._handleLine;
           this._handleLine = (line) => {
