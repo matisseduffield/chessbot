@@ -1196,24 +1196,38 @@ function connectWS() {
           drawEvalBar(bestLine, source, msg.tablebase);
         } else if (lines.length > 1) {
           // Streaming-eval frames arrive at 5–20 Hz; coalesce to rAF
-          // so we paint at most once per browser frame.
-          const _bestLine = bestLine;
-          const _source = source;
-          const _lines = lines;
-          const _tablebase = msg.tablebase;
-          scheduleOverlayUpdate(() => {
-            drawMultiPV(_lines, _source);
-            drawEvalBar(_bestLine, _source, _tablebase);
-          });
+          // so we paint at most once per browser frame. Final results
+          // (msg.streaming === false/undefined) bypass the coalescer
+          // — the user has waited for a definitive result and the
+          // overlay must always be drawn, even if a subsequent
+          // streaming frame for a new position arrives the same tick.
+          if (msg.streaming) {
+            const _bestLine = bestLine;
+            const _source = source;
+            const _lines = lines;
+            const _tablebase = msg.tablebase;
+            scheduleOverlayUpdate(() => {
+              drawMultiPV(_lines, _source);
+              drawEvalBar(_bestLine, _source, _tablebase);
+            });
+          } else {
+            drawMultiPV(lines, source);
+            drawEvalBar(bestLine, source, msg.tablebase);
+          }
         } else {
-          const _bestmove = msg.bestmove;
-          const _bestLine = bestLine;
-          const _source = source;
-          const _tablebase = msg.tablebase;
-          scheduleOverlayUpdate(() => {
-            drawSingleMove(_bestmove, _bestLine, _source);
-            drawEvalBar(_bestLine, _source, _tablebase);
-          });
+          if (msg.streaming) {
+            const _bestmove = msg.bestmove;
+            const _bestLine = bestLine;
+            const _source = source;
+            const _tablebase = msg.tablebase;
+            scheduleOverlayUpdate(() => {
+              drawSingleMove(_bestmove, _bestLine, _source);
+              drawEvalBar(_bestLine, _source, _tablebase);
+            });
+          } else {
+            drawSingleMove(msg.bestmove, bestLine, source);
+            drawEvalBar(bestLine, source, msg.tablebase);
+          }
         }
 
         // Auto-move: schedule the move after drawing overlays (non-streaming only)

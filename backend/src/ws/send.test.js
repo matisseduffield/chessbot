@@ -61,4 +61,19 @@ describe('broadcast', () => {
   it('handles missing wss', () => {
     expect(broadcast(null, null, {})).toBe(0);
   });
+
+  it('handles object payloads even after the pre-stringify path', () => {
+    // Regression: broadcast pre-stringifies before fanning out to N
+    // clients. safeSend sees a string and would normally describe it
+    // as <raw>; the third-arg type hint preserves the original type
+    // for diagnostic logs. Black-box check: wire bytes are correct
+    // JSON, count matches.
+    const a = fakeWs(),
+      b = fakeWs();
+    const wss = { clients: new Set([a, b]) };
+    const sent = broadcast(wss, null, { type: 'bestmove', bestmove: 'e2e4' });
+    expect(sent).toBe(2);
+    expect(a.sent[0]).toBe('{"type":"bestmove","bestmove":"e2e4"}');
+    expect(b.sent[0]).toBe('{"type":"bestmove","bestmove":"e2e4"}');
+  });
 });

@@ -40,22 +40,30 @@ function describePayload(data) {
 /**
  * @param {WSLike | null | undefined} ws
  * @param {unknown} data
+ * @param {string} [typeHint] caller-supplied label for log lines, used
+ *   when the payload was already stringified upstream (e.g. `broadcast`
+ *   pre-stringifies once and shares the buffer across N clients, at
+ *   which point introspection inside this function would just see a
+ *   string and return `<raw>`).
  * @returns {boolean} true if the send was attempted without throwing.
  */
-function safeSend(ws, data) {
+function safeSend(ws, data, typeHint) {
   if (!ws || ws.readyState !== WS_OPEN) return false;
   try {
     ws.send(typeof data === 'string' ? data : JSON.stringify(data));
     if (typeof ws.bufferedAmount === 'number' && ws.bufferedAmount > BACKPRESSURE_BYTES) {
       log.warn(
-        { type: describePayload(data), bufferedBytes: ws.bufferedAmount },
+        { type: typeHint || describePayload(data), bufferedBytes: ws.bufferedAmount },
         'ws backpressure: client send buffer growing',
       );
     }
     return true;
   } catch (err) {
     log.warn(
-      { type: describePayload(data), err: err instanceof Error ? err.message : String(err) },
+      {
+        type: typeHint || describePayload(data),
+        err: err instanceof Error ? err.message : String(err),
+      },
       'ws send threw, frame dropped',
     );
     return false;
@@ -70,11 +78,16 @@ function safeSend(ws, data) {
  */
 function broadcast(wss, senderWs, data) {
   if (!wss || !wss.clients) return 0;
+  // Capture the type label BEFORE stringification — once we've turned
+  // the object into a JSON string, safeSend's introspection sees only
+  // `<raw>` and the operator loses the most useful diagnostic field
+  // for the highest-volume frames (`bestmove`, `info`, etc.).
+  const typeHint = describePayload(data);
   const payload = typeof data === 'string' ? data : JSON.stringify(data);
   let sent = 0;
   for (const client of wss.clients) {
     if (client === senderWs) continue;
-    if (safeSend(client, payload)) sent++;
+    if (safeSend(client, payload, typeHint)) sent++;
   }
   return sent;
 }
