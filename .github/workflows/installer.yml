@@ -47,7 +47,7 @@ jobs:
       #     & signtool sign /f cert.pfx /p $env:CERT_PFX_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 dist-installer\*.exe
 
       - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chessbot-installer
           path: dist-installer/*.exe
