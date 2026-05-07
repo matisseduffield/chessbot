@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Pure 3-check / king-safety helpers extracted from content.js.
  * DOM-free and fully unit-testable. Plan §2.1 (content.js split).

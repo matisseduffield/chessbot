@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Pure helper that applies a UCI move string to a FEN board part
  * and returns the resulting board part. Extracted from content.js

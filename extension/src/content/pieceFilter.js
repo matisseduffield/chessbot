@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Pure class-name filter that removes chess.com "ghost" / "premove"
  * piece elements from a raw piece list. Extracted from content.js

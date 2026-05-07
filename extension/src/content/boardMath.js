@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Pure board math helpers extracted from content.js.
  *

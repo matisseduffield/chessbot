@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Pure helper for assigning scraped top/bottom player names + clock
  * readings to white/black sides based on board orientation.

@@ -9,7 +9,8 @@
     "build:popup": "vite build",
     "build:content": "vite build --mode content",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
     "@chessbot/shared": "*",

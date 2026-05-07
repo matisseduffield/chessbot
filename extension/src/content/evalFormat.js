@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Pure formatting helpers for engine PV lines. Extracted from
  * content.js (plan §2.1) so they can be unit-tested without a DOM.

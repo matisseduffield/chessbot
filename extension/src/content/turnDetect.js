@@ -1,3 +1,4 @@
+// @ts-check
 // Pure helpers for turn detection from board-relative clock position.
 // DOM queries stay in content.js; these take already-detected booleans.
 

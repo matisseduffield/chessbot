@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Pure helpers for inferring whose turn it is from move-list text.
  *
