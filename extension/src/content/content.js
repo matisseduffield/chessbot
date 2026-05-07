@@ -699,7 +699,8 @@ function init() {
     chrome.storage.local.get([
       "chessbot_trainingMode", "chessbot_trainingDifficulty",
       "chessbot_trainingStrict", "chessbot_trainingAutoReveal", "chessbot_trainingSound",
-      "chessbot_autoMove", "chessbot_bulletMode"
+      "chessbot_autoMove", "chessbot_bulletMode",
+      "chessbot_popup_flipOverride"
     ], (result) => {
       if (result.chessbot_trainingMode) { trainingMode = true; console.log("[chessbot] training mode restored from storage"); }
       if (result.chessbot_trainingDifficulty) trainingDifficulty = result.chessbot_trainingDifficulty;
@@ -708,6 +709,10 @@ function init() {
       if (result.chessbot_trainingSound !== undefined) trainingSound = !!result.chessbot_trainingSound;
       if (result.chessbot_autoMove) { autoMoveEnabled = true; console.log("[chessbot] auto-move restored from storage"); }
       if (result.chessbot_bulletMode) { bulletMode = true; console.log("[chessbot] bullet mode restored from storage"); }
+      if (result.chessbot_popup_flipOverride === "w" || result.chessbot_popup_flipOverride === "b") {
+        _userFlipOverride = result.chessbot_popup_flipOverride;
+        console.log(`[chessbot] flip override restored from storage: ${_userFlipOverride}`);
+      }
       startAfterRestore();
     });
   } else {
@@ -2827,8 +2832,16 @@ function detectTurnFromClocks() {
 }
 
 let _cachedPlayerColor = null; // locked after first reliable detection
+// User-set flip override from popup (popupSettings.flipOverride). When 'w' or
+// 'b', it wins over every adapter signal — set by the popup's "I'm playing
+// white/black" choice (Plan §3 P3.F). Survives findBoard() resets so the
+// choice persists across game switches until the user clears it.
+let _userFlipOverride = null;
 
 function getPlayerColor() {
+  // User override is the highest-priority signal — short-circuit before any
+  // adapter heuristics run.
+  if (_userFlipOverride === "w" || _userFlipOverride === "b") return _userFlipOverride;
   // Once locked (after initial board read with enough pieces), return cached value.
   // This prevents mid-game flips when piece-position heuristics become unreliable
   // (e.g. giveaway endgame with 3 pieces left).
