@@ -37,12 +37,30 @@
  * its own follow-up.
  */
 
-import { lichessBoardToFen, isLichessFlipped } from './lichessBoardReader.js';
-import { playstrategyBoardToFen, isPlayStrategyFlipped } from './playstrategyBoardReader.js';
-import { chesstempoBoardToFen, isChessTempoFlipped } from './chesstempoBoardReader.js';
-import { chesscomBoardToFen, isChesscomFlipped } from './chesscomBoardReader.js';
+import {
+  lichessBoardToFen,
+  isLichessFlipped,
+  detectLichessFlipConfidence,
+} from './lichessBoardReader.js';
+import {
+  playstrategyBoardToFen,
+  isPlayStrategyFlipped,
+  detectPlayStrategyFlipConfidence,
+} from './playstrategyBoardReader.js';
+import {
+  chesstempoBoardToFen,
+  isChessTempoFlipped,
+  detectChessTempoFlipConfidence,
+} from './chesstempoBoardReader.js';
+import {
+  chesscomBoardToFen,
+  isChesscomFlipped,
+  detectChesscomFlipConfidence,
+} from './chesscomBoardReader.js';
 
 /**
+ * @typedef {'flipped' | 'unflipped' | 'unknown'} FlipConfidence
+ *
  * @typedef {'chesscom' | 'lichess' | 'playstrategy' | 'chesstempo'} SiteKey
  *
  * @typedef {{
@@ -51,6 +69,7 @@ import { chesscomBoardToFen, isChesscomFlipped } from './chesscomBoardReader.js'
  *   detectBoard: (doc: Document) => Element | null,
  *   extractFen: (doc: Document, opts?: any) => string | null,
  *   detectFlip: (doc: Document, opts?: any) => boolean,
+ *   detectFlipConfidence: (doc: Document, opts?: any) => FlipConfidence,
  * }} SiteAdapter
  */
 
@@ -61,6 +80,7 @@ export const lichessAdapter = {
   detectBoard: (doc) => doc.querySelector('cg-board'),
   extractFen: (doc, opts) => lichessBoardToFen(doc, opts),
   detectFlip: (doc) => isLichessFlipped(doc),
+  detectFlipConfidence: (doc) => detectLichessFlipConfidence(doc),
 };
 
 /** @type {SiteAdapter} */
@@ -70,6 +90,7 @@ export const playstrategyAdapter = {
   detectBoard: (doc) => doc.querySelector('cg-board'),
   extractFen: (doc, opts) => playstrategyBoardToFen(doc, opts),
   detectFlip: (doc) => isPlayStrategyFlipped(doc),
+  detectFlipConfidence: (doc) => detectPlayStrategyFlipConfidence(doc),
 };
 
 /** @type {SiteAdapter} */
@@ -79,6 +100,7 @@ export const chesstempoAdapter = {
   detectBoard: (doc) => doc.querySelector('chess-board'),
   extractFen: (doc, opts) => chesstempoBoardToFen(doc, opts),
   detectFlip: (doc) => isChessTempoFlipped(doc),
+  detectFlipConfidence: (doc) => detectChessTempoFlipConfidence(doc),
 };
 
 /** @type {SiteAdapter} */
@@ -97,6 +119,14 @@ export const chesscomAdapter = {
       doc.querySelector('[class*="board"][class*="chess"]');
     if (!board) return false;
     return isChesscomFlipped(board, { ...(opts || {}), doc });
+  },
+  detectFlipConfidence: (doc, opts) => {
+    const board =
+      doc.querySelector('wc-chess-board') ||
+      doc.querySelector('chess-board') ||
+      doc.querySelector('[class*="board"][class*="chess"]');
+    if (!board) return 'unknown';
+    return detectChesscomFlipConfidence(board, { ...(opts || {}), doc });
   },
 };
 

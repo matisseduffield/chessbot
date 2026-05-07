@@ -56,22 +56,34 @@ export function pieceClassToFenCharP1P2(className) {
  * @returns {boolean}
  */
 export function isPlayStrategyFlipped(doc) {
+  return detectPlayStrategyFlipConfidence(doc) === 'flipped';
+}
+
+/**
+ * Tri-state flip detection. Returns 'unknown' when no orientation
+ * class is present so the caller can opt to prompt the user instead
+ * of silently guessing 'unflipped'.
+ *
+ * @param {Document} doc
+ * @returns {'flipped' | 'unflipped' | 'unknown'}
+ */
+export function detectPlayStrategyFlipConfidence(doc) {
   const cgWrap = doc.querySelector('.cg-wrap');
   if (cgWrap) {
     if (
       cgWrap.classList.contains('orientation-black') ||
       cgWrap.classList.contains('orientation-p2')
     ) {
-      return true;
+      return 'flipped';
     }
     if (
       cgWrap.classList.contains('orientation-white') ||
       cgWrap.classList.contains('orientation-p1')
     ) {
-      return false;
+      return 'unflipped';
     }
   }
-  return false;
+  return 'unknown';
 }
 
 /**

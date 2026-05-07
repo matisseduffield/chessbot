@@ -29,24 +29,40 @@ import { gridToFenBoard } from './boardMath.js';
  * @returns {boolean}
  */
 export function isLichessFlipped(doc) {
+  return detectLichessFlipConfidence(doc) === 'flipped';
+}
+
+/**
+ * Tri-state flip detection for Lichess / PlayStrategy. Distinguishes
+ * an unambiguous unflipped/flipped signal from "no signal at all" so
+ * callers can choose to prompt the user instead of guessing.
+ *
+ * @param {Document} doc
+ * @returns {'flipped' | 'unflipped' | 'unknown'}
+ */
+export function detectLichessFlipConfidence(doc) {
   const cgWrap = doc.querySelector('.cg-wrap');
   if (cgWrap) {
     if (
       cgWrap.classList.contains('orientation-black') ||
       cgWrap.classList.contains('orientation-p2')
     ) {
-      return true;
+      return 'flipped';
     }
     if (
       cgWrap.classList.contains('orientation-white') ||
       cgWrap.classList.contains('orientation-p1')
     ) {
-      return false;
+      return 'unflipped';
     }
   }
   const ranks = doc.querySelector('coords.ranks coord:first-child');
-  if (ranks && ranks.textContent && ranks.textContent.trim() === '1') return true;
-  return false;
+  if (ranks && ranks.textContent) {
+    const t = ranks.textContent.trim();
+    if (t === '1') return 'flipped';
+    if (t === '8') return 'unflipped';
+  }
+  return 'unknown';
 }
 
 /**

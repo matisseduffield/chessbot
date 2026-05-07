@@ -86,28 +86,50 @@ export function parseChesscomSquareClass(className) {
  * @returns {boolean}
  */
 export function isChesscomFlipped(board, opts = {}) {
-  if (opts.cachedPlayerColor) return opts.cachedPlayerColor === 'b';
+  return detectChesscomFlipConfidence(board, opts) === 'flipped';
+}
+
+/**
+ * Tri-state flip detection. Returns 'unknown' when none of the
+ * positive signals (cached player color, JS property, flipped class,
+ * shadow-DOM marker, ancestor class, coord labels) fire — callers can
+ * then prompt the user instead of silently guessing 'unflipped'.
+ *
+ * Note that the JS-property branch CAN distinguish flipped/unflipped
+ * (some chess.com builds expose `flipped: false`), but the others are
+ * positive-only — they prove "flipped" but not "unflipped".
+ *
+ * @param {Element} board
+ * @param {{
+ *   cachedPlayerColor?: 'w' | 'b' | null,
+ *   doc?: Document,
+ * }} [opts]
+ * @returns {'flipped' | 'unflipped' | 'unknown'}
+ */
+export function detectChesscomFlipConfidence(board, opts = {}) {
+  if (opts.cachedPlayerColor === 'b') return 'flipped';
+  if (opts.cachedPlayerColor === 'w') return 'unflipped';
   const doc = opts.doc || board.ownerDocument || globalThis.document;
 
-  // 1. JS property on the custom element.
+  // 1. JS property on the custom element — explicit boolean.
   try {
     const b = /** @type {any} */ (board);
-    if (b.isFlipped === true || b.flipped === true) return true;
-    if (b.isFlipped === false || b.flipped === false) return false;
+    if (b.isFlipped === true || b.flipped === true) return 'flipped';
+    if (b.isFlipped === false || b.flipped === false) return 'unflipped';
   } catch {
     /* ignore */
   }
 
   // 2. flipped class on the board element.
-  if (board.classList && board.classList.contains('flipped')) return true;
+  if (board.classList && board.classList.contains('flipped')) return 'flipped';
   // 3. flipped attribute.
-  if (board.getAttribute && board.getAttribute('flipped') !== null) return true;
+  if (board.getAttribute && board.getAttribute('flipped') !== null) return 'flipped';
 
   // 4. Shadow DOM flipped indicator.
   const root = /** @type {any} */ (board).shadowRoot;
   if (root) {
     const inner = root.querySelector("[class*='flipped'], [flipped]");
-    if (inner) return true;
+    if (inner) return 'flipped';
   }
 
   // 5. Ancestor elements (variant pages may carry the class up
@@ -118,24 +140,25 @@ export function isChesscomFlipped(board, opts = {}) {
       typeof ancestor.className === 'string'
         ? ancestor.className
         : ancestor.getAttribute && ancestor.getAttribute('class');
-    if (acls && /\bflipped\b/i.test(acls)) return true;
-    if (ancestor.getAttribute && ancestor.getAttribute('flipped') !== null) return true;
+    if (acls && /\bflipped\b/i.test(acls)) return 'flipped';
+    if (ancestor.getAttribute && ancestor.getAttribute('flipped') !== null) return 'flipped';
     ancestor = ancestor.parentElement;
   }
 
-  // 6. Coordinate labels — h first means flipped.
+  // 6. Coordinate labels — h first means flipped, a first means
+  // unflipped, anything else doesn't tell us.
   if (doc) {
     const coords = doc.querySelectorAll(
       ".coordinates-row, .coords-row, .coords-files, coords-files, [class*='coord'], [class*='Coord'], [class*='notation']",
     );
     for (const c of coords) {
       const txt = (c.textContent || '').trim().toLowerCase();
-      if (txt.startsWith('h')) return true;
-      if (txt.startsWith('a')) return false;
+      if (txt.startsWith('h')) return 'flipped';
+      if (txt.startsWith('a')) return 'unflipped';
     }
   }
 
-  return false;
+  return 'unknown';
 }
 
 /**
