@@ -28,7 +28,7 @@
  *   panelDir: string,
  *   pkgVersion: string,
  *   bookBaseName: (p: string) => string,
- *   express: any,
+ *   express: typeof import('express'),
  *   log?: { info: Function, warn: Function },
  * }} HttpRoutesDeps
  */
@@ -39,7 +39,7 @@ const path = require('node:path');
 /**
  * Register origin / CORS middleware and dashboard / health / cache
  * routes on the given Express app.
- * @param {any} app  Express app (untyped — @types/express isn't a hard dep)
+ * @param {import('express').Express} app
  * @param {HttpRoutesDeps} deps
  */
 function registerHttpRoutes(app, deps) {
@@ -55,7 +55,7 @@ function registerHttpRoutes(app, deps) {
  * page or LAN device from forging a form post that would clear the eval
  * cache or otherwise mutate state. Same-host POSTs (i.e. the dashboard
  * pinned itself open from the running device) are allowed.
- * @param {any} app  Express app (untyped — @types/express isn't a hard dep)
+ * @param {import('express').Express} app
  * @param {HttpRoutesDeps} deps
  */
 function registerOriginGate(app, { config }) {
@@ -67,24 +67,30 @@ function registerOriginGate(app, { config }) {
     'https://playstrategy.org',
     'https://chesstempo.com',
   ]);
-  app.use((/** @type {any} */ req, /** @type {any} */ res, /** @type {any} */ next) => {
-    if (req.method !== 'POST') return next();
-    const origin = req.headers.origin;
-    if (origin && !TRUSTED_POST_ORIGINS.has(origin)) {
-      const host = req.headers.host;
-      if (!host || origin !== `http://${host}`) {
-        return res.status(403).json({ error: 'forbidden_origin' });
+  app.use(
+    (
+      /** @type {import('express').Request} */ req,
+      /** @type {import('express').Response} */ res,
+      /** @type {import('express').NextFunction} */ next,
+    ) => {
+      if (req.method !== 'POST') return next();
+      const origin = req.headers.origin;
+      if (origin && !TRUSTED_POST_ORIGINS.has(origin)) {
+        const host = req.headers.host;
+        if (!host || origin !== `http://${host}`) {
+          return res.status(403).json({ error: 'forbidden_origin' });
+        }
       }
-    }
-    next();
-  });
+      next();
+    },
+  );
 }
 
 /**
  * CORS + Private Network Access preflight. Chrome requires a successful
  * OPTIONS preflight with Access-Control-Allow-Private-Network: true
  * before allowing a WebSocket from an HTTPS page to talk to localhost.
- * @param {any} app  Express app (untyped — @types/express isn't a hard dep)
+ * @param {import('express').Express} app
  * @param {HttpRoutesDeps} deps
  */
 function registerCors(app, { config }) {
@@ -95,20 +101,26 @@ function registerCors(app, { config }) {
     'https://playstrategy.org',
     'https://chesstempo.com',
   ]);
-  app.use((/** @type {any} */ req, /** @type {any} */ res, /** @type {any} */ next) => {
-    const origin = req.headers.origin;
-    if (origin && ALLOWED_ORIGINS.has(origin)) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    }
-    res.setHeader('Access-Control-Allow-Private-Network', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    if (req.method === 'OPTIONS') {
-      res.status(204).end();
-      return;
-    }
-    next();
-  });
+  app.use(
+    (
+      /** @type {import('express').Request} */ req,
+      /** @type {import('express').Response} */ res,
+      /** @type {import('express').NextFunction} */ next,
+    ) => {
+      const origin = req.headers.origin;
+      if (origin && ALLOWED_ORIGINS.has(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+      }
+      res.setHeader('Access-Control-Allow-Private-Network', 'true');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      if (req.method === 'OPTIONS') {
+        res.status(204).end();
+        return;
+      }
+      next();
+    },
+  );
 }
 
 /**
@@ -116,7 +128,7 @@ function registerCors(app, { config }) {
  * state.
  * GET /selfcheck — runs a short canned evaluation so ops can verify
  * the engine pipeline end-to-end.
- * @param {any} app  Express app (untyped — @types/express isn't a hard dep)
+ * @param {import('express').Express} app
  * @param {HttpRoutesDeps} deps
  */
 function registerHealthAndDiagnostics(
@@ -134,81 +146,105 @@ function registerHealthAndDiagnostics(
     bookBaseName,
   },
 ) {
-  app.get('/healthz', (/** @type {any} */ _req, /** @type {any} */ res) => {
-    const engine = getEngine();
-    const wss = getWss();
-    const lichessBook = getLichessBook();
-    res.json({
-      status: 'ok',
-      uptimeMs: Date.now() - startedAt,
-      version: pkgVersion,
-      engine: {
-        ready: !!(engine && engine.ready),
-        type: getCurrentEngineType(),
-        variant: getCurrentVariant(),
-      },
-      book: {
-        ecoOpenings: eco.size ? eco.size() : 0,
-        lichessEnabled: !!(lichessBook && lichessBook.enabled),
-        offlineBook: book.enabled && book.bookPath ? bookBaseName(book.bookPath) : null,
-      },
-      clients: wss ? wss.clients.size : 0,
-    });
-  });
+  app.get(
+    '/healthz',
+    (
+      /** @type {import('express').Request} */ _req,
+      /** @type {import('express').Response} */ res,
+    ) => {
+      const engine = getEngine();
+      const wss = getWss();
+      const lichessBook = getLichessBook();
+      res.json({
+        status: 'ok',
+        uptimeMs: Date.now() - startedAt,
+        version: pkgVersion,
+        engine: {
+          ready: !!(engine && engine.ready),
+          type: getCurrentEngineType(),
+          variant: getCurrentVariant(),
+        },
+        book: {
+          ecoOpenings: eco.size ? eco.size() : 0,
+          lichessEnabled: !!(lichessBook && lichessBook.enabled),
+          offlineBook: book.enabled && book.bookPath ? bookBaseName(book.bookPath) : null,
+        },
+        clients: wss ? wss.clients.size : 0,
+      });
+    },
+  );
 
   // Refuses concurrent self-checks so we don't poison a user's active
   // analysis. Plan §10.
   let selfcheckBusy = false;
-  app.get('/selfcheck', async (/** @type {any} */ _req, /** @type {any} */ res) => {
-    const engine = getEngine();
-    if (!engine || !engine.ready) {
-      return res.status(503).json({ status: 'engine_not_ready' });
-    }
-    if (selfcheckBusy) {
-      return res.status(503).json({ status: 'busy' });
-    }
-    selfcheckBusy = true;
-    const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-    const t0 = Date.now();
-    try {
-      const result = await engine.evaluate(startFen, 8, { movetime: 1500 });
-      res.json({
-        status: 'ok',
-        elapsedMs: Date.now() - t0,
-        depthReached: result.depth || 0,
-        bestMove: result.bestmove || result.bestMove || null,
-        score: result.score ?? null,
-        engineType: getCurrentEngineType(),
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ status: 'error', error: msg });
-    } finally {
-      selfcheckBusy = false;
-    }
-  });
+  app.get(
+    '/selfcheck',
+    async (
+      /** @type {import('express').Request} */ _req,
+      /** @type {import('express').Response} */ res,
+    ) => {
+      const engine = getEngine();
+      if (!engine || !engine.ready) {
+        return res.status(503).json({ status: 'engine_not_ready' });
+      }
+      if (selfcheckBusy) {
+        return res.status(503).json({ status: 'busy' });
+      }
+      selfcheckBusy = true;
+      const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+      const t0 = Date.now();
+      try {
+        const result = await engine.evaluate(startFen, 8, { movetime: 1500 });
+        res.json({
+          status: 'ok',
+          elapsedMs: Date.now() - t0,
+          depthReached: result.depth || 0,
+          bestMove: result.bestmove || result.bestMove || null,
+          score: result.score ?? null,
+          engineType: getCurrentEngineType(),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ status: 'error', error: msg });
+      } finally {
+        selfcheckBusy = false;
+      }
+    },
+  );
 }
 
 /**
  * GET /api/cache/stats — eval-cache size / capacity / TTL / persistence path.
  * POST /api/cache/clear — empty the in-memory cache, return previous size.
- * @param {any} app  Express app (untyped — @types/express isn't a hard dep)
+ * @param {import('express').Express} app
  * @param {HttpRoutesDeps} deps
  */
 function registerCacheControlEndpoints(app, { evalCache, evalCachePath }) {
-  app.get('/api/cache/stats', (/** @type {any} */ _req, /** @type {any} */ res) => {
-    res.json({
-      size: evalCache.size,
-      max: evalCache.max,
-      ttlMs: evalCache.ttlMs,
-      path: evalCachePath,
-    });
-  });
-  app.post('/api/cache/clear', (/** @type {any} */ _req, /** @type {any} */ res) => {
-    const prev = evalCache.size;
-    evalCache.clear();
-    res.json({ status: 'ok', cleared: prev });
-  });
+  app.get(
+    '/api/cache/stats',
+    (
+      /** @type {import('express').Request} */ _req,
+      /** @type {import('express').Response} */ res,
+    ) => {
+      res.json({
+        size: evalCache.size,
+        max: evalCache.max,
+        ttlMs: evalCache.ttlMs,
+        path: evalCachePath,
+      });
+    },
+  );
+  app.post(
+    '/api/cache/clear',
+    (
+      /** @type {import('express').Request} */ _req,
+      /** @type {import('express').Response} */ res,
+    ) => {
+      const prev = evalCache.size;
+      evalCache.clear();
+      res.json({ status: 'ok', cleared: prev });
+    },
+  );
 }
 
 /**
@@ -216,7 +252,7 @@ function registerCacheControlEndpoints(app, { evalCache, evalCachePath }) {
  * src/. Cache strategy: HTML must never be cached (the entry point
  * pins the JS/CSS hashes), Vite-emitted hashed assets live forever,
  * everything else gets a revalidate hint.
- * @param {any} app  Express app (untyped — @types/express isn't a hard dep)
+ * @param {import('express').Express} app
  * @param {HttpRoutesDeps} deps
  */
 function registerPanelStatic(app, { panelDir, express, log }) {
@@ -233,7 +269,10 @@ function registerPanelStatic(app, { panelDir, express, log }) {
   }
   app.use(
     express.static(panelRoot, {
-      setHeaders: (/** @type {any} */ res, /** @type {string} */ filePath) => {
+      setHeaders: (
+        /** @type {import('express').Response} */ res,
+        /** @type {string} */ filePath,
+      ) => {
         if (filePath.endsWith('.html')) {
           res.setHeader('Cache-Control', 'no-store');
         } else if (
