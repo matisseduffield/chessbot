@@ -25,9 +25,19 @@ import { z } from 'zod';
 
 export const DISPLAY_MODES = /** @type {const} */ (['arrow', 'box', 'both']);
 
+// Flip-override values mirror the tri-state from siteAdapters'
+// detectFlipConfidence:
+//   'auto' — trust the adapter's signal (what we did before).
+//   'w'    — user is playing white (board not flipped).
+//   'b'    — user is playing black (board flipped).
+// Set by the future ask-user prompt when adapter confidence is
+// 'unknown' so the choice persists across page reloads.
+export const FLIP_OVERRIDES = /** @type {const} */ (['auto', 'w', 'b']);
+
 export const popupSettingsSchema = z.object({
   enabled: z.boolean().default(true),
   displayMode: z.enum(DISPLAY_MODES).default('both'),
+  flipOverride: z.enum(FLIP_OVERRIDES).default('auto'),
 });
 
 /** @typedef {z.infer<typeof popupSettingsSchema>} PopupSettings */
@@ -35,6 +45,7 @@ export const popupSettingsSchema = z.object({
 export const STORAGE_KEYS = /** @type {const} */ ({
   enabled: 'chessbot_popup_enabled',
   displayMode: 'chessbot_popup_displayMode',
+  flipOverride: 'chessbot_popup_flipOverride',
 });
 
 /**
@@ -73,6 +84,7 @@ export function loadPopupSettings(storage) {
       const candidate = {
         enabled: raw?.[STORAGE_KEYS.enabled],
         displayMode: raw?.[STORAGE_KEYS.displayMode],
+        flipOverride: raw?.[STORAGE_KEYS.flipOverride],
       };
       const parsed = popupSettingsSchema.safeParse(candidate);
       if (parsed.success) {
@@ -92,6 +104,9 @@ export function loadPopupSettings(storage) {
       const modeOk = z.enum(DISPLAY_MODES).safeParse(candidate.displayMode);
       if (modeOk.success) settings.displayMode = modeOk.data;
       else if (candidate.displayMode !== undefined) repaired.push('displayMode');
+      const flipOk = z.enum(FLIP_OVERRIDES).safeParse(candidate.flipOverride);
+      if (flipOk.success) settings.flipOverride = flipOk.data;
+      else if (candidate.flipOverride !== undefined) repaired.push('flipOverride');
       resolve({ settings, repaired });
     });
   });
@@ -131,6 +146,17 @@ export function savePopupSettings(storage, partial) {
       }
       toWrite[STORAGE_KEYS.displayMode] = r.data;
     }
+    if ('flipOverride' in partial) {
+      const r = z.enum(FLIP_OVERRIDES).safeParse(partial.flipOverride);
+      if (!r.success) {
+        resolve({
+          ok: false,
+          error: `flipOverride must be one of ${FLIP_OVERRIDES.join(', ')}`,
+        });
+        return;
+      }
+      toWrite[STORAGE_KEYS.flipOverride] = r.data;
+    }
     if (Object.keys(toWrite).length === 0) {
       resolve({ ok: true });
       return;
@@ -169,6 +195,10 @@ export function subscribePopupSettings(storage, fn) {
     if (STORAGE_KEYS.displayMode in changes) {
       const r = z.enum(DISPLAY_MODES).safeParse(changes[STORAGE_KEYS.displayMode].newValue);
       if (r.success) out.displayMode = r.data;
+    }
+    if (STORAGE_KEYS.flipOverride in changes) {
+      const r = z.enum(FLIP_OVERRIDES).safeParse(changes[STORAGE_KEYS.flipOverride].newValue);
+      if (r.success) out.flipOverride = r.data;
     }
     if (Object.keys(out).length > 0) fn(out);
   };

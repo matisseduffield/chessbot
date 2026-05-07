@@ -55,7 +55,17 @@ describe('popupSettingsSchema', () => {
 
   it('accepts valid full settings', () => {
     const r = popupSettingsSchema.parse({ enabled: false, displayMode: 'arrow' });
-    expect(r).toEqual({ enabled: false, displayMode: 'arrow' });
+    expect(r).toEqual({ enabled: false, displayMode: 'arrow', flipOverride: 'auto' });
+  });
+
+  it('parses an explicit flipOverride value', () => {
+    const r = popupSettingsSchema.parse({ flipOverride: 'b' });
+    expect(r.flipOverride).toBe('b');
+  });
+
+  it('rejects an unknown flipOverride value', () => {
+    const r = popupSettingsSchema.safeParse({ flipOverride: 'rainbow' });
+    expect(r.success).toBe(false);
   });
 });
 
@@ -79,7 +89,7 @@ describe('loadPopupSettings', () => {
       [STORAGE_KEYS.displayMode]: 'arrow',
     });
     const { settings, repaired } = await loadPopupSettings(storage);
-    expect(settings).toEqual({ enabled: false, displayMode: 'arrow' });
+    expect(settings).toEqual({ enabled: false, displayMode: 'arrow', flipOverride: 'auto' });
     expect(repaired).toEqual([]);
   });
 
@@ -104,8 +114,22 @@ describe('loadPopupSettings', () => {
   it('does not mark a missing key as repaired (schema default applies cleanly)', async () => {
     const storage = fakeStorage({ [STORAGE_KEYS.enabled]: true });
     const { settings, repaired } = await loadPopupSettings(storage);
-    expect(settings).toEqual({ enabled: true, displayMode: 'both' });
+    expect(settings).toEqual({ enabled: true, displayMode: 'both', flipOverride: 'auto' });
     expect(repaired).toEqual([]);
+  });
+
+  it('reads a persisted flipOverride value', async () => {
+    const storage = fakeStorage({ [STORAGE_KEYS.flipOverride]: 'b' });
+    const { settings, repaired } = await loadPopupSettings(storage);
+    expect(settings.flipOverride).toBe('b');
+    expect(repaired).toEqual([]);
+  });
+
+  it('repairs an unknown flipOverride value to "auto"', async () => {
+    const storage = fakeStorage({ [STORAGE_KEYS.flipOverride]: 'nope' });
+    const { settings, repaired } = await loadPopupSettings(storage);
+    expect(settings.flipOverride).toBe('auto');
+    expect(repaired).toContain('flipOverride');
   });
 });
 
@@ -135,6 +159,21 @@ describe('savePopupSettings', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/displayMode/);
     expect(storage.data[STORAGE_KEYS.displayMode]).toBeUndefined();
+  });
+
+  it('writes a valid flipOverride value', async () => {
+    const storage = fakeStorage();
+    const r = await savePopupSettings(storage, { flipOverride: 'b' });
+    expect(r.ok).toBe(true);
+    expect(storage.data[STORAGE_KEYS.flipOverride]).toBe('b');
+  });
+
+  it('rejects an invalid flipOverride without writing', async () => {
+    const storage = fakeStorage();
+    const r = await savePopupSettings(storage, { flipOverride: 'rainbow' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/flipOverride/);
+    expect(storage.data[STORAGE_KEYS.flipOverride]).toBeUndefined();
   });
 
   it('is a no-op when partial is empty', async () => {
