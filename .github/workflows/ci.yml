@@ -71,6 +71,13 @@ jobs:
       - name: Build shared package
         run: npm run build:shared
 
+      - name: Build panel
+        # The backend serves panel/dist/ if it exists, else panel/src/.
+        # We need dist/ so bare-specifier imports (chess.js,
+        # @chessbot/shared) get bundled by Vite — the raw src/ path
+        # ships them as ESM bare imports the browser can't resolve.
+        run: npm run build --workspace @chessbot/panel
+
       - name: Run Playwright smoke tests
         run: npm run e2e
         env:

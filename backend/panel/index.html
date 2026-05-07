@@ -2011,6 +2011,7 @@ import { renderEvalBar } from "./src/evalBar.js";
 import { renderPlayerBars } from "./src/playerBars.js";
 import { renderPVs, PV_COLORS } from "./src/pvCards.js";
 import { renderBoard, BOARD_THEMES, PIECE_SETS } from "./src/board.js";
+import { buildPgnFromHistory } from "./src/pgn.js";
 // Expose state on window for E2E tests + debugging (§3.1).
 window.state = state;
 // ── State ────────────────────────────────────────────────
@@ -3090,21 +3091,17 @@ makeRangeEditable("blunder-threshold-slider", "blunder-threshold-value");
     pgnStatus.textContent = `Imported ${plies.length} plies (analysis-only preview)`;
   });
   document.getElementById("btn-pgn-export").addEventListener("click", () => {
-    const s = window.state || {};
-    const hist = Array.isArray(s.evalHistory) ? s.evalHistory : [];
-    const gi = s.gameInfo || {};
-    const headers = [
-      `[Event "ChessBot Export"]`,
-      `[Date "${new Date().toISOString().slice(0, 10).replace(/-/g, ".")}"]`,
-      `[White "${gi.white?.name || "?"}"]`,
-      `[Black "${gi.black?.name || "?"}"]`,
-      `[Result "*"]`,
-      "",
-    ].join("\n");
-    const body = hist.length
-      ? hist.map((h, i) => `${Math.floor(i / 2) + 1}${i % 2 === 0 ? "." : "..."} ... {[%eval ${((h.cp || 0) / 100).toFixed(2)}]}`).join(" ")
-      : "(no eval history yet — play a few moves first)";
-    const pgn = headers + body + " *\n";
+    const s = window.state || state;
+    // Real PGN derivation lives in ./src/pgn.js — chess.js walks the
+    // FEN history, derives each ply's SAN, and `buildAnnotatedPgn` from
+    // @chessbot/shared assembles headers + {[%eval ...]} comments. The
+    // previous inline impl emitted `1. ...` for every ply because it
+    // never derived moves; the new path produces a file that imports
+    // cleanly into Lichess Studies.
+    const { pgn, derivedMoveCount, totalEntries } = buildPgnFromHistory({
+      evalHistory: s.evalHistory,
+      gameInfo: s.gameInfo,
+    });
     pgnTa.value = pgn;
     const blob = new Blob([pgn], { type: "application/x-chess-pgn" });
     const a = document.createElement("a");
@@ -3112,7 +3109,15 @@ makeRangeEditable("blunder-threshold-slider", "blunder-threshold-value");
     a.download = `chessbot-${Date.now()}.pgn`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    pgnStatus.textContent = `Exported ${hist.length} annotated moves`;
+    if (derivedMoveCount === 0 && totalEntries === 0) {
+      pgnStatus.textContent = "No eval history yet — play a few moves first";
+    } else if (derivedMoveCount < totalEntries) {
+      pgnStatus.textContent =
+        `Exported ${derivedMoveCount} annotated moves ` +
+        `(${totalEntries - derivedMoveCount} skipped — non-contiguous FENs)`;
+    } else {
+      pgnStatus.textContent = `Exported ${derivedMoveCount} annotated moves`;
+    }
   });
 
   // Eval cache
