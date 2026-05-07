@@ -49,6 +49,20 @@ import {
   isProtocolMismatch,
 } from "./protocolBanner.js";
 import { PROTOCOL_VERSION } from "@chessbot/shared";
+import { adapterForDoc } from "./siteAdapters.js";
+import { isLichessFlipped as _isLichessFlippedDoc } from "./lichessBoardReader.js";
+import { isChessTempoFlipped as _isChessTempoFlippedDoc } from "./chesstempoBoardReader.js";
+
+// Shim wrappers so the existing call sites in this file (which pass
+// no arguments) keep working after the inline definitions moved into
+// the per-site reader modules. The reader exports take a Document;
+// production always uses the global one.
+function isLichessFlipped() {
+  return _isLichessFlippedDoc(document);
+}
+function isChesstempFlipped() {
+  return _isChessTempoFlippedDoc(document);
+}
 
 function gridToFenBoard(grid, pocket) {
   const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
@@ -2577,181 +2591,14 @@ function scanChesscomPocketDOM(board, flipped) {
   return null;
 }
 
-// ── Lichess board reader ─────────────────────────────────────
-
-function lichessBoardToFen() {
-  const board = document.querySelector("cg-board");
-  if (!board) return null;
-
-  const pieces = board.querySelectorAll("piece");
-  if (!pieces.length) return null;
-
-  // Detect orientation
-  const flipped = isLichessFlipped();
-
-  // Board dimensions from the cg-board element
-  const boardRect = board.getBoundingClientRect();
-  const squareW = boardRect.width / 8;
-  const squareH = boardRect.height / 8;
-
-  const grid = Array.from({ length: 8 }, () => Array(8).fill(null));
-
-  for (const piece of pieces) {
-    // Skip ghost/premove pieces on lichess (class contains "ghost")
-    if (piece.classList.contains("ghost")) continue;
-    // Lichess uses CSS transform: translate(…) for positioning
-    const xy = parseTranslate(piece.style.transform);
-    if (!xy) continue;
-
-    const sq = translateToSquare(xy.px, xy.py, squareW, squareH, flipped);
-    if (!sq) continue;
-
-    const fenChar = pieceClassToFenChar(piece.className);
-    if (!fenChar) continue;
-
-    grid[sq.rank][sq.file] = fenChar;
-  }
-
-  return gridToFenBoard(grid, readPocket());
-}
-
-function isLichessFlipped() {
-  // Method 1: orientation class on cg-wrap (lichess + PlayStrategy)
-  const cgWrap = document.querySelector(".cg-wrap");
-  if (cgWrap) {
-    if (cgWrap.classList.contains("orientation-black") || cgWrap.classList.contains("orientation-p2")) return true;
-    if (cgWrap.classList.contains("orientation-white") || cgWrap.classList.contains("orientation-p1")) return false;
-  }
-  // Method 2: check coordinate labels — if rank 1 is at top, board is flipped
-  const ranks = document.querySelector("coords.ranks coord:first-child");
-  if (ranks && ranks.textContent.trim() === "1") return true;
-  return false;
-}
-
-// ── PlayStrategy board reader ────────────────────────────────
-
-function playstrategyBoardToFen() {
-  const board = document.querySelector("cg-board");
-  if (!board) return null;
-
-  const pieces = board.querySelectorAll("piece");
-  if (!pieces.length) return null;
-
-  const flipped = isLichessFlipped();
-
-  const boardRect = board.getBoundingClientRect();
-  const squareW = boardRect.width / 8;
-  const squareH = boardRect.height / 8;
-
-  const grid = Array.from({ length: 8 }, () => Array(8).fill(null));
-
-  for (const piece of pieces) {
-    if (piece.classList.contains("ghost")) continue;
-    const xy = parseTranslate(piece.style.transform);
-    if (!xy) continue;
-
-    const sq = translateToSquare(xy.px, xy.py, squareW, squareH, flipped);
-    if (!sq) continue;
-
-    // PlayStrategy classes: "p1 r-piece ally", "p2 n-piece enemy", etc.
-    const cl = piece.className;
-    const color = cl.includes("p1") ? "w" : "b";
-    const typeMap = {
-      "p-piece": "p",
-      "r-piece": "r",
-      "n-piece": "n",
-      "b-piece": "b",
-      "q-piece": "q",
-      "k-piece": "k",
-    };
-    let type = null;
-    for (const [name, ch] of Object.entries(typeMap)) {
-      if (cl.includes(name)) {
-        type = ch;
-        break;
-      }
-    }
-    if (!type) continue;
-
-    const fenChar = color === "w" ? type.toUpperCase() : type.toLowerCase();
-    grid[sq.rank][sq.file] = fenChar;
-  }
-
-  return gridToFenBoard(grid, readPocket());
-}
-
-// ── ChessTempo board reader ──────────────────────────────────
-
-function chesstempoBoardToFen() {
-  // Method 1: read FEN from accessibility description (most reliable)
-  const fenHeadings = document.querySelectorAll("chess-board h2");
-  for (const h of fenHeadings) {
-    const text = h.textContent.trim();
-    const fenMatch = text.match(/^FEN:\s*(.+)$/);
-    if (fenMatch) return fenMatch[1].trim();
-  }
-
-  // Method 2: parse piece elements from DOM
-  const ctBoard = document.querySelector("chess-board");
-  if (!ctBoard) return null;
-
-  const pieces = ctBoard.querySelectorAll(".ct-pieceClass");
-  if (!pieces.length) return null;
-
-  const flipped = isChesstempFlipped();
-
-  const grid = Array.from({ length: 8 }, () => Array(8).fill(null));
-
-  for (const piece of pieces) {
-    const cl = piece.className;
-    // Classes: "ct-pieceClass ct-piece-whiterook"
-    const typeMatch = cl.match(/ct-piece-(white|black)(pawn|rook|knight|bishop|queen|king)/);
-    if (!typeMatch) continue;
-
-    const color = typeMatch[1] === "white" ? "w" : "b";
-    const typeMap = { pawn: "p", rook: "r", knight: "n", bishop: "b", queen: "q", king: "k" };
-    const type = typeMap[typeMatch[2]];
-    if (!type) continue;
-
-    // Position via percentage left/top — each square is 12.5%
-    const left = parseFloat(piece.style.left);
-    const top = parseFloat(piece.style.top);
-    if (isNaN(left) || isNaN(top)) continue;
-
-    let file = Math.round(left / 12.5);
-    let rank = Math.round(top / 12.5);
-
-    if (flipped) {
-      file = 7 - file;
-      rank = 7 - rank;
-    }
-
-    const fenChar = color === "w" ? type.toUpperCase() : type.toLowerCase();
-    if (rank >= 0 && rank < 8 && file >= 0 && file < 8) {
-      grid[rank][file] = fenChar;
-    }
-  }
-
-  return gridToFenBoard(grid, readPocket());
-}
-
-function isChesstempFlipped() {
-  // Check coordinate labels — if file 'h' is first (leftmost), board is flipped
-  const fileCoords = document.querySelectorAll("chess-board .ct-board-inner-holder .ct-file-coord, chess-board coords coord");
-  if (fileCoords.length > 0) {
-    const first = fileCoords[0].textContent.trim().toLowerCase();
-    if (first === "h") return true;
-    if (first === "a") return false;
-  }
-  // Alternative: check rank labels — if rank 1 is at top, board is flipped
-  const rankCoords = document.querySelectorAll("chess-board .ct-rank-coord");
-  if (rankCoords.length > 0) {
-    const first = rankCoords[0].textContent.trim();
-    if (first === "1") return true;
-    if (first === "8") return false;
-  }
-  return false;
-}
+// ── Lichess / PlayStrategy / ChessTempo readers ──────────────
+// The previous inline `lichessBoardToFen` / `playstrategyBoardToFen`
+// / `chesstempoBoardToFen` lived here. They've been replaced with
+// the dispatch through `adapterForDoc(document).extractFen(...)` in
+// `boardToFen()` above — the per-site implementations live in
+// `lichessBoardReader.js`, `playstrategyBoardReader.js`, and
+// `chesstempoBoardReader.js`, each with its own jsdom-based contract
+// tests under tests/fixtures/.
 
 // ── Turn detection (multiple methods, prioritized) ───────────
 
@@ -3094,10 +2941,22 @@ function readPocketChessCom() {
 }
 
 function boardToFen() {
+  // chess.com still uses the inline reader because its variant pages
+  // (data-piece + data-color, with piece-Y-centroid colour
+  // classification and crazyhouse drop pockets) aren't covered by the
+  // adapter's primary path. The adapter handles standard chess.com
+  // pages but the legacy reader covers more edge cases — lift it
+  // into the adapter as a follow-up once the variant logic is
+  // disentangled from module-global state.
   if (SITE === "chesscom") return chesscomBoardToFen();
-  if (SITE === "lichess") return lichessBoardToFen();
-  if (SITE === "playstrategy") return playstrategyBoardToFen();
-  if (SITE === "chesstempo") return chesstempoBoardToFen();
+  // lichess / playstrategy / chesstempo all dispatch through the
+  // site-adapter registry from siteAdapters.js. The adapter's
+  // extractFen() is exactly what the previous inline readers did,
+  // wired to the same shared helpers (parseTranslate,
+  // pieceClassToFenChar, gridToFenBoard, ...). readPocket is passed
+  // through so drop variants (crazyhouse, etc.) keep working.
+  const adapter = adapterForDoc(document);
+  if (adapter) return adapter.extractFen(document, { readPocket });
   return null;
 }
 
