@@ -13,7 +13,7 @@
     "resolveJsonModule": true,
     "jsx": "react-jsx",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": []
+    "types": ["chrome"]
   },
   "include": ["src/**/*.js", "src/**/*.jsx"],
   "exclude": ["node_modules", "dist", "**/*.test.js"]

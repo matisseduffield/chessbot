@@ -140,48 +140,54 @@ function createPinAuth({ enabled, logger = console }) {
     pin,
     token,
 
-    /** @param {{ use(handler: any): void }} app */
+    /** @param {import('express').Express} app */
     installHttp(app) {
-      app.use(async (/** @type {any} */ req, /** @type {any} */ res, /** @type {any} */ next) => {
-        if (isAuthed(req)) return next();
+      app.use(
+        async (
+          /** @type {import('express').Request} */ req,
+          /** @type {import('express').Response} */ res,
+          /** @type {import('express').NextFunction} */ next,
+        ) => {
+          if (isAuthed(req)) return next();
 
-        const provided = req.query?.pin;
-        if (provided && String(provided) === pin) {
-          if (typeof res.cookie === 'function') {
-            res.cookie(COOKIE, token, {
-              httpOnly: true,
-              sameSite: 'lax',
-              maxAge: 30 * 24 * 60 * 60 * 1000,
-            });
-          } else {
-            res.setHeader(
-              'Set-Cookie',
-              `${COOKIE}=${token}; HttpOnly; SameSite=Lax; Max-Age=${30 * 24 * 60 * 60}; Path=/`,
-            );
-          }
-          const url = (req.originalUrl || '/').split('?')[0] || '/';
-          return res.redirect(303, url);
-        }
-
-        const accept = req.headers['accept'] || '';
-        if (accept.includes('text/html')) {
-          let qrDataUri = null;
-          if (QRCode) {
-            try {
-              const pairingUrl = `http://${req.headers.host || 'localhost'}/?pin=${pin}`;
-              qrDataUri = await QRCode.toDataURL(pairingUrl, { width: 180, margin: 1 });
-            } catch {
-              /* QR optional */
+          const provided = req.query?.pin;
+          if (provided && String(provided) === pin) {
+            if (typeof res.cookie === 'function') {
+              res.cookie(COOKIE, token, {
+                httpOnly: true,
+                sameSite: 'lax',
+                maxAge: 30 * 24 * 60 * 60 * 1000,
+              });
+            } else {
+              res.setHeader(
+                'Set-Cookie',
+                `${COOKIE}=${token}; HttpOnly; SameSite=Lax; Max-Age=${30 * 24 * 60 * 60}; Path=/`,
+              );
             }
+            const url = (req.originalUrl || '/').split('?')[0] || '/';
+            return res.redirect(303, url);
           }
-          res
-            .status(401)
-            .set('Content-Type', 'text/html; charset=utf-8')
-            .end(PIN_PAGE(provided ? 'Wrong PIN — try again.' : '', qrDataUri));
-        } else {
-          res.status(401).json({ error: 'pin_required' });
-        }
-      });
+
+          const accept = req.headers['accept'] || '';
+          if (accept.includes('text/html')) {
+            let qrDataUri = null;
+            if (QRCode) {
+              try {
+                const pairingUrl = `http://${req.headers.host || 'localhost'}/?pin=${pin}`;
+                qrDataUri = await QRCode.toDataURL(pairingUrl, { width: 180, margin: 1 });
+              } catch {
+                /* QR optional */
+              }
+            }
+            res
+              .status(401)
+              .set('Content-Type', 'text/html; charset=utf-8')
+              .end(PIN_PAGE(provided ? 'Wrong PIN — try again.' : '', qrDataUri));
+          } else {
+            res.status(401).json({ error: 'pin_required' });
+          }
+        },
+      );
     },
 
     /** @param {HttpReqLike} req */
