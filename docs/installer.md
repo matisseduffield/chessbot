@@ -20,9 +20,30 @@ Pushing a `v*` tag triggers `.github/workflows/installer.yml`, which builds the
 installer on a `windows-latest` runner and attaches the artifact to the GitHub
 release.
 
-## Code signing
+## What users see when they run the installer
 
-The installer currently ships **unsigned**. To enable signing:
+The installer ships **unsigned**. Windows SmartScreen will warn the
+first time someone runs `chessbot-setup-<version>.exe`:
+
+> _Windows protected your PC._
+> _Microsoft Defender SmartScreen prevented an unrecognized app from starting. Running this app might put your PC at risk._
+
+This is expected — the warning means "we don't recognise the publisher,"
+not "this file is malicious." To proceed:
+
+1. Click **More info** in the dialog.
+2. Click **Run anyway**.
+
+After the first install Windows usually stops warning on the same
+machine. If you want users to see no warning at all, see "Adding code
+signing" below.
+
+## Adding code signing (optional)
+
+Signing is **not planned** for this project — a code-signing
+certificate costs ~$50–400/year, which doesn't fit a free OSS tool.
+The CI workflow keeps the signing step in place, commented out, so a
+future maintainer can switch it on without re-deriving the steps:
 
 1. Obtain an Authenticode certificate (`.pfx`).
 2. Add two repository secrets:
