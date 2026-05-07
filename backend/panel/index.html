@@ -1953,6 +1953,7 @@
 <script type="module">
 // ── Accent color picker ──────────────────────────────────
 import { hexToRgb, lighten } from "./src/panelUtils.js";
+import { getRaw, setRaw } from "./src/panelStore.js";
 (function () {
   function applyAccent(hex) {
     const root = document.documentElement;
@@ -1965,7 +1966,7 @@ import { hexToRgb, lighten } from "./src/panelUtils.js";
       `0 0 20px rgba(${r}, ${g}, ${b}, 0.15)`,
     );
   }
-  const saved = localStorage.getItem("chessbot_accent");
+  const saved = getRaw("chessbot_accent", "");
   if (saved) applyAccent(saved);
   document.addEventListener("DOMContentLoaded", () => {
     const picker = document.getElementById("accent-color-picker-inline");
@@ -1978,7 +1979,7 @@ import { hexToRgb, lighten } from "./src/panelUtils.js";
       const hex = e.target.value;
       applyAccent(hex);
       swatch.style.background = hex;
-      localStorage.setItem("chessbot_accent", hex);
+      setRaw("chessbot_accent", hex);
     });
   });
 })();
@@ -2017,6 +2018,7 @@ import {
   hideProtocolMismatchBanner,
 } from "./src/protocolBanner.js";
 import { PROTOCOL_VERSION, isProtocolMismatch } from "@chessbot/shared";
+import { getJSON, setJSON, getRaw, setRaw } from "./src/panelStore.js";
 // Expose state on window for E2E tests + debugging (§3.1).
 window.state = state;
 // ── State ────────────────────────────────────────────────
@@ -2130,14 +2132,11 @@ function saveSettings() {
     boardTheme: state.currentBoardTheme,
     pieceSet: state.currentPieceSet,
   };
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+  setJSON(STORAGE_KEY, data);
 }
 
 function getSavedSettings() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+  return getJSON(STORAGE_KEY, null);
 }
 
 // ── Variant data & picker ────────────────────────────────
@@ -3055,19 +3054,17 @@ makeRangeEditable("blunder-threshold-slider", "blunder-threshold-value");
   const blunderLast = document.getElementById("blunder-last");
   let prevBestCp = null;
 
-  try {
-    const saved = JSON.parse(localStorage.getItem("chessbot:tools") || "{}");
-    if (typeof saved.blunderEnabled === "boolean") blunderChk.checked = saved.blunderEnabled;
-    if (typeof saved.blunderThreshold === "number") {
-      blunderThresh.value = saved.blunderThreshold;
-      document.getElementById("blunder-threshold-value").textContent = saved.blunderThreshold;
-    }
-  } catch {}
+  const saved = getJSON("chessbot:tools", {});
+  if (typeof saved.blunderEnabled === "boolean") blunderChk.checked = saved.blunderEnabled;
+  if (typeof saved.blunderThreshold === "number") {
+    blunderThresh.value = saved.blunderThreshold;
+    document.getElementById("blunder-threshold-value").textContent = saved.blunderThreshold;
+  }
   function saveTools() {
-    localStorage.setItem("chessbot:tools", JSON.stringify({
+    setJSON("chessbot:tools", {
       blunderEnabled: blunderChk.checked,
       blunderThreshold: parseInt(blunderThresh.value, 10),
-    }));
+    });
   }
   blunderChk.addEventListener("change", saveTools);
   blunderThresh.addEventListener("change", saveTools);
@@ -3686,19 +3683,14 @@ let _drag = null;
 let _layoutRAF = null;
 
 function loadColFractions() {
-  try {
-    const raw = localStorage.getItem(COL_FRACTIONS_KEY);
-    if (!raw) return null;
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr) || arr.length !== NUM_COLS) return null;
-    const sum = arr.reduce((a, b) => a + b, 0);
-    if (sum <= 0) return null;
-    // Normalize
-    return arr.map(v => v / sum);
-  } catch { return null; }
+  const arr = getJSON(COL_FRACTIONS_KEY, null);
+  if (!Array.isArray(arr) || arr.length !== NUM_COLS) return null;
+  const sum = arr.reduce((a, b) => a + b, 0);
+  if (sum <= 0) return null;
+  return arr.map(v => v / sum); // normalize
 }
 function saveColFractions() {
-  try { localStorage.setItem(COL_FRACTIONS_KEY, JSON.stringify(_colFractions)); } catch {}
+  setJSON(COL_FRACTIONS_KEY, _colFractions);
 }
 function getColFractions() {
   if (!_colFractions) {
@@ -3867,14 +3859,12 @@ function requestLayout() {
 window.addEventListener("resize", requestLayout);
 
 function saveLayout() {
-  try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(_colLayout)); } catch {}
+  setJSON(LAYOUT_KEY, _colLayout);
 }
 
 function restoreLayout() {
   try {
-    const raw = localStorage.getItem(LAYOUT_KEY);
-    if (!raw) return false;
-    const saved = JSON.parse(raw);
+    const saved = getJSON(LAYOUT_KEY, null);
     if (!Array.isArray(saved) || saved.length !== NUM_COLS) return false;
 
     // Validate all section IDs exist
@@ -4056,21 +4046,19 @@ function onPointerUp(e) {
 const COLLAPSE_KEY = "chessbot_collapsed_sections";
 
 function restoreCollapseState() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "[]");
-    if (!Array.isArray(saved)) return;
-    saved.forEach(id => {
-      const el = document.querySelector(`.settings-group[data-section-id="${id}"]`);
-      if (el) el.classList.add("collapsed");
-    });
-  } catch {}
+  const saved = getJSON(COLLAPSE_KEY, []);
+  if (!Array.isArray(saved)) return;
+  saved.forEach(id => {
+    const el = document.querySelector(`.settings-group[data-section-id="${id}"]`);
+    if (el) el.classList.add("collapsed");
+  });
 }
 
 function saveCollapseState() {
   const collapsed = Array.from(document.querySelectorAll(".settings-group.collapsed"))
     .map(el => el.dataset.sectionId)
     .filter(Boolean);
-  localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsed));
+  setJSON(COLLAPSE_KEY, collapsed);
 }
 
 function initCollapsible() {
@@ -4107,12 +4095,10 @@ function initBoardResizer() {
   if (!resizer || !layout) return;
 
   // Restore saved width
-  try {
-    const saved = parseInt(localStorage.getItem(LEFT_COL_WIDTH_KEY));
-    if (saved && saved > 200 && saved < window.innerWidth - 200) {
-      layout.style.setProperty("--left-col-width", saved + "px");
-    }
-  } catch {}
+  const saved = parseInt(getRaw(LEFT_COL_WIDTH_KEY, ""), 10);
+  if (saved && saved > 200 && saved < window.innerWidth - 200) {
+    layout.style.setProperty("--left-col-width", saved + "px");
+  }
 
   resizer.addEventListener("pointerdown", (e) => {
     e.preventDefault();
@@ -4139,10 +4125,8 @@ function initBoardResizer() {
       document.body.classList.remove("resizing");
       resizer.removeEventListener("pointermove", onMove);
       resizer.removeEventListener("pointerup", onUp);
-      try {
-        const current = layout.style.getPropertyValue("--left-col-width");
-        if (current) localStorage.setItem(LEFT_COL_WIDTH_KEY, parseInt(current));
-      } catch {}
+      const current = layout.style.getPropertyValue("--left-col-width");
+      if (current) setRaw(LEFT_COL_WIDTH_KEY, String(parseInt(current, 10)));
     }
     resizer.addEventListener("pointermove", onMove);
     resizer.addEventListener("pointerup", onUp);
