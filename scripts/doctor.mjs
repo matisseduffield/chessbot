@@ -4,7 +4,11 @@
 // Checks:
 //  • Node.js version meets the engines.node range in package.json.
 //  • @chessbot/shared has been built (dist/index.js exists).
-//  • A Stockfish binary can be found and is executable.
+//  • A Stockfish binary can be found, is executable, and reports an
+//    `id name` string (so we know which engine + version is running).
+//  • Extension manifest.json version matches backend package.json
+//    version — if they drift the popup may carry stale features that
+//    don't line up with the running backend.
 //  • Default port (8080) is free.
 //
 // Flags:
@@ -86,9 +90,20 @@ if (stockfishPath) {
       timeout: 5_000,
       encoding: 'utf8',
     });
+    const stdout = String(res.stdout || '');
     if (res.error) bad(`failed to run binary: ${res.error.message}`);
-    else if (!String(res.stdout).includes('uciok')) bad(`binary did not respond with "uciok"`);
-    else ok(`binary speaks UCI`);
+    else if (!stdout.includes('uciok')) bad(`binary did not respond with "uciok"`);
+    else {
+      ok(`binary speaks UCI`);
+      // The `id name X` line is the engine's self-identification
+      // (e.g. "Stockfish 17", "Fairy-Stockfish 14.0.0"). Surface it
+      // so support tickets always include a version, and warn if
+      // it's missing — that usually means the binary is corrupt or
+      // a non-UCI executable that just happens to have the right name.
+      const nameMatch = stdout.match(/^id\s+name\s+(.+)$/m);
+      if (nameMatch) ok(`engine: ${nameMatch[1].trim()}`);
+      else warn(`binary did not report an "id name" line — version unknown`);
+    }
   } catch (e) {
     bad(`could not execute binary: ${e.message}`);
   }
@@ -98,6 +113,29 @@ if (stockfishPath) {
   } catch {
     /* already reported */
   }
+}
+
+// ── Extension / backend version match ─────────────────────────
+// The extension popup's manifest.json carries a user-visible version
+// number. If it falls behind the backend's package.json version,
+// users may load an extension that's missing fields the backend now
+// expects. Warn (not error) so a release in flight that intentionally
+// bumps just one side doesn't fail doctor.
+console.log('\nVersions');
+try {
+  const manifestPath = path.join(root, 'extension', 'public', 'manifest.json');
+  const backendPkgPath = path.join(root, 'backend', 'package.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const backendPkg = JSON.parse(readFileSync(backendPkgPath, 'utf8'));
+  const extVer = manifest.version || '?';
+  const bkVer = backendPkg.version || '?';
+  if (extVer === bkVer) {
+    ok(`extension v${extVer} matches backend v${bkVer}`);
+  } else {
+    warn(`extension v${extVer} ≠ backend v${bkVer} — bump one to match before tagging a release`);
+  }
+} catch (e) {
+  warn(`could not compare extension / backend versions: ${e.message}`);
 }
 
 // ── Port 8080 ───────────────────────────────────────────────────
