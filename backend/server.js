@@ -526,7 +526,23 @@ async function main() {
   const panelDist = path.join(__dirname, "panel", "dist");
   const panelRoot = fs.existsSync(path.join(panelDist, "index.html")) ? panelDist : panelSrc;
   console.log(`[server] serving panel from ${panelRoot === panelDist ? "dist (built)" : "src (dev)"}`);
-  app.use(express.static(panelRoot));
+  // Cache strategy: HTML must never be cached (it's the entry point and
+  // pins the JS/CSS hashes); Vite-emitted hashed assets in assets/ are
+  // safe to cache forever; everything else gets a revalidate hint so a
+  // backend upgrade doesn't strand users on a stale dashboard.
+  app.use(
+    express.static(panelRoot, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith(".html")) {
+          res.setHeader("Cache-Control", "no-store");
+        } else if (/[\\/]assets[\\/].+-[A-Za-z0-9_]{8,}\.(?:js|css|woff2?|png|svg)$/i.test(filePath)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        } else {
+          res.setHeader("Cache-Control", "no-cache, must-revalidate");
+        }
+      },
+    }),
+  );
   const server = http.createServer(app);
 
   // Handle PNA preflight at the raw HTTP level (before ws upgrade intercepts)

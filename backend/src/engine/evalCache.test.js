@@ -128,6 +128,28 @@ describe('EvalCache', () => {
     expect(c.size).toBe(0);
   });
 
+  it('loadFromDisk drops files with a mismatched schema version', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const os = require('node:os');
+    const file = path.join(os.tmpdir(), `evalcache-version-${Date.now()}-${Math.random()}.json`);
+    try {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          version: 999,
+          ttlMs: 60_000,
+          entries: [['f1:chess:10:1', { result: 'X', ts: Date.now() }]],
+        }),
+      );
+      const c = new EvalCache();
+      expect(c.loadFromDisk(file)).toBe(0);
+      expect(c.size).toBe(0);
+    } finally {
+      try { fs.unlinkSync(file); } catch { /* ignore */ }
+    }
+  });
+
   it('loadFromDisk handles corrupt JSON gracefully', () => {
     const fs = require('node:fs');
     const path = require('node:path');

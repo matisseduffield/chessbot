@@ -21,6 +21,11 @@ const path = require('path');
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX = 500;
 
+// Bumped whenever the on-disk entry shape or key format changes. Files
+// from a different version are dropped on load instead of silently
+// loading garbage that no current key can hit.
+const CACHE_SCHEMA_VERSION = 1;
+
 /**
  * @template T
  * @typedef {{ result: T, ts: number }} CacheEntry
@@ -116,7 +121,11 @@ class EvalCache {
     for (const [key, entry] of this._map) {
       if (entry.ts > cutoff) entries.push([key, entry]);
     }
-    const payload = JSON.stringify({ version: 1, ttlMs: this.ttlMs, entries });
+    const payload = JSON.stringify({
+      version: CACHE_SCHEMA_VERSION,
+      ttlMs: this.ttlMs,
+      entries,
+    });
     const dir = path.dirname(filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${filePath}.tmp`;
@@ -142,6 +151,7 @@ class EvalCache {
       return 0;
     }
     if (!parsed || !Array.isArray(parsed.entries)) return 0;
+    if (parsed.version !== CACHE_SCHEMA_VERSION) return 0;
     const cutoff = this._now() - this.ttlMs;
     let loaded = 0;
     for (const [key, entry] of parsed.entries) {

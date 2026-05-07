@@ -2439,7 +2439,10 @@ function connect() {
             last.cp = cp;
           } else {
             state.evalHistory.push({ move: state.evalHistory.length + 1, cp, fen: msg.fen });
-            if (state.evalHistory.length > 200) state.evalHistory.shift();
+            // Cap the sparkline buffer so a long analysis session can't grow
+            // memory unbounded (2 bytes per cp + ~80 byte FEN ≈ 16 KiB at cap).
+            const EVAL_HISTORY_MAX = 200;
+            while (state.evalHistory.length > EVAL_HISTORY_MAX) state.evalHistory.shift();
           }
           renderEvalGraph();
           if (typeof window.__blunderCheck === "function") window.__blunderCheck(cp);

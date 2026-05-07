@@ -1,6 +1,19 @@
 import { useState, useEffect } from 'react'
 import './App.css'
 
+// Reads and clears chrome.runtime.lastError after a sendMessage callback.
+// Returns true when an error was present so callers can early-return.
+// Logs to the popup console with context so silent failures stop happening.
+function consumeLastError(ctx) {
+  const err = chrome.runtime?.lastError
+  if (err) {
+     
+    console.warn(`[chessbot popup] ${ctx}:`, err.message || err)
+    return true
+  }
+  return false
+}
+
 function App() {
   const [enabled, setEnabled] = useState(true)
   const [connected, setConnected] = useState(false)
@@ -16,7 +29,7 @@ function App() {
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'get_status' }, (resp) => {
-          if (chrome.runtime.lastError || !resp) return
+          if (consumeLastError('get_status') || !resp) return
           if (typeof resp.enabled === 'boolean') {
             setEnabled(resp.enabled)
             chrome.storage?.local?.set({ chessbot_popup_enabled: resp.enabled })
@@ -57,7 +70,7 @@ function App() {
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'toggle', enabled: next }, () => {
-          void chrome.runtime.lastError
+          consumeLastError('toggle')
         })
       }
     })
@@ -73,7 +86,7 @@ function App() {
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'set_display_mode', value: mode }, () => {
-          void chrome.runtime.lastError
+          consumeLastError('set_display_mode')
         })
       }
     })
@@ -83,7 +96,7 @@ function App() {
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'get_all_logs' }, (resp) => {
-          if (chrome.runtime.lastError || !resp?.logs) {
+          if (consumeLastError('get_all_logs') || !resp?.logs) {
             navigator.clipboard.writeText('No logs available (content script not loaded on this page)')
             setCopied(true)
             setTimeout(() => setCopied(false), 2000)
