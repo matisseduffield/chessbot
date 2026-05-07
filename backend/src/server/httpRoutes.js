@@ -226,7 +226,6 @@ function registerPanelStatic(app, { panelDir, express, log }) {
       `[server] serving panel from ${panelRoot === panelDist ? 'dist (built)' : 'src (dev)'}`,
     );
   } else {
-     
     console.log(
       `[server] serving panel from ${panelRoot === panelDist ? 'dist (built)' : 'src (dev)'}`,
     );
