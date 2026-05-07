@@ -1,4 +1,9 @@
 'use strict';
+// @ts-check
+
+/**
+ * @typedef {'timeout'|'http_error'|'parse_error'|'not_found'|'network_error'} LichessErrorReason
+ */
 
 /**
  * Lichess opening-explorer adapter (masters database).
@@ -52,16 +57,22 @@ class LichessBook {
     };
   }
 
+  /**
+   * @param {LichessErrorReason} reason
+   * @param {Record<string, unknown>} [fields]
+   */
   _recordError(reason, fields) {
     this.stats.fetchErrors++;
     this.stats.errorsByReason[reason] = (this.stats.errorsByReason[reason] || 0) + 1;
-    log.warn({ reason, ...fields }, 'lichess book lookup failed');
+    log.warn({ reason, ...(fields || {}) }, 'lichess book lookup failed');
   }
 
+  /** @param {unknown} v */
   setEnabled(v) {
     this.enabled = !!v;
   }
 
+  /** @param {string} fen */
   _cacheGet(fen) {
     const e = this._cache.get(fen);
     if (!e) return undefined;
@@ -75,6 +86,10 @@ class LichessBook {
     return e.uci;
   }
 
+  /**
+   * @param {string} fen
+   * @param {string | null} uci
+   */
   _cacheSet(fen, uci) {
     if (this._cache.size >= this._cacheMax) {
       const oldest = this._cache.keys().next().value;
@@ -111,7 +126,8 @@ class LichessBook {
       try {
         data = await res.json();
       } catch (parseErr) {
-        this._recordError('parse_error', { err: parseErr.message });
+        const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+        this._recordError('parse_error', { err: msg });
         return null;
       }
       const best = pickBestMove(data);
@@ -134,9 +150,10 @@ class LichessBook {
       // AbortError is what AbortSignal.timeout throws when the deadline
       // is hit. Everything else (DNS, ECONNREFUSED, TLS, etc.) is a
       // network-layer failure.
-      const isTimeout = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
+      const e = err instanceof Error ? err : null;
+      const isTimeout = !!e && (e.name === 'TimeoutError' || e.name === 'AbortError');
       this._recordError(isTimeout ? 'timeout' : 'network_error', {
-        err: err && err.message,
+        err: e ? e.message : String(err),
       });
       return null;
     } finally {
@@ -146,8 +163,20 @@ class LichessBook {
 }
 
 /**
+ * @typedef {{
+ *   uci: string,
+ *   san: string,
+ *   white: number,
+ *   draws: number,
+ *   black: number,
+ * }} LichessMove
+ */
+
+/**
  * Given a Lichess response, return the entry with the most total games
  * or null if the response has no moves. Exposed for unit tests.
+ * @param {{ moves?: LichessMove[] } | null | undefined} data
+ * @returns {LichessMove | null}
  */
 function pickBestMove(data) {
   if (!data || !Array.isArray(data.moves) || data.moves.length === 0) return null;

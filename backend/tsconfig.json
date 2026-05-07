@@ -13,11 +13,6 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": [
-    "src/engine/uciParser.js",
-    "src/engine/searchLimits.js",
-    "src/engine/evalCache.js",
-    "src/ws/send.js",
-    "src/ws/rateLimit.js"
-  ]
+  "include": ["src/**/*.js"],
+  "exclude": ["**/*.test.js"]
 }

@@ -1,4 +1,5 @@
 'use strict';
+// @ts-check
 
 /**
  * ECO (Encyclopedia of Chess Openings) lookup.
@@ -14,19 +15,25 @@ const fs = require('fs');
 const path = require('path');
 const { forModule } = require('../lib/logger');
 
+/**
+ * @typedef {{ code: string, name: string }} EcoEntry
+ */
+
 const log = forModule('eco');
+/** @type {Map<string, EcoEntry>} */
 const openings = new Map();
 
 /**
  * Parse TSV content into [epd, entry] pairs. Exposed for unit tests so
  * they can exercise parsing without touching the filesystem.
  * @param {string} content
- * @returns {Array<[string, { code: string, name: string }]>}
+ * @returns {Array<[string, EcoEntry]>}
  */
 function parseTsv(content) {
   if (typeof content !== 'string') return [];
   if (content.charCodeAt(0) === 0xfeff) content = content.slice(1);
   const rows = content.split('\n');
+  /** @type {Array<[string, EcoEntry]>} */
   const out = [];
   for (let i = 1; i < rows.length; i++) {
     const parts = rows[i].split('\t');
@@ -42,6 +49,7 @@ function parseTsv(content) {
 /**
  * Load every `*.tsv` file under `dir` into the in-memory map.
  * Clears any previously loaded entries so the function is idempotent.
+ * @param {string} dir
  */
 function loadEco(dir) {
   if (!fs.existsSync(dir)) {
@@ -82,7 +90,10 @@ function _reset() {
   openings.clear();
 }
 
-/** Seed the map directly. Primarily for tests. */
+/**
+ * Seed the map directly. Primarily for tests.
+ * @param {Iterable<[string, EcoEntry]>} entries
+ */
 function _seed(entries) {
   for (const [epd, entry] of entries) openings.set(epd, entry);
 }
