@@ -43,6 +43,12 @@ import {
   formatDepthForToast,
   formatMultiPVForToast,
 } from "./hotkeys.js";
+import {
+  showProtocolMismatchBanner,
+  hideProtocolMismatchBanner,
+  isProtocolMismatch,
+} from "./protocolBanner.js";
+import { PROTOCOL_VERSION } from "@chessbot/shared";
 
 function gridToFenBoard(grid, pocket) {
   const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
@@ -960,9 +966,18 @@ function connectWS() {
     try {
       const msg = JSON.parse(evt.data);
       if (msg.type === "server_hello") {
-        const EXPECTED = 1;
-        if (typeof msg.protocolVersion === "number" && msg.protocolVersion !== EXPECTED) {
-          console.warn(`[chessbot] protocol mismatch: extension=${EXPECTED} server=${msg.protocolVersion} — reload the extension.`);
+        if (isProtocolMismatch(PROTOCOL_VERSION, msg.protocolVersion)) {
+          console.warn(
+            `[chessbot] protocol mismatch: extension=${PROTOCOL_VERSION} server=${msg.protocolVersion} — reload the extension.`,
+          );
+          showProtocolMismatchBanner({
+            extensionVersion: PROTOCOL_VERSION,
+            serverVersion: msg.protocolVersion,
+          });
+        } else {
+          // A reconnect after the user fixed the mismatch should clear
+          // the banner — without this it would linger from the prior session.
+          hideProtocolMismatchBanner();
         }
         return;
       }
