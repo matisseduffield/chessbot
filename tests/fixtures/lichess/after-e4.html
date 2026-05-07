@@ -1,0 +1,46 @@
+<!--
+  Lichess board fixture — position after 1. e4. Identical to start.html
+  except white's e-pawn moved from e2 (translate 256px, 384px) to e4
+  (translate 256px, 256px). Used to verify the reader picks up move
+  consequences and the per-square mapping is right.
+
+  Position: rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR
+-->
+<div class="cg-wrap orientation-white">
+  <cg-board>
+    <piece class="black rook" style="transform: translate(0px, 0px)"></piece>
+    <piece class="black knight" style="transform: translate(64px, 0px)"></piece>
+    <piece class="black bishop" style="transform: translate(128px, 0px)"></piece>
+    <piece class="black queen" style="transform: translate(192px, 0px)"></piece>
+    <piece class="black king" style="transform: translate(256px, 0px)"></piece>
+    <piece class="black bishop" style="transform: translate(320px, 0px)"></piece>
+    <piece class="black knight" style="transform: translate(384px, 0px)"></piece>
+    <piece class="black rook" style="transform: translate(448px, 0px)"></piece>
+    <piece class="black pawn" style="transform: translate(0px, 64px)"></piece>
+    <piece class="black pawn" style="transform: translate(64px, 64px)"></piece>
+    <piece class="black pawn" style="transform: translate(128px, 64px)"></piece>
+    <piece class="black pawn" style="transform: translate(192px, 64px)"></piece>
+    <piece class="black pawn" style="transform: translate(256px, 64px)"></piece>
+    <piece class="black pawn" style="transform: translate(320px, 64px)"></piece>
+    <piece class="black pawn" style="transform: translate(384px, 64px)"></piece>
+    <piece class="black pawn" style="transform: translate(448px, 64px)"></piece>
+    <!-- The moved pawn is now on e4 (rank 4 in chess, y=256 in pixels) -->
+    <piece class="white pawn" style="transform: translate(256px, 256px)"></piece>
+    <!-- The remaining 7 white pawns stay on rank 2 (y=384) -->
+    <piece class="white pawn" style="transform: translate(0px, 384px)"></piece>
+    <piece class="white pawn" style="transform: translate(64px, 384px)"></piece>
+    <piece class="white pawn" style="transform: translate(128px, 384px)"></piece>
+    <piece class="white pawn" style="transform: translate(192px, 384px)"></piece>
+    <piece class="white pawn" style="transform: translate(320px, 384px)"></piece>
+    <piece class="white pawn" style="transform: translate(384px, 384px)"></piece>
+    <piece class="white pawn" style="transform: translate(448px, 384px)"></piece>
+    <piece class="white rook" style="transform: translate(0px, 448px)"></piece>
+    <piece class="white knight" style="transform: translate(64px, 448px)"></piece>
+    <piece class="white bishop" style="transform: translate(128px, 448px)"></piece>
+    <piece class="white queen" style="transform: translate(192px, 448px)"></piece>
+    <piece class="white king" style="transform: translate(256px, 448px)"></piece>
+    <piece class="white bishop" style="transform: translate(320px, 448px)"></piece>
+    <piece class="white knight" style="transform: translate(384px, 448px)"></piece>
+    <piece class="white rook" style="transform: translate(448px, 448px)"></piece>
+  </cg-board>
+</div>

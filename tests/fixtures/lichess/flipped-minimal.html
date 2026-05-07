@@ -1,0 +1,20 @@
+<!--
+  Lichess flipped-board fixture — a single white pawn at e4 with the
+  board rotated 180° (orientation-black). Verifies that:
+    - isLichessFlipped picks up the orientation-black class on .cg-wrap
+    - translateToSquare correctly inverts file/rank when flipped
+  We use a one-piece minimum so the fixture is unambiguous and the
+  expected FEN can be hand-verified.
+
+  Logical position: white pawn on e4 = file 4 (e), grid-rank 4
+  (FEN-rank 4 in row-0-is-top notation). With the board rotated 180°
+  the rendered top-left maps to logical bottom-right, so the visual
+  pixel position of e4 is ((7-4)*64, (7-4)*64) = (192, 192).
+
+  Expected FEN board: 8/8/8/8/4P3/8/8/8
+-->
+<div class="cg-wrap orientation-black">
+  <cg-board>
+    <piece class="white pawn" style="transform: translate(192px, 192px)"></piece>
+  </cg-board>
+</div>
