@@ -1190,14 +1190,30 @@ function connectWS() {
           } else {
             trainingStage = 0; // medium: piece hint with 1 hint available
           }
+          // Training hint is user-initiated — paint immediately so the
+          // hint appears the same frame the user requested it.
           drawTrainingHint(msg.bestmove, bestLine, source);
           drawEvalBar(bestLine, source, msg.tablebase);
         } else if (lines.length > 1) {
-          drawMultiPV(lines, source);
-          drawEvalBar(bestLine, source, msg.tablebase);
+          // Streaming-eval frames arrive at 5–20 Hz; coalesce to rAF
+          // so we paint at most once per browser frame.
+          const _bestLine = bestLine;
+          const _source = source;
+          const _lines = lines;
+          const _tablebase = msg.tablebase;
+          scheduleOverlayUpdate(() => {
+            drawMultiPV(_lines, _source);
+            drawEvalBar(_bestLine, _source, _tablebase);
+          });
         } else {
-          drawSingleMove(msg.bestmove, bestLine, source);
-          drawEvalBar(bestLine, source, msg.tablebase);
+          const _bestmove = msg.bestmove;
+          const _bestLine = bestLine;
+          const _source = source;
+          const _tablebase = msg.tablebase;
+          scheduleOverlayUpdate(() => {
+            drawSingleMove(_bestmove, _bestLine, _source);
+            drawEvalBar(_bestLine, _source, _tablebase);
+          });
         }
 
         // Auto-move: schedule the move after drawing overlays (non-streaming only)
@@ -3050,6 +3066,33 @@ function boardToFen() {
 }
 
 // ── Arrow overlay ────────────────────────────────────────────
+
+// rAF coalescer for overlay updates. During streaming analysis the
+// engine sends `info` frames at 5–20 Hz; rendering each one schedules
+// SVG geometry math, layout, and paint. Replacing the pending render
+// with the latest one ensures we paint at most once per browser frame
+// (typically 60 Hz). The closure captures the data it needs by value,
+// so a newer frame that arrives before rAF fires simply overwrites the
+// closure and the older frame is dropped — exactly the desired
+// "only the latest matters" behaviour.
+let _overlayRafId = 0;
+let _overlayPending = null;
+function scheduleOverlayUpdate(fn) {
+  _overlayPending = fn;
+  if (_overlayRafId) return;
+  _overlayRafId = requestAnimationFrame(() => {
+    _overlayRafId = 0;
+    const job = _overlayPending;
+    _overlayPending = null;
+    if (job) {
+      try {
+        job();
+      } catch (e) {
+        console.error("[chessbot] overlay draw failed", e);
+      }
+    }
+  });
+}
 
 /** Clear move arrows and eval badges, but keep the eval bar. */
 function clearMoveIndicators() {

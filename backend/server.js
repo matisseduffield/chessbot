@@ -31,34 +31,44 @@ const { createPinAuth } = require("./src/auth/pin");
 serverLogger.install();
 
 // ── File scanner helpers ─────────────────────────────────
+// All FS scans are async (fs.promises) and run off the request path:
+// a background refresher updates `_fileCache` every FILE_CACHE_TTL.
+// Callers read the cached snapshot synchronously, so the event loop
+// is never blocked by a directory walk.
 
-/** Recursively find files matching extensions in a directory */
-function scanFiles(dir, extensions) {
+const fsp = fs.promises;
+
+/** Recursively find files matching extensions in a directory (async) */
+async function scanFilesAsync(dir, extensions) {
   const results = [];
-  if (!fs.existsSync(dir)) return results;
-  const walk = (d) => {
-    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
-      const full = path.join(d, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-      } else if (extensions.some((ext) => entry.name.toLowerCase().endsWith(ext))) {
-        results.push({ name: entry.name, path: full });
-      }
+  let entries;
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    // Directory missing or unreadable — treat as empty.
+    return results;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const sub = await scanFilesAsync(full, extensions);
+      results.push(...sub);
+    } else if (extensions.some((ext) => entry.name.toLowerCase().endsWith(ext))) {
+      results.push({ name: entry.name, path: full });
     }
-  };
-  walk(dir);
+  }
   return results;
 }
 
-function listEngines() {
+async function listEnginesAsync() {
   if (process.platform === "win32") {
-    return scanFiles(config.engineDir, [".exe"]);
+    return scanFilesAsync(config.engineDir, [".exe"]);
   }
-  // On macOS / Linux engine binaries are typically extension-less. Walk the
-  // tree and keep only files that look like binaries (no obvious doc/config
-  // extension). This is best-effort — users can always set STOCKFISH_PATH.
+  // On macOS / Linux engine binaries are typically extension-less. Walk
+  // the tree and keep only files that look like binaries (no obvious
+  // doc/config extension). Best-effort — users can always set STOCKFISH_PATH.
   const SKIP_EXT = new Set([".md", ".txt", ".json", ".log", ".html", ".sh"]);
-  const all = scanFiles(config.engineDir, [""]);
+  const all = await scanFilesAsync(config.engineDir, [""]);
   return all.filter((f) => {
     const dot = f.name.lastIndexOf(".");
     if (dot < 0) return true;
@@ -66,42 +76,69 @@ function listEngines() {
   });
 }
 
-function listBooks() {
-  return scanFiles(config.booksDir, [".bin"]);
+async function listBooksAsync() {
+  return scanFilesAsync(config.booksDir, [".bin"]);
 }
 
-// ── Cached file listing (avoids repeated fs walks on every WS request) ──
-const _fileCache = { engines: null, books: null, syzygy: null, ts: 0 };
-const FILE_CACHE_TTL = 10_000; // 10 seconds
-
-function getCachedFiles() {
-  const now = Date.now();
-  if (_fileCache.ts && now - _fileCache.ts < FILE_CACHE_TTL) return _fileCache;
-  _fileCache.engines = listEngines();
-  _fileCache.books = listBooks();
-  _fileCache.syzygy = listSyzygyDirs();
-  _fileCache.ts = now;
-  return _fileCache;
-}
-
-function listSyzygyDirs() {
+async function listSyzygyDirsAsync() {
   // Return directories that contain .rtbw or .rtbz files
   const results = [];
-  if (!fs.existsSync(config.syzygyDir)) return results;
-  // Check root
-  const rootFiles = fs.readdirSync(config.syzygyDir);
-  const hasTB = rootFiles.some((f) => f.endsWith(".rtbw") || f.endsWith(".rtbz"));
-  if (hasTB) results.push({ name: path.basename(config.syzygyDir), path: config.syzygyDir });
+  let rootEntries;
+  try {
+    rootEntries = await fsp.readdir(config.syzygyDir, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+  // Check root itself
+  const hasTB = rootEntries.some(
+    (e) => !e.isDirectory() && (e.name.endsWith(".rtbw") || e.name.endsWith(".rtbz")),
+  );
+  if (hasTB) {
+    results.push({ name: path.basename(config.syzygyDir), path: config.syzygyDir });
+  }
   // Check subdirs
-  for (const entry of fs.readdirSync(config.syzygyDir, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      const subPath = path.join(config.syzygyDir, entry.name);
-      const subFiles = fs.readdirSync(subPath);
-      const subHasTB = subFiles.some((f) => f.endsWith(".rtbw") || f.endsWith(".rtbz"));
-      if (subHasTB) results.push({ name: entry.name, path: subPath });
+  for (const entry of rootEntries) {
+    if (!entry.isDirectory()) continue;
+    const subPath = path.join(config.syzygyDir, entry.name);
+    let subFiles;
+    try {
+      subFiles = await fsp.readdir(subPath);
+    } catch {
+      continue;
     }
+    const subHasTB = subFiles.some((f) => f.endsWith(".rtbw") || f.endsWith(".rtbz"));
+    if (subHasTB) results.push({ name: entry.name, path: subPath });
   }
   return results;
+}
+
+// ── Cached file listing (background-refreshed) ──
+const _fileCache = { engines: [], books: [], syzygy: [], ts: 0 };
+const FILE_CACHE_TTL = 10_000; // refresh interval (ms)
+
+async function refreshFileCache() {
+  try {
+    const [engines, books, syzygy] = await Promise.all([
+      listEnginesAsync(),
+      listBooksAsync(),
+      listSyzygyDirsAsync(),
+    ]);
+    _fileCache.engines = engines;
+    _fileCache.books = books;
+    _fileCache.syzygy = syzygy;
+    _fileCache.ts = Date.now();
+  } catch (err) {
+    console.warn("[server] file-cache refresh failed:", err.message);
+  }
+}
+
+/**
+ * Caller-friendly: returns the latest cached snapshot synchronously.
+ * The cache is refreshed by a background poller (started in main()),
+ * so no request handler ever blocks the event loop on a fs walk.
+ */
+function getCachedFiles() {
+  return _fileCache;
 }
 
 // ── Evaluation cache ─────────────────────────────────────
@@ -144,6 +181,15 @@ setInterval(() => _evalCache.purgeExpired(), 60_000);
 async function main() {
   // ── 0. Load ECO opening database ──────────────────────
   eco.loadEco(path.join(__dirname, "eco"));
+
+  // ── 0a. Warm the file cache and start background refresher ──
+  // First scan is awaited so the first request after startup never sees
+  // an empty cache. After that the poller refreshes off the request path.
+  await refreshFileCache();
+  const fileCacheTimer = setInterval(() => {
+    void refreshFileCache();
+  }, FILE_CACHE_TTL);
+  fileCacheTimer.unref();
 
   // ── Variant definitions ────────────────────────────────
   // category: "standard" | "popular" | "chess" | "regional" | "shogi" | "mini" | "other"
@@ -1322,6 +1368,7 @@ async function main() {
     shuttingDown = true;
     console.log("\n[server] shutting down…");
     clearInterval(heartbeat);
+    clearInterval(fileCacheTimer);
 
     // Tell connected clients we're going away so they can show a
     // "reconnecting" UX instead of a hard close. evalGeneration is
