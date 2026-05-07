@@ -68,21 +68,33 @@ export function pieceClassToFenCharCT(className) {
  * @returns {boolean}
  */
 export function isChessTempoFlipped(doc) {
+  return detectChessTempoFlipConfidence(doc) === 'flipped';
+}
+
+/**
+ * Tri-state flip detection. Returns 'unknown' when neither file nor
+ * rank coordinate labels are present, so the caller can prompt the
+ * user rather than silently guessing.
+ *
+ * @param {Document} doc
+ * @returns {'flipped' | 'unflipped' | 'unknown'}
+ */
+export function detectChessTempoFlipConfidence(doc) {
   const fileCoords = doc.querySelectorAll(
     'chess-board .ct-board-inner-holder .ct-file-coord, chess-board coords coord',
   );
   if (fileCoords.length > 0) {
     const first = (fileCoords[0].textContent || '').trim().toLowerCase();
-    if (first === 'h') return true;
-    if (first === 'a') return false;
+    if (first === 'h') return 'flipped';
+    if (first === 'a') return 'unflipped';
   }
   const rankCoords = doc.querySelectorAll('chess-board .ct-rank-coord');
   if (rankCoords.length > 0) {
     const first = (rankCoords[0].textContent || '').trim();
-    if (first === '1') return true;
-    if (first === '8') return false;
+    if (first === '1') return 'flipped';
+    if (first === '8') return 'unflipped';
   }
-  return false;
+  return 'unknown';
 }
 
 /**

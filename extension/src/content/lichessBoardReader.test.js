@@ -10,7 +10,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { JSDOM } from 'jsdom';
-import { lichessBoardToFen, isLichessFlipped } from './lichessBoardReader.js';
+import {
+  lichessBoardToFen,
+  isLichessFlipped,
+  detectLichessFlipConfidence,
+} from './lichessBoardReader.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = resolve(__dirname, '../../../tests/fixtures/lichess');
@@ -62,6 +66,39 @@ describe('isLichessFlipped', () => {
        </body></html>`,
     );
     expect(isLichessFlipped(dom.window.document)).toBe(true);
+  });
+});
+
+describe('detectLichessFlipConfidence', () => {
+  it('returns "unflipped" for orientation-white', () => {
+    const dom = new JSDOM(
+      `<!DOCTYPE html><html><body><div class="cg-wrap orientation-white"><cg-board></cg-board></div></body></html>`,
+    );
+    expect(detectLichessFlipConfidence(dom.window.document)).toBe('unflipped');
+  });
+
+  it('returns "flipped" for orientation-black', () => {
+    const dom = new JSDOM(
+      `<!DOCTYPE html><html><body><div class="cg-wrap orientation-black"><cg-board></cg-board></div></body></html>`,
+    );
+    expect(detectLichessFlipConfidence(dom.window.document)).toBe('flipped');
+  });
+
+  it('returns "unflipped" when ranks coord starts with "8"', () => {
+    const dom = new JSDOM(
+      `<!DOCTYPE html><html><body>
+         <div class="cg-wrap"><cg-board></cg-board></div>
+         <coords class="ranks"><coord>8</coord></coords>
+       </body></html>`,
+    );
+    expect(detectLichessFlipConfidence(dom.window.document)).toBe('unflipped');
+  });
+
+  it('returns "unknown" when no orientation class and no coord labels', () => {
+    const dom = new JSDOM(
+      `<!DOCTYPE html><html><body><div class="cg-wrap"><cg-board></cg-board></div></body></html>`,
+    );
+    expect(detectLichessFlipConfidence(dom.window.document)).toBe('unknown');
   });
 });
 
