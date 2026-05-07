@@ -36,6 +36,13 @@ import {
   classifyVariantColors,
   nextTurnAfterMove,
 } from "./chesscomBoard.js";
+import {
+  nextDepth as _nextDepth,
+  nextMultiPV as _nextMultiPV,
+  isPlainKeystrokeOk,
+  formatDepthForToast,
+  formatMultiPVForToast,
+} from "./hotkeys.js";
 
 function gridToFenBoard(grid, pocket) {
   const noCastling = detectedVariant && NO_CASTLING_VARIANTS.has(detectedVariant);
@@ -5135,6 +5142,41 @@ function showToast(text, duration = 1800) {
 // ── Hotkeys ──────────────────────────────────────────────────
 // Alt+A = resume analysis, Alt+S = stop analysis
 // Alt+W = set side to white, Alt+Q = set side to black
+
+// Plain-letter shortcuts (no modifier). Plan §3 P3.C — d cycles
+// search depth, m cycles Multi-PV. Both go through set_option +
+// broadcast so the panel reflects the change immediately. The
+// `isPlainKeystrokeOk` guard skips text inputs / contenteditable so
+// we don't intercept site chat or PGN text.
+let _currentDepth = 15;
+let _currentMultiPV = 1;
+document.addEventListener("keydown", (e) => {
+  if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (!isPlainKeystrokeOk(e)) return;
+  const k = (e.key || "").toLowerCase();
+  if (k === "d") {
+    e.preventDefault();
+    _currentDepth = _nextDepth(_currentDepth);
+    showToast(formatDepthForToast(_currentDepth));
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "set_option", name: "depth", value: _currentDepth }));
+      ws.send(
+        JSON.stringify({
+          type: "broadcast",
+          payload: { type: "set_depth", value: _currentDepth },
+        }),
+      );
+    }
+  } else if (k === "m") {
+    e.preventDefault();
+    _currentMultiPV = _nextMultiPV(_currentMultiPV);
+    showToast(formatMultiPVForToast(_currentMultiPV));
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "set_option", name: "MultiPV", value: _currentMultiPV }));
+    }
+  }
+});
+
 document.addEventListener("keydown", (e) => {
   if (!e.altKey) return;
   // Use e.code instead of e.key — Alt+key produces Unicode chars on many OS/layouts
