@@ -2018,7 +2018,7 @@ import {
   hideProtocolMismatchBanner,
 } from "./src/protocolBanner.js";
 import { PROTOCOL_VERSION, isProtocolMismatch } from "@chessbot/shared";
-import { getJSON, setJSON, getRaw, setRaw } from "./src/panelStore.js";
+import { getJSON, setJSON, getRaw, setRaw, withCard } from "./src/panelStore.js";
 // Expose state on window for E2E tests + debugging (§3.1).
 window.state = state;
 // ── State ────────────────────────────────────────────────
@@ -2455,7 +2455,7 @@ function connect() {
             const EVAL_HISTORY_MAX = 200;
             while (state.evalHistory.length > EVAL_HISTORY_MAX) state.evalHistory.shift();
           }
-          renderEvalGraph();
+          withCard("eval-graph", renderEvalGraph);
           if (typeof window.__blunderCheck === "function") window.__blunderCheck(cp);
         }
       }
@@ -2481,9 +2481,9 @@ function connect() {
         const changed = state.boardFlipped !== msg.flipped;
         state.boardFlipped = !!msg.flipped;
         if (state.currentData) state.currentData.flipped = !!msg.flipped;
-        if (changed && state.currentData && state.currentData.fen) renderBoard();
+        if (changed && state.currentData && state.currentData.fen) withCard("board", renderBoard);
       }
-      renderPlayerBars();
+      withCard("player-bars", renderPlayerBars);
     }
     if (msg.type === "settings") {
       applySettings(msg);
@@ -2563,14 +2563,19 @@ function showPanelToast(text, level = "info") {
 }
 
 // ── Render ───────────────────────────────────────────────
+// Each card runs inside an error boundary so a single bad message
+// (malformed engine output, unexpected null line, etc.) can't take
+// down the whole dashboard. withCard logs `[panel] card "<name>"
+// render failed` and returns; the next renderAll() retries from
+// scratch with the latest state.
 function renderAll() {
   if (!state.currentData) return;
-  renderFen();
-  renderEco();
-  renderEvalBar();
-  renderBoard();
-  renderPVs(renderAll);
-  updateQuickInfoBar();
+  withCard("fen", renderFen);
+  withCard("eco", renderEco);
+  withCard("eval-bar", renderEvalBar);
+  withCard("board", renderBoard);
+  withCard("pv-cards", () => renderPVs(renderAll));
+  withCard("quick-info-bar", updateQuickInfoBar);
 }
 
 function renderFen() {
@@ -2610,7 +2615,7 @@ function initThemeGrid() {
       grid.querySelectorAll(".theme-swatch").forEach(s => s.classList.remove("active"));
       swatch.classList.add("active");
       saveSettings();
-      if (state.currentData) renderBoard();
+      if (state.currentData) withCard("board", renderBoard);
     });
     grid.appendChild(swatch);
   }
@@ -2623,7 +2628,7 @@ function initPieceSetSelect() {
   sel.addEventListener("change", () => {
     state.currentPieceSet = sel.value;
     saveSettings();
-    if (state.currentData) renderBoard();
+    if (state.currentData) withCard("board", renderBoard);
   });
 }
 
