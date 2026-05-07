@@ -208,6 +208,8 @@ to `.env` in the repo root.
 
 ## Hotkeys
 
+Modifier shortcuts work anywhere on the page:
+
 | Hotkey | Action |
 | --- | --- |
 | `Alt+A` | Resume analysis |
@@ -217,6 +219,66 @@ to `.env` in the repo root.
 | `Alt+T` | Toggle Training Mode |
 | `Alt+M` | Toggle Auto-Move |
 | `Alt+B` | Toggle Bullet Mode |
+
+Plain-letter shortcuts only fire when you're not typing in a text field
+(chat, search, comment) and no modifier is held:
+
+| Key | Action |
+| --- | --- |
+| `d` | Cycle search depth (10 → 15 → 20 → 25 → ∞ → 10) |
+| `m` | Cycle Multi-PV (1 → 3 → 5 → 1) |
+
+## Troubleshooting
+
+**Arrows don't appear on the board.** First check the popup status badge —
+if it shows "Offline", the extension can't reach the backend at
+`localhost:8080`. Run `npm run doctor` to verify the backend is running and
+Stockfish is wired up correctly. If the badge is "Connected" but the board
+still has no arrows, open devtools on the chess site and look for
+`[chessbot]` log messages — selector regressions on a site update will
+show up as "could not find board element".
+
+**A red banner says "protocol mismatch — extension speaks vN, backend
+speaks vM".** The extension and the backend got out of sync. Either pull
+the latest backend (`git pull && npm install && npm start`) or reload the
+unpacked extension at `chrome://extensions`. Whichever side is older needs
+to come up to match.
+
+**Doctor reports "binary did not respond with uciok" or "binary did not
+report an id name line".** The Stockfish binary in `engine/stockfish/` is
+the wrong file (e.g. a download stub) or not actually a UCI engine.
+Re-download from <https://stockfishchess.org/download/> for your OS.
+
+**"All checks passed" but the dashboard at `:8080` shows "Offline".** The
+backend probably exited during startup with an `ENOENT` for the engine
+binary. Run `npm start` directly (without `npm run dev`) and read the first
+two lines of stderr — they'll point at the path it tried.
+
+**The PGN export button writes a file with `1. ...` for every move.** That
+was a bug fixed in the panel; if you're seeing it, you have a stale
+`backend/panel/dist/`. Run `npm run build --workspace @chessbot/panel`
+and refresh the dashboard.
+
+**Hand-edited `chrome.storage.local` for the popup, now the popup looks
+broken.** The popup's settings are now Zod-validated; on next open, an
+invalid value is repaired to the default and a console warning logs which
+key was touched. If you want to start clean, run
+`chrome.storage.local.clear()` from the extension's service-worker
+devtools console.
+
+**Windows: `format:check` fails on a clean checkout.** `git`'s default
+`core.autocrlf` setting on Windows converts `LF` line endings to `CRLF`,
+which clashes with Prettier's `endOfLine: lf` rule. The repo's
+`.gitattributes` declares source files as `eol=lf`, so a fresh clone is
+fine; if you previously cloned without `.gitattributes`, run
+`git rm --cached -r . && git reset --hard` to re-checkout with the
+declared endings.
+
+**`npm run e2e` works in CI but errors locally with `ENOENT` on
+`stockfish-windows-x86-64-avx2.exe`.** The Playwright config boots the
+backend, which needs a real Stockfish binary. Either drop one in
+`engine/stockfish/` (matching your OS), or set `STOCKFISH_PATH` in `.env`
+to point at the binary you have.
 
 ## Related docs
 
