@@ -664,7 +664,12 @@ async function main() {
 
   server.listen(config.port, config.bindHost, () => {
     const host = config.bindHost === "0.0.0.0" ? "0.0.0.0" : "localhost";
-    console.log(`[server] listening on http://${host}:${config.port} (HTTP + WS)`);
+    // Read the actual port from the server (matters when PORT=0 is
+    // requested so Node picks an ephemeral port — e.g. integration
+    // tests). For a fixed port this is identical to config.port.
+    const addr = server.address();
+    const actualPort = addr && typeof addr === "object" ? addr.port : config.port;
+    console.log(`[server] listening on http://${host}:${actualPort} (HTTP + WS)`);
     if (config.bindHost === "0.0.0.0") {
       console.log(
         `[server] LAN mode: dashboard reachable from other devices on this network. ` +
@@ -672,7 +677,7 @@ async function main() {
       );
       if (pinAuth.enabled) {
         console.log(
-          `[server] pair other devices with: http://<your-lan-ip>:${config.port}/?pin=${pinAuth.pin}`,
+          `[server] pair other devices with: http://<your-lan-ip>:${actualPort}/?pin=${pinAuth.pin}`,
         );
       }
     }

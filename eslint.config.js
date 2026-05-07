@@ -118,4 +118,13 @@ export default defineConfig([
       sourceType: 'module',
     },
   },
+  {
+    // Test fixtures (e.g. tests/fixtures/fake-stockfish.mjs) — Node
+    // scripts that get spawned by integration tests.
+    files: ['tests/fixtures/**/*.{js,mjs,cjs}'],
+    languageOptions: {
+      globals: { ...globals.node },
+      sourceType: 'module',
+    },
+  },
 ]);
