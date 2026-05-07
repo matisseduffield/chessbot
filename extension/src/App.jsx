@@ -1,5 +1,11 @@
 import { useState, useEffect } from 'react'
 import './App.css'
+import {
+  loadPopupSettings,
+  savePopupSettings,
+  subscribePopupSettings,
+  DEFAULT_SETTINGS,
+} from './popupSettings.js'
 
 // Reads and clears chrome.runtime.lastError after a sendMessage callback.
 // Returns true when an error was present so callers can early-return.
@@ -7,7 +13,6 @@ import './App.css'
 function consumeLastError(ctx) {
   const err = chrome.runtime?.lastError
   if (err) {
-     
     console.warn(`[chessbot popup] ${ctx}:`, err.message || err)
     return true
   }
@@ -15,33 +20,50 @@ function consumeLastError(ctx) {
 }
 
 function App() {
-  const [enabled, setEnabled] = useState(true)
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS)
   const [connected, setConnected] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [displayMode, setDisplayMode] = useState('both')
 
-  // Load persisted state, then query content script for live state
+  // Load persisted state through the validated schema (popupSettings.js
+  // applies defaults + repairs invalid storage entries), then query the
+  // content script for live state. Cross-tab changes flow through the
+  // subscription so two open popups stay consistent.
   useEffect(() => {
-    chrome.storage?.local?.get(['chessbot_popup_enabled', 'chessbot_popup_displayMode'], (result) => {
-      if (result?.chessbot_popup_enabled !== undefined) setEnabled(result.chessbot_popup_enabled)
-      if (result?.chessbot_popup_displayMode) setDisplayMode(result.chessbot_popup_displayMode)
+    let active = true
+    loadPopupSettings(chrome.storage?.local).then(({ settings: loaded, repaired }) => {
+      if (!active) return
+      setSettings(loaded)
+      if (repaired.length > 0) {
+        // Heal storage so the bad values don't keep tripping the schema.
+        savePopupSettings(chrome.storage?.local, loaded)
+        console.warn('[chessbot popup] repaired invalid settings:', repaired)
+      }
     })
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'get_status' }, (resp) => {
           if (consumeLastError('get_status') || !resp) return
-          if (typeof resp.enabled === 'boolean') {
-            setEnabled(resp.enabled)
-            chrome.storage?.local?.set({ chessbot_popup_enabled: resp.enabled })
+          if (!active) return
+          const live = {}
+          if (typeof resp.enabled === 'boolean') live.enabled = resp.enabled
+          if (resp.displayMode) live.displayMode = resp.displayMode
+          if (Object.keys(live).length > 0) {
+            setSettings((s) => ({ ...s, ...live }))
+            // savePopupSettings drops any field that fails validation.
+            savePopupSettings(chrome.storage?.local, live)
           }
           if (typeof resp.connected === 'boolean') setConnected(resp.connected)
-          if (resp.displayMode) {
-            setDisplayMode(resp.displayMode)
-            chrome.storage?.local?.set({ chessbot_popup_displayMode: resp.displayMode })
-          }
         })
       }
     })
+    const dispose = subscribePopupSettings(chrome.storage?.local, (next) => {
+      if (!active) return
+      setSettings((s) => ({ ...s, ...next }))
+    })
+    return () => {
+      active = false
+      dispose()
+    }
   }, [])
 
   useEffect(() => {
@@ -64,9 +86,9 @@ function App() {
   }, [])
 
   const toggle = () => {
-    const next = !enabled
-    setEnabled(next)
-    chrome.storage?.local?.set({ chessbot_popup_enabled: next })
+    const next = !settings.enabled
+    setSettings((s) => ({ ...s, enabled: next }))
+    savePopupSettings(chrome.storage?.local, { enabled: next })
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'toggle', enabled: next }, () => {
@@ -80,9 +102,13 @@ function App() {
     chrome.tabs.create({ url: 'http://localhost:8080' })
   }
 
-  const changeDisplayMode = (mode) => {
-    setDisplayMode(mode)
-    chrome.storage?.local?.set({ chessbot_popup_displayMode: mode })
+  const changeDisplayMode = async (mode) => {
+    const r = await savePopupSettings(chrome.storage?.local, { displayMode: mode })
+    if (!r.ok) {
+      console.warn('[chessbot popup] rejected displayMode change:', r.error)
+      return
+    }
+    setSettings((s) => ({ ...s, displayMode: mode }))
     chrome.tabs?.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'set_display_mode', value: mode }, () => {
@@ -110,6 +136,8 @@ function App() {
       }
     })
   }
+
+  const { enabled, displayMode } = settings
 
   return (
     <div className="popup">
