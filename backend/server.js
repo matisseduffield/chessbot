@@ -28,6 +28,7 @@ const { pickSearchLimits } = require("./src/engine/searchLimits");
 const { createPinAuth } = require("./src/auth/pin");
 const { FileCache } = require("./src/server/fileCache");
 const { registerHttpRoutes } = require("./src/server/httpRoutes");
+const { createEvalPipeline } = require("./src/server/evalPipeline");
 
 // ── Server log buffer ────────────────────────────────────
 serverLogger.install();
@@ -482,6 +483,28 @@ async function main() {
   // safeSend is imported from src/ws/send; it no-ops on closed sockets
   // and stringifies objects on the fly.
 
+  // Eval pipeline (book → cache → engine cascade). Lives in
+  // src/server/evalPipeline.js; the per-connection message handler
+  // chains runFen() onto its evaluationQueue so requests serialise.
+  // Stable deps are bound here once; mutable state (engine instance,
+  // engineSwitchPromise, per-connection generation counters) flows
+  // through closure getters.
+  const runFen = createEvalPipeline({
+    config,
+    book,
+    lichessLookup,
+    enrichLines,
+    acquireEvalLock,
+    getCachedEval,
+    getCachedEvalAtLeast,
+    setCachedEval,
+    getEngine: () => engine,
+    getEngineSwitchPromise: () => engineSwitchPromise,
+    broadcast,
+    safeSend,
+    getEco,
+  });
+
   wss.on("connection", (ws, req) => {
     const remote = req.socket.remoteAddress;
     console.log(`[server] client connected (${remote})`);
@@ -632,260 +655,23 @@ async function main() {
         console.log(`[server] ← FEN (gen ${gen}): ${fen} [variant: ${evalVariant}]`);
 
         // Queue the evaluation so requests are processed one at a time.
-        // acquireEvalLock() serializes access to the shared engine across all clients.
+        // The pipeline body (book → cache → engine cascade) lives in
+        // src/server/evalPipeline.js; we chain it onto evaluationQueue
+        // so requests serialise on the shared engine.
         evaluationQueue = evaluationQueue
-          .then(async () => {
-            // If client disconnected, bail — prevents stale queue handlers
-            // from racing with a new client's evaluations on the shared engine.
-            if (ws.readyState !== ws.OPEN) return;
-
-            // Abort any in-progress evaluation now that we own the queue slot
-            await engine.abort();
-
-            // If an engine/variant switch is in progress, wait for it
-            if (engineSwitchPromise) {
-              console.log(`[server] eval gen ${gen} waiting for engine switch to complete...`);
-              await engineSwitchPromise;
-            }
-
-            // If a newer FEN arrived or variant switched since we queued, skip this one
-            if (gen !== evalGeneration || variantGen !== globalVariantGen) {
-              console.log(`[server] skipping stale eval gen ${gen} (current: ${evalGeneration}, variantGen: ${variantGen}→${globalVariantGen})`);
-              return;
-            }
-
-            // Look up ECO for current position (standard chess only)
-            const isStandard = evalVariant === "chess" || evalVariant === "chess960";
-            const posEco = isStandard ? getEco(fen) : null;
-
-            // Try opening book first (standard chess only, skip for deep positions)
-            const moveNumber = parseFen(fen)?.fullmove ?? 1;
-            if (isStandard && moveNumber <= 15) {
-              const bookMove = await book.lookup(fen);
-              if (bookMove) {
-                if (gen !== evalGeneration) return;
-                console.log(`[server] → bestmove (book): ${bookMove}`);
-                const bookMsg = {
-                  type: "bestmove",
-                  bestmove: bookMove,
-                  source: "book",
-                  fen,
-                  variant: evalVariant,
-                  eco: posEco ? posEco.name : null,
-                  ecoCode: posEco ? posEco.code : null,
-                };
-                safeSend(ws, bookMsg);
-                broadcast(ws, bookMsg);
-                return;
-              }
-
-              // Try Lichess opening explorer as fallback
-              const lichessMove = await lichessLookup(fen);
-              if (lichessMove) {
-                if (gen !== evalGeneration) return;
-                console.log(`[server] → bestmove (lichess): ${lichessMove}`);
-                const lichessMsg = {
-                  type: "bestmove",
-                  bestmove: lichessMove,
-                  source: "lichess",
-                  fen,
-                  variant: evalVariant,
-                  eco: posEco ? posEco.name : null,
-                  ecoCode: posEco ? posEco.code : null,
-                };
-                safeSend(ws, lichessMsg);
-                broadcast(ws, lichessMsg);
-                return;
-              }
-            }
-
-            // Fall back to Stockfish — check eval cache first (skip for infinite analysis)
-            const multiPV = Number(engine.getSettings().MultiPV) || 1;
-            if (depth > 0) {
-              // First try the exact depth, then fall back to any deeper
-              // cached entry (deeper analysis subsumes shallower at the
-              // same position). Tag the source as "cache" so the client
-              // can show that the line came from a deeper prior search.
-              let cached = getCachedEval(fen, evalVariant, depth, multiPV);
-              let cachedFromDepth = depth;
-              if (!cached) {
-                const fallback = getCachedEvalAtLeast(fen, evalVariant, depth, multiPV);
-                if (fallback) {
-                  cached = fallback.result;
-                  cachedFromDepth = fallback.depth;
-                  console.log(
-                    `[server] cache depth-fallback: requested ${depth}, served ${cachedFromDepth}`,
-                  );
-                }
-              }
-              if (cached) {
-                console.log(`[server] → bestmove (cache): ${cached.bestmove}`);
-                const cacheMsg = {
-                  type: "bestmove",
-                  bestmove: cached.bestmove,
-                  lines: cached.lines,
-                  source: "engine",
-                  fen,
-                  variant: evalVariant,
-                  eco: posEco ? posEco.name : null,
-                  ecoCode: posEco ? posEco.code : null,
-                  tablebase: cached.tablebase,
-                  cached: true,
-                  // Set when we satisfied the request from a deeper
-                  // cached entry; clients can render a small badge.
-                  ...(cachedFromDepth > depth ? { cachedFromDepth } : {}),
-                };
-                safeSend(ws, cacheMsg);
-                broadcast(ws, cacheMsg);
-                return;
-              }
-            }
-
-            // Acquire global lock to prevent cross-client interleave
-            const releaseEval = await acquireEvalLock();
-            try {
-              if (gen !== evalGeneration || ws.readyState !== ws.OPEN) return;
-
-              // Send engine progress updates to panel
-              let _lastProgressDepth = 0;
-              searchOptions.onInfo = (info) => {
-                if (gen !== evalGeneration || ws.readyState !== ws.OPEN) return;
-                const d = info.depth || 0;
-                // For infinite analysis, send full intermediate results
-                if (depth === 0) {
-                  const enrichedLines = enrichLines(info.lines || [], fen);
-                  const infoMsg = {
-                    type: "bestmove",
-                    bestmove: info.bestmove,
-                    lines: enrichedLines,
-                    source: "engine",
-                    depth: d,
-                    fen,
-                    variant: evalVariant,
-                    eco: posEco ? posEco.name : null,
-                    ecoCode: posEco ? posEco.code : null,
-                    streaming: true,
-                  };
-                  safeSend(ws, infoMsg);
-                  broadcast(ws, infoMsg);
-                } else if (d > _lastProgressDepth) {
-                  // For fixed-depth analysis, send lightweight progress
-                  _lastProgressDepth = d;
-                  const first = (info.lines && info.lines[0]) || {};
-                  const progressMsg = {
-                    type: "eval_progress",
-                    depth: d,
-                    targetDepth: depth,
-                    nodes: first.nodes || null,
-                    nps: first.nps || null,
-                    fen,
-                  };
-                  safeSend(ws, progressMsg);
-                  broadcast(ws, progressMsg);
-                }
-              };
-
-              // For infinite analysis (depth=0), stream intermediate results.
-              // Only set infinite if there's no movetime/nodes limit.
-              if (depth === 0 && !searchOptions.movetime && !searchOptions.nodes) {
-                searchOptions.infinite = true;
-              }
-              let result = await engine.evaluate(fen, depth, searchOptions);
-              // Check again after eval finishes — a newer FEN may have arrived
-              if (gen !== evalGeneration) {
-                console.log(`[server] discarding stale result gen ${gen}`);
-                return;
-              }
-
-              // If engine crashed due to a corrupt Syzygy tablebase, disable Syzygy
-              // and retry once so the user gets a valid move instead of a hang.
-              if (result && result.crashed && result.reason && result.reason.startsWith("corrupt_tablebase")) {
-                const corruptFile = result.reason.split(":").slice(1).join(":");
-                console.error(`[server] engine crashed: corrupt tablebase file ${corruptFile} — disabling Syzygy and retrying`);
-                safeSend(ws, {
-                  type: "warning",
-                  code: "corrupt_tablebase",
-                  message: `Corrupt Syzygy tablebase file detected (${corruptFile}). Syzygy has been disabled for this session; re-download the file to restore it.`,
-                  file: corruptFile,
-                });
-                try {
-                  await engine.setOption("SyzygyPath", "<empty>");
-                  config.syzygyPath = null;
-                } catch (e) {
-                  console.error("[server] failed to disable Syzygy after crash:", e.message);
-                }
-                if (gen === evalGeneration) {
-                  result = await engine.evaluate(fen, depth, searchOptions);
-                  if (gen !== evalGeneration) {
-                    console.log(`[server] discarding stale retry result gen ${gen}`);
-                    return;
-                  }
-                }
-              }
-
-              // If engine still crashed / returned null, surface a proper error
-              // instead of silently sending bestmove:null (which hangs the client).
-              if (!result || !result.bestmove) {
-                console.error(`[server] null bestmove (crashed=${result?.crashed}, reason=${result?.reason || "unknown"})`);
-                safeSend(ws, {
-                  type: "error",
-                  code: result?.crashed ? "engine_crash" : "engine_no_move",
-                  message: result?.crashed
-                    ? `Engine crashed during analysis (${result.reason || "unknown"}). The engine has been restarted — try again.`
-                    : "Engine returned no move for this position.",
-                  fen,
-                });
-                return;
-              }
-
-              const enrichedLines = enrichLines(result.lines || [], fen);
-              console.log(`[server] → bestmove (engine): ${result.bestmove}`);
-
-              // Endgame tablebase classification
-              let tbResult = null;
-              if (config.syzygyPath && isStandard) {
-                const pieceCount = fen.split(" ")[0].replace(/[^a-zA-Z]/g, "").length;
-                if (pieceCount <= 7 && result.lines && result.lines[0]) {
-                  const line = result.lines[0];
-                  const score = line.score;
-                  const mate = line.mate;
-                  if (mate !== undefined && mate !== null) {
-                    tbResult = mate > 0 ? "win" : "loss";
-                  } else if (score !== undefined && score !== null) {
-                    if (Math.abs(score) >= 9000) tbResult = score > 0 ? "win" : "loss";
-                    else if (Math.abs(score) <= 5) tbResult = "draw";
-                    else tbResult = score > 0 ? "win" : "loss";
-                  }
-                }
-              }
-
-              const engineMsg = {
-                type: "bestmove",
-                bestmove: result.bestmove,
-                ponder: result.ponder || null,
-                lines: enrichedLines,
-                source: "engine",
-                fen,
-                variant: evalVariant,
-                eco: posEco ? posEco.name : null,
-                ecoCode: posEco ? posEco.code : null,
-                tablebase: tbResult,
-              };
-              // Cache the result for future lookups (skip infinite analysis)
-              if (depth > 0 && result.bestmove) {
-                setCachedEval(fen, evalVariant, depth, multiPV, {
-                  bestmove: result.bestmove,
-                  ponder: result.ponder || null,
-                  lines: enrichedLines,
-                  tablebase: tbResult,
-                });
-              }
-              safeSend(ws, engineMsg);
-              broadcast(ws, engineMsg);
-            } finally {
-              releaseEval();
-            }
-          })
+          .then(() =>
+            runFen({
+              ws,
+              fen,
+              depth,
+              searchOptions,
+              evalVariant,
+              gen,
+              variantGen,
+              getEvalGeneration: () => evalGeneration,
+              getGlobalVariantGen: () => globalVariantGen,
+            }),
+          )
           .catch((err) => {
             console.error("[server] evaluation error:", err.message);
             safeSend(ws, { type: "error", code: "engine_error", message: err.message });
