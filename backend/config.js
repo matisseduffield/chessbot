@@ -6,12 +6,15 @@ const { z } = require("zod");
 // fail fast with a human-readable message rather than silently falling
 // through to runtime errors.
 const EnvSchema = z.object({
+  // Accept PORT=0 as a sentinel for "let the OS pick an ephemeral port"
+  // (Node's documented behaviour for server.listen(0)). Useful for
+  // tests so they never collide with a developer's running backend.
   PORT: z
     .string()
     .optional()
     .transform((v) => (v ? Number(v) : undefined))
-    .refine((v) => v === undefined || (Number.isInteger(v) && v > 0 && v < 65536), {
-      message: "PORT must be an integer in 1-65535",
+    .refine((v) => v === undefined || (Number.isInteger(v) && v >= 0 && v < 65536), {
+      message: "PORT must be an integer in 0-65535 (0 = ephemeral)",
     }),
   ENGINE_DIR: z.string().optional(),
   BOOKS_DIR: z.string().optional(),
@@ -155,7 +158,9 @@ module.exports = {
     path.join(__dirname, "..", "syzygy"),
 
   // ── Server ────────────────────────────────────────────
-  port: env.PORT || 8080,
+  // `??` (not `||`) so PORT=0 is preserved as the explicit "ephemeral"
+  // sentinel instead of being coerced to the 8080 fallback.
+  port: env.PORT ?? 8080,
 
   // ── Logging ───────────────────────────────────────────
   logLevel: env.LOG_LEVEL || "info",
