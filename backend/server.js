@@ -26,111 +26,20 @@ const { parseClockText } = require("@chessbot/shared");
 const serverLogger = require("./src/logger");
 const { pickSearchLimits } = require("./src/engine/searchLimits");
 const { createPinAuth } = require("./src/auth/pin");
+const { FileCache } = require("./src/server/fileCache");
+const { registerHttpRoutes } = require("./src/server/httpRoutes");
 
 // ── Server log buffer ────────────────────────────────────
 serverLogger.install();
 
-// ── File scanner helpers ─────────────────────────────────
-// All FS scans are async (fs.promises) and run off the request path:
-// a background refresher updates `_fileCache` every FILE_CACHE_TTL.
-// Callers read the cached snapshot synchronously, so the event loop
-// is never blocked by a directory walk.
-
-const fsp = fs.promises;
-
-/** Recursively find files matching extensions in a directory (async) */
-async function scanFilesAsync(dir, extensions) {
-  const results = [];
-  let entries;
-  try {
-    entries = await fsp.readdir(dir, { withFileTypes: true });
-  } catch {
-    // Directory missing or unreadable — treat as empty.
-    return results;
-  }
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      const sub = await scanFilesAsync(full, extensions);
-      results.push(...sub);
-    } else if (extensions.some((ext) => entry.name.toLowerCase().endsWith(ext))) {
-      results.push({ name: entry.name, path: full });
-    }
-  }
-  return results;
-}
-
-async function listEnginesAsync() {
-  if (process.platform === "win32") {
-    return scanFilesAsync(config.engineDir, [".exe"]);
-  }
-  // On macOS / Linux engine binaries are typically extension-less. Walk
-  // the tree and keep only files that look like binaries (no obvious
-  // doc/config extension). Best-effort — users can always set STOCKFISH_PATH.
-  const SKIP_EXT = new Set([".md", ".txt", ".json", ".log", ".html", ".sh"]);
-  const all = await scanFilesAsync(config.engineDir, [""]);
-  return all.filter((f) => {
-    const dot = f.name.lastIndexOf(".");
-    if (dot < 0) return true;
-    return !SKIP_EXT.has(f.name.slice(dot).toLowerCase());
-  });
-}
-
-async function listBooksAsync() {
-  return scanFilesAsync(config.booksDir, [".bin"]);
-}
-
-async function listSyzygyDirsAsync() {
-  // Return directories that contain .rtbw or .rtbz files
-  const results = [];
-  let rootEntries;
-  try {
-    rootEntries = await fsp.readdir(config.syzygyDir, { withFileTypes: true });
-  } catch {
-    return results;
-  }
-  // Check root itself
-  const hasTB = rootEntries.some(
-    (e) => !e.isDirectory() && (e.name.endsWith(".rtbw") || e.name.endsWith(".rtbz")),
-  );
-  if (hasTB) {
-    results.push({ name: path.basename(config.syzygyDir), path: config.syzygyDir });
-  }
-  // Check subdirs
-  for (const entry of rootEntries) {
-    if (!entry.isDirectory()) continue;
-    const subPath = path.join(config.syzygyDir, entry.name);
-    let subFiles;
-    try {
-      subFiles = await fsp.readdir(subPath);
-    } catch {
-      continue;
-    }
-    const subHasTB = subFiles.some((f) => f.endsWith(".rtbw") || f.endsWith(".rtbz"));
-    if (subHasTB) results.push({ name: entry.name, path: subPath });
-  }
-  return results;
-}
-
-// ── Cached file listing (background-refreshed) ──
-const _fileCache = { engines: [], books: [], syzygy: [], ts: 0 };
-const FILE_CACHE_TTL = 10_000; // refresh interval (ms)
-
-async function refreshFileCache() {
-  try {
-    const [engines, books, syzygy] = await Promise.all([
-      listEnginesAsync(),
-      listBooksAsync(),
-      listSyzygyDirsAsync(),
-    ]);
-    _fileCache.engines = engines;
-    _fileCache.books = books;
-    _fileCache.syzygy = syzygy;
-    _fileCache.ts = Date.now();
-  } catch (err) {
-    console.warn("[server] file-cache refresh failed:", err.message);
-  }
-}
+// ── File scanner ─────────────────────────────────────────
+// Background-refreshed snapshot of engines/books/syzygy directories.
+// See backend/src/server/fileCache.js for the implementation.
+const _fileCache = new FileCache({
+  engineDir: config.engineDir,
+  booksDir: config.booksDir,
+  syzygyDir: config.syzygyDir,
+});
 
 /**
  * Caller-friendly: returns the latest cached snapshot synchronously.
@@ -138,7 +47,7 @@ async function refreshFileCache() {
  * so no request handler ever blocks the event loop on a fs walk.
  */
 function getCachedFiles() {
-  return _fileCache;
+  return _fileCache.get();
 }
 
 // ── Evaluation cache ─────────────────────────────────────
@@ -185,11 +94,8 @@ async function main() {
   // ── 0a. Warm the file cache and start background refresher ──
   // First scan is awaited so the first request after startup never sees
   // an empty cache. After that the poller refreshes off the request path.
-  await refreshFileCache();
-  const fileCacheTimer = setInterval(() => {
-    void refreshFileCache();
-  }, FILE_CACHE_TTL);
-  fileCacheTimer.unref();
+  await _fileCache.refresh();
+  const stopFileCachePoller = _fileCache.start();
 
   // ── Variant definitions ────────────────────────────────
   // category: "standard" | "popular" | "chess" | "regional" | "shogi" | "mini" | "other"
@@ -454,152 +360,30 @@ async function main() {
   const pinAuth = createPinAuth({ enabled: config.bindHost === "0.0.0.0" });
   pinAuth.installHttp(app);
 
-  // ── CSRF guard on mutating endpoints ──────────────────
-  // POSTs must come from the dashboard (same-origin) or from one of the
-  // explicitly trusted browser-extension origins. Stops other localhost
-  // pages or LAN devices from clearing the cache via a forged form post.
-  const TRUSTED_POST_ORIGINS = new Set([
-    `http://localhost:${config.port}`,
-    `http://127.0.0.1:${config.port}`,
-    "https://www.chess.com",
-    "https://lichess.org",
-    "https://playstrategy.org",
-    "https://chesstempo.com",
-  ]);
-  app.use((req, res, next) => {
-    if (req.method !== "POST") return next();
-    const origin = req.headers.origin;
-    if (origin && !TRUSTED_POST_ORIGINS.has(origin)) {
-      // Allow same-host origins on whatever LAN IP the user bound to —
-      // this matches "the dashboard pinned itself open from this device".
-      const host = req.headers.host;
-      if (!host || origin !== `http://${host}`) {
-        return res.status(403).json({ error: "forbidden_origin" });
-      }
-    }
-    next();
-  });
-
-  // ── CORS / Private Network Access ──────────────────────
-  // Chrome requires a preflight response with Access-Control-Allow-Private-Network
-  // before allowing WebSocket connections from HTTPS pages to localhost.
-  const ALLOWED_ORIGINS = new Set([
-    `http://localhost:${config.port}`,
-    "https://www.chess.com",
-    "https://lichess.org",
-    "https://playstrategy.org",
-    "https://chesstempo.com",
-  ]);
-  app.use((req, res, next) => {
-    const origin = req.headers.origin;
-    if (origin && ALLOWED_ORIGINS.has(origin)) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-    }
-    res.setHeader("Access-Control-Allow-Private-Network", "true");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    if (req.method === "OPTIONS") {
-      return res.sendStatus(204);
-    }
-    next();
-  });
-
-  // ── Health endpoint ────────────────────────────────────
-  // Liveness + light diagnostics for CI, uptime probes, and the panel
-  // self-test button. Always returns 200 so network layers can distinguish
-  // "backend down" from "engine not ready"; inspect the body for details.
+  // ── HTTP routes ──────────────────────────────────────────
+  // Origin gate, CORS/PNA preflight, /healthz, /selfcheck, eval-cache
+  // endpoints, and the panel static handler all live in
+  // src/server/httpRoutes.js. Mutable state is read via getters so the
+  // handlers always see the current engine / variant after a switch.
   const startedAt = Date.now();
-  app.get("/healthz", (_req, res) => {
-    res.json({
-      status: "ok",
-      uptimeMs: Date.now() - startedAt,
-      version: require("./package.json").version,
-      engine: {
-        ready: !!(engine && engine.ready),
-        type: currentEngineType,
-        variant: currentVariant,
-      },
-      book: {
-        ecoOpenings: eco.size ? eco.size() : 0,
-        lichessEnabled: !!(lichessBook && lichessBook.enabled),
-        offlineBook: book.enabled ? path.basename(book.bookPath) : null,
-      },
-      clients: wss ? wss.clients.size : 0,
-    });
+  registerHttpRoutes(app, {
+    startedAt,
+    config,
+    evalCache: _evalCache,
+    evalCachePath: _evalCachePath,
+    eco,
+    book,
+    pkgVersion: require("./package.json").version,
+    panelDir: path.join(__dirname, "panel"),
+    bookBaseName: (p) => path.basename(p),
+    express,
+    getEngine: () => engine,
+    getCurrentEngineType: () => currentEngineType,
+    getCurrentVariant: () => currentVariant,
+    getLichessBook: () => lichessBook,
+    getWss: () => wss,
   });
 
-  // ── Self-check: run a short canned evaluation ─────────────
-  // Returns depth reached + time elapsed so ops can verify the engine
-  // pipeline end-to-end. Refuses while another search is active so we
-  // don't poison the user's current analysis. Plan §10.
-  let selfcheckBusy = false;
-  app.get("/selfcheck", async (_req, res) => {
-    if (!engine || !engine.ready) {
-      return res.status(503).json({ status: "engine_not_ready" });
-    }
-    if (selfcheckBusy) {
-      return res.status(503).json({ status: "busy" });
-    }
-    selfcheckBusy = true;
-    const startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-    const t0 = Date.now();
-    try {
-      const result = await engine.evaluate(startFen, 8, { movetime: 1500 });
-      res.json({
-        status: "ok",
-        elapsedMs: Date.now() - t0,
-        depthReached: result.depth || 0,
-        bestMove: result.bestmove || result.bestMove || null,
-        score: result.score ?? null,
-        engineType: currentEngineType,
-      });
-    } catch (err) {
-      res.status(500).json({ status: "error", error: String(err && err.message || err) });
-    } finally {
-      selfcheckBusy = false;
-    }
-  });
-
-  // ── Eval cache inspection / control (exposed in the panel Tools card) ───
-  app.get("/api/cache/stats", (_req, res) => {
-    res.json({
-      size: _evalCache.size,
-      max: _evalCache.max,
-      ttlMs: _evalCache.ttlMs,
-      path: _evalCachePath,
-    });
-  });
-  app.post("/api/cache/clear", (_req, res) => {
-    const prev = _evalCache.size;
-    _evalCache.clear();
-    res.json({ status: "ok", cleared: prev });
-  });
-
-  // §2.1 Vite-built panel: prefer dist/ if present (production), fall back
-  // to the source tree (dev — e.g. running `vite` separately on :5174, or
-  // just editing src/ + hard-refreshing). Built dist is what `npm run build`
-  // produces; CI checks for it so `extension.builds → backend.builds` chain.
-  const panelSrc = path.join(__dirname, "panel");
-  const panelDist = path.join(__dirname, "panel", "dist");
-  const panelRoot = fs.existsSync(path.join(panelDist, "index.html")) ? panelDist : panelSrc;
-  console.log(`[server] serving panel from ${panelRoot === panelDist ? "dist (built)" : "src (dev)"}`);
-  // Cache strategy: HTML must never be cached (it's the entry point and
-  // pins the JS/CSS hashes); Vite-emitted hashed assets in assets/ are
-  // safe to cache forever; everything else gets a revalidate hint so a
-  // backend upgrade doesn't strand users on a stale dashboard.
-  app.use(
-    express.static(panelRoot, {
-      setHeaders: (res, filePath) => {
-        if (filePath.endsWith(".html")) {
-          res.setHeader("Cache-Control", "no-store");
-        } else if (/[\\/]assets[\\/].+-[A-Za-z0-9_]{8,}\.(?:js|css|woff2?|png|svg)$/i.test(filePath)) {
-          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-        } else {
-          res.setHeader("Cache-Control", "no-cache, must-revalidate");
-        }
-      },
-    }),
-  );
   const server = http.createServer(app);
 
   // Handle PNA preflight at the raw HTTP level (before ws upgrade intercepts)
@@ -1373,7 +1157,7 @@ async function main() {
     shuttingDown = true;
     console.log("\n[server] shutting down…");
     clearInterval(heartbeat);
-    clearInterval(fileCacheTimer);
+    stopFileCachePoller();
 
     // Tell connected clients we're going away so they can show a
     // "reconnecting" UX instead of a hard close. evalGeneration is
