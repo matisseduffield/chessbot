@@ -20,7 +20,7 @@
  *   evalCachePath: string,
  *   eco: { size?: () => number },
  *   book: { enabled: boolean, bookPath?: string },
- *   getEngine: () => { ready: boolean, evaluate?: Function } | null,
+ *   getEngine: () => any,
  *   getCurrentVariant: () => string,
  *   getCurrentEngineType: () => string,
  *   getLichessBook: () => { enabled: boolean } | null,
@@ -28,7 +28,7 @@
  *   panelDir: string,
  *   pkgVersion: string,
  *   bookBaseName: (p: string) => string,
- *   express: typeof import('express'),
+ *   express: any,
  *   log?: { info: Function, warn: Function },
  * }} HttpRoutesDeps
  */
@@ -39,7 +39,7 @@ const path = require('node:path');
 /**
  * Register origin / CORS middleware and dashboard / health / cache
  * routes on the given Express app.
- * @param {import('express').Express} app
+ * @param {any} app  Express app (untyped — @types/express isn't a hard dep)
  * @param {HttpRoutesDeps} deps
  */
 function registerHttpRoutes(app, deps) {
@@ -55,7 +55,7 @@ function registerHttpRoutes(app, deps) {
  * page or LAN device from forging a form post that would clear the eval
  * cache or otherwise mutate state. Same-host POSTs (i.e. the dashboard
  * pinned itself open from the running device) are allowed.
- * @param {import('express').Express} app
+ * @param {any} app  Express app (untyped — @types/express isn't a hard dep)
  * @param {HttpRoutesDeps} deps
  */
 function registerOriginGate(app, { config }) {
@@ -67,7 +67,7 @@ function registerOriginGate(app, { config }) {
     'https://playstrategy.org',
     'https://chesstempo.com',
   ]);
-  app.use((req, res, next) => {
+  app.use((/** @type {any} */ req, /** @type {any} */ res, /** @type {any} */ next) => {
     if (req.method !== 'POST') return next();
     const origin = req.headers.origin;
     if (origin && !TRUSTED_POST_ORIGINS.has(origin)) {
@@ -84,7 +84,7 @@ function registerOriginGate(app, { config }) {
  * CORS + Private Network Access preflight. Chrome requires a successful
  * OPTIONS preflight with Access-Control-Allow-Private-Network: true
  * before allowing a WebSocket from an HTTPS page to talk to localhost.
- * @param {import('express').Express} app
+ * @param {any} app  Express app (untyped — @types/express isn't a hard dep)
  * @param {HttpRoutesDeps} deps
  */
 function registerCors(app, { config }) {
@@ -95,7 +95,7 @@ function registerCors(app, { config }) {
     'https://playstrategy.org',
     'https://chesstempo.com',
   ]);
-  app.use((req, res, next) => {
+  app.use((/** @type {any} */ req, /** @type {any} */ res, /** @type {any} */ next) => {
     const origin = req.headers.origin;
     if (origin && ALLOWED_ORIGINS.has(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
@@ -116,7 +116,7 @@ function registerCors(app, { config }) {
  * state.
  * GET /selfcheck — runs a short canned evaluation so ops can verify
  * the engine pipeline end-to-end.
- * @param {import('express').Express} app
+ * @param {any} app  Express app (untyped — @types/express isn't a hard dep)
  * @param {HttpRoutesDeps} deps
  */
 function registerHealthAndDiagnostics(
@@ -134,7 +134,7 @@ function registerHealthAndDiagnostics(
     bookBaseName,
   },
 ) {
-  app.get('/healthz', (_req, res) => {
+  app.get('/healthz', (/** @type {any} */ _req, /** @type {any} */ res) => {
     const engine = getEngine();
     const wss = getWss();
     const lichessBook = getLichessBook();
@@ -150,7 +150,7 @@ function registerHealthAndDiagnostics(
       book: {
         ecoOpenings: eco.size ? eco.size() : 0,
         lichessEnabled: !!(lichessBook && lichessBook.enabled),
-        offlineBook: book.enabled ? bookBaseName(book.bookPath) : null,
+        offlineBook: book.enabled && book.bookPath ? bookBaseName(book.bookPath) : null,
       },
       clients: wss ? wss.clients.size : 0,
     });
@@ -159,7 +159,7 @@ function registerHealthAndDiagnostics(
   // Refuses concurrent self-checks so we don't poison a user's active
   // analysis. Plan §10.
   let selfcheckBusy = false;
-  app.get('/selfcheck', async (_req, res) => {
+  app.get('/selfcheck', async (/** @type {any} */ _req, /** @type {any} */ res) => {
     const engine = getEngine();
     if (!engine || !engine.ready) {
       return res.status(503).json({ status: 'engine_not_ready' });
@@ -181,7 +181,8 @@ function registerHealthAndDiagnostics(
         engineType: getCurrentEngineType(),
       });
     } catch (err) {
-      res.status(500).json({ status: 'error', error: String((err && err.message) || err) });
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ status: 'error', error: msg });
     } finally {
       selfcheckBusy = false;
     }
@@ -191,11 +192,11 @@ function registerHealthAndDiagnostics(
 /**
  * GET /api/cache/stats — eval-cache size / capacity / TTL / persistence path.
  * POST /api/cache/clear — empty the in-memory cache, return previous size.
- * @param {import('express').Express} app
+ * @param {any} app  Express app (untyped — @types/express isn't a hard dep)
  * @param {HttpRoutesDeps} deps
  */
 function registerCacheControlEndpoints(app, { evalCache, evalCachePath }) {
-  app.get('/api/cache/stats', (_req, res) => {
+  app.get('/api/cache/stats', (/** @type {any} */ _req, /** @type {any} */ res) => {
     res.json({
       size: evalCache.size,
       max: evalCache.max,
@@ -203,7 +204,7 @@ function registerCacheControlEndpoints(app, { evalCache, evalCachePath }) {
       path: evalCachePath,
     });
   });
-  app.post('/api/cache/clear', (_req, res) => {
+  app.post('/api/cache/clear', (/** @type {any} */ _req, /** @type {any} */ res) => {
     const prev = evalCache.size;
     evalCache.clear();
     res.json({ status: 'ok', cleared: prev });
@@ -215,7 +216,7 @@ function registerCacheControlEndpoints(app, { evalCache, evalCachePath }) {
  * src/. Cache strategy: HTML must never be cached (the entry point
  * pins the JS/CSS hashes), Vite-emitted hashed assets live forever,
  * everything else gets a revalidate hint.
- * @param {import('express').Express} app
+ * @param {any} app  Express app (untyped — @types/express isn't a hard dep)
  * @param {HttpRoutesDeps} deps
  */
 function registerPanelStatic(app, { panelDir, express, log }) {
@@ -232,7 +233,7 @@ function registerPanelStatic(app, { panelDir, express, log }) {
   }
   app.use(
     express.static(panelRoot, {
-      setHeaders: (res, filePath) => {
+      setHeaders: (/** @type {any} */ res, /** @type {string} */ filePath) => {
         if (filePath.endsWith('.html')) {
           res.setHeader('Cache-Control', 'no-store');
         } else if (
