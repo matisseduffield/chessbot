@@ -1,0 +1,48 @@
+<!--
+  PlayStrategy (Chessground) board fixture — initial position, p1 at bottom.
+  Uses the same cg-board + transform-translate markup as Lichess but with
+  PlayStrategy's piece-class scheme: "p1 r-piece ally" / "p2 n-piece enemy"
+  instead of "white pawn" / "black knight".
+
+  Position: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR (p1=white perspective)
+-->
+<div class="cg-wrap orientation-p1">
+  <cg-board>
+    <!-- Rank 8 (top, y=0) — p2 back rank -->
+    <piece class="p2 r-piece" style="transform: translate(0px, 0px)"></piece>
+    <piece class="p2 n-piece" style="transform: translate(64px, 0px)"></piece>
+    <piece class="p2 b-piece" style="transform: translate(128px, 0px)"></piece>
+    <piece class="p2 q-piece" style="transform: translate(192px, 0px)"></piece>
+    <piece class="p2 k-piece" style="transform: translate(256px, 0px)"></piece>
+    <piece class="p2 b-piece" style="transform: translate(320px, 0px)"></piece>
+    <piece class="p2 n-piece" style="transform: translate(384px, 0px)"></piece>
+    <piece class="p2 r-piece" style="transform: translate(448px, 0px)"></piece>
+    <!-- Rank 7 (y=64) — p2 pawns -->
+    <piece class="p2 p-piece" style="transform: translate(0px, 64px)"></piece>
+    <piece class="p2 p-piece" style="transform: translate(64px, 64px)"></piece>
+    <piece class="p2 p-piece" style="transform: translate(128px, 64px)"></piece>
+    <piece class="p2 p-piece" style="transform: translate(192px, 64px)"></piece>
+    <piece class="p2 p-piece" style="transform: translate(256px, 64px)"></piece>
+    <piece class="p2 p-piece" style="transform: translate(320px, 64px)"></piece>
+    <piece class="p2 p-piece" style="transform: translate(384px, 64px)"></piece>
+    <piece class="p2 p-piece" style="transform: translate(448px, 64px)"></piece>
+    <!-- Rank 2 (y=384) — p1 pawns -->
+    <piece class="p1 p-piece" style="transform: translate(0px, 384px)"></piece>
+    <piece class="p1 p-piece" style="transform: translate(64px, 384px)"></piece>
+    <piece class="p1 p-piece" style="transform: translate(128px, 384px)"></piece>
+    <piece class="p1 p-piece" style="transform: translate(192px, 384px)"></piece>
+    <piece class="p1 p-piece" style="transform: translate(256px, 384px)"></piece>
+    <piece class="p1 p-piece" style="transform: translate(320px, 384px)"></piece>
+    <piece class="p1 p-piece" style="transform: translate(384px, 384px)"></piece>
+    <piece class="p1 p-piece" style="transform: translate(448px, 384px)"></piece>
+    <!-- Rank 1 (y=448) — p1 back rank -->
+    <piece class="p1 r-piece" style="transform: translate(0px, 448px)"></piece>
+    <piece class="p1 n-piece" style="transform: translate(64px, 448px)"></piece>
+    <piece class="p1 b-piece" style="transform: translate(128px, 448px)"></piece>
+    <piece class="p1 q-piece" style="transform: translate(192px, 448px)"></piece>
+    <piece class="p1 k-piece" style="transform: translate(256px, 448px)"></piece>
+    <piece class="p1 b-piece" style="transform: translate(320px, 448px)"></piece>
+    <piece class="p1 n-piece" style="transform: translate(384px, 448px)"></piece>
+    <piece class="p1 r-piece" style="transform: translate(448px, 448px)"></piece>
+  </cg-board>
+</div>
