@@ -575,6 +575,36 @@ async function main() {
     },
   });
 
+  // ── WS heartbeat ─────────────────────────────────────────
+  // Half-open TCP connections (laptop lid closed, NAT timeout, etc.)
+  // can keep a dead client in wss.clients for minutes, leaking memory
+  // and pushing broadcast traffic into a dead socket. Send a low-level
+  // ping every 30s and reap clients that miss two pings (60s).
+  // Browsers auto-respond to ping frames per the WS spec, so the
+  // extension/panel need no client-side change.
+  const HEARTBEAT_MS = 30_000;
+  const heartbeat = setInterval(() => {
+    for (const ws of wss.clients) {
+      if (ws.isAlive === false) {
+        console.warn("[server] terminating unresponsive WS client");
+        try {
+          ws.terminate();
+        } catch {
+          /* ignore */
+        }
+        continue;
+      }
+      ws.isAlive = false;
+      try {
+        ws.ping();
+      } catch {
+        /* socket already dying */
+      }
+    }
+  }, HEARTBEAT_MS);
+  heartbeat.unref();
+  wss.on("close", () => clearInterval(heartbeat));
+
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
       console.error(`[server] port ${config.port} is already in use. Kill the other process or set PORT env var.`);
@@ -620,6 +650,14 @@ async function main() {
   wss.on("connection", (ws, req) => {
     const remote = req.socket.remoteAddress;
     console.log(`[server] client connected (${remote})`);
+
+    // Heartbeat: mark alive on connect, refresh whenever we receive a
+    // pong. The interval above flips this to false before each ping;
+    // a missing pong leaves it false and the next tick reaps the socket.
+    ws.isAlive = true;
+    ws.on("pong", () => {
+      ws.isAlive = true;
+    });
 
     // Protocol hello: lets the panel/extension detect version mismatches
     // (see improvement-plan §7.4). Best-effort; older clients ignore it.
@@ -680,6 +718,15 @@ async function main() {
       const gateResult = validateInbound(msg);
       if (!gateResult.ok) {
         safeSend(ws, { type: "error", code: gateResult.code, message: gateResult.message });
+        return;
+      }
+
+      // During shutdown, refuse anything that would enqueue engine work
+      // — we've already bumped evalGeneration and are tearing down. Cheap
+      // utility frames (hello, get_settings) still pass through so the
+      // client can render a sensible disconnect state.
+      if (shuttingDown && (msg.type === "fen" || msg.type === "switch_variant" || msg.type === "switch_engine")) {
+        safeSend(ws, { type: "error", code: "shutting_down", message: "Server is shutting down" });
         return;
       }
 
@@ -1269,22 +1316,50 @@ async function main() {
   });
 
   // ── 4. Graceful shutdown ───────────────────────────────
-  function shutdown() {
+  let shuttingDown = false;
+  async function shutdown() {
+    if (shuttingDown) return; // ignore repeated SIGINTs
+    shuttingDown = true;
     console.log("\n[server] shutting down…");
+    clearInterval(heartbeat);
+
+    // Tell connected clients we're going away so they can show a
+    // "reconnecting" UX instead of a hard close. evalGeneration is
+    // per-connection, so we don't bump it here — the `shuttingDown`
+    // flag at the message-handler entry point is what stops new
+    // engine work from being enqueued.
+    for (const client of wss.clients) {
+      safeSend(client, { type: "server_shutdown" });
+    }
+
     try {
       const count = _evalCache.saveToDisk(_evalCachePath);
       console.log(`[server] saved ${count} eval cache entries → ${_evalCachePath}`);
     } catch (err) {
       console.error("[server] failed to save eval cache:", err.message);
     }
-    engine.stop();
-    book.close();
-    wss.close(() => process.exit(0));
-    // Force exit after 5s if graceful close hangs
-    setTimeout(() => {
+
+    // Force exit after 5s no matter what so a stuck `wss.close` or
+    // engine doesn't leave the process pinned.
+    const forceExit = setTimeout(() => {
       console.error("[server] shutdown timeout — forcing exit");
       process.exit(1);
-    }, 5000).unref();
+    }, 5000);
+    forceExit.unref();
+
+    try {
+      // Wait for the engine PID to actually exit before we let Node
+      // exit; otherwise the next start can race a stale stockfish
+      // process for the same hash file / port-on-stdin etc.
+      await engine.stop();
+    } catch (err) {
+      console.error("[server] engine stop failed:", err.message);
+    }
+    book.close();
+    wss.close(() => {
+      clearTimeout(forceExit);
+      process.exit(0);
+    });
   }
 
   process.on("SIGINT", shutdown);

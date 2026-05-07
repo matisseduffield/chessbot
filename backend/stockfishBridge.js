@@ -317,7 +317,16 @@ class StockfishBridge {
     log.info("hash cleared");
   }
 
-  /** Stop the engine process. */
+  /**
+   * Stop the engine process.
+   * Returns a promise that resolves when the spawned process has actually
+   * exited (or the 2 s SIGKILL fallback has fired). Existing call sites
+   * that don't await are unaffected — the side-effects (resolving pending
+   * evals, sending `quit`, nulling out `this.process`) still happen
+   * synchronously. Awaiting matters during graceful shutdown so Node
+   * doesn't exit before the engine PID is reaped.
+   * @returns {Promise<void>}
+   */
   stop() {
     this._stopped = true; // prevent _restart() from reviving
     // Clear any in-flight timers to prevent them firing on a dead process
@@ -335,18 +344,33 @@ class StockfishBridge {
       this._abortResolve();
       this._abortResolve = null;
     }
-    if (this.process) {
-      this._stopping = true;
-      const proc = this.process;
-      this._send("quit");
-      this.process = null;
-      this.ready = false;
-      // Force-kill fallback if quit doesn't work within 2s
-      setTimeout(() => {
-        try { if (!proc.killed) proc.kill("SIGKILL"); } catch {}
-      }, 2000);
-      log.info("stopped");
-    }
+    if (!this.process) return Promise.resolve();
+
+    this._stopping = true;
+    const proc = this.process;
+    let exited = false;
+    const exitPromise = new Promise((resolve) => {
+      proc.once("exit", () => {
+        exited = true;
+        resolve();
+      });
+    });
+    this._send("quit");
+    this.process = null;
+    this.ready = false;
+    // Force-kill fallback if quit doesn't drain within 2s. The promise
+    // still resolves via the "exit" listener once the SIGKILL takes effect.
+    setTimeout(() => {
+      if (!exited) {
+        try {
+          if (!proc.killed) proc.kill("SIGKILL");
+        } catch {
+          /* already dead */
+        }
+      }
+    }, 2000);
+    log.info("stopped");
+    return exitPromise;
   }
 
   /** Kill and restart the engine after it becomes unresponsive. */
