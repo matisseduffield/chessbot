@@ -1618,10 +1618,11 @@
           </select>
         </div>
         <div class="setting-row">
-          <span class="setting-label">Skill</span>
-          <input type="range" id="skill-slider" min="0" max="20" value="20">
-          <span class="range-value" id="skill-value">20</span>
+          <span class="setting-label">Strength</span>
+          <input type="range" id="elo-slider" min="1320" max="3200" step="10" value="3200">
+          <span class="range-value" id="elo-value" style="min-width:54px">MAX</span>
         </div>
+        <div id="elo-tier" style="font-size:11px;color:var(--text-400);text-align:right;margin:-4px 0 8px 0">Maximum strength</div>
         <button id="btn-clear-hash" class="panel-btn" style="margin-top:8px">Clear Hash</button>
       </div>
 
@@ -2099,7 +2100,7 @@ function saveSettings() {
     engine: document.getElementById("engine-select").value,
     threads: parseInt(document.getElementById("threads-slider").value),
     hash: document.getElementById("hash-select").value,
-    skill: parseInt(document.getElementById("skill-slider").value),
+    elo: parseInt(document.getElementById("elo-slider").value),
     voice: document.getElementById("chk-voice").checked,
     voiceEval: document.getElementById("chk-voice-eval").checked,
     voiceOpening: document.getElementById("chk-voice-opening").checked,
@@ -2728,11 +2729,35 @@ document.getElementById("hash-select").addEventListener("change", (e) => {
   saveSettings();
 });
 
-document.getElementById("skill-slider").addEventListener("input", (e) => {
-  document.getElementById("skill-value").textContent = e.target.value;
+// ELO strength: 1320–3190 sends UCI_LimitStrength=true + UCI_Elo=N.
+// 3200 (slider end) means full engine strength: UCI_LimitStrength=false.
+const ELO_MAX_SENTINEL = 3200;
+function eloTierLabel(elo) {
+  if (elo >= ELO_MAX_SENTINEL) return "Maximum strength";
+  if (elo >= 2700) return `${elo} · Grandmaster`;
+  if (elo >= 2400) return `${elo} · Master`;
+  if (elo >= 2100) return `${elo} · Expert`;
+  if (elo >= 1800) return `${elo} · Club`;
+  if (elo >= 1500) return `${elo} · Casual`;
+  return `${elo} · Beginner`;
+}
+function renderEloDisplay(elo) {
+  document.getElementById("elo-value").textContent = elo >= ELO_MAX_SENTINEL ? "MAX" : String(elo);
+  document.getElementById("elo-tier").textContent = eloTierLabel(elo);
+}
+function applyEloSetting(elo) {
+  if (elo >= ELO_MAX_SENTINEL) {
+    sendOpt("UCI_LimitStrength", "false");
+  } else {
+    sendOpt("UCI_LimitStrength", "true");
+    sendOpt("UCI_Elo", elo);
+  }
+}
+document.getElementById("elo-slider").addEventListener("input", (e) => {
+  renderEloDisplay(parseInt(e.target.value));
 });
-document.getElementById("skill-slider").addEventListener("change", (e) => {
-  sendOpt("Skill Level", parseInt(e.target.value));
+document.getElementById("elo-slider").addEventListener("change", (e) => {
+  applyEloSetting(parseInt(e.target.value));
   saveSettings();
 });
 
@@ -3041,7 +3066,10 @@ makeRangeEditable("depth-slider", "depth-value", {
 makeRangeEditable("multipv-slider", "multipv-value");
 makeRangeEditable("time-slider", "time-value");
 makeRangeEditable("threads-slider", "threads-value");
-makeRangeEditable("skill-slider", "skill-value");
+makeRangeEditable("elo-slider", "elo-value", {
+  format: v => (v >= ELO_MAX_SENTINEL ? "MAX" : String(v)),
+  editFormat: v => (v >= ELO_MAX_SENTINEL ? "" : String(v)),
+});
 makeRangeEditable("auto-move-delay-min", "auto-move-delay-min-value");
 makeRangeEditable("auto-move-delay-max", "auto-move-delay-max-value");
 makeRangeEditable("auto-move-humanize-chance", "auto-move-humanize-chance-value", {
@@ -3273,8 +3301,10 @@ function applySettings(msg) {
     document.getElementById("threads-slider").value = saved.threads;
     document.getElementById("threads-value").textContent = saved.threads;
     document.getElementById("hash-select").value = saved.hash;
-    document.getElementById("skill-slider").value = saved.skill;
-    document.getElementById("skill-value").textContent = saved.skill;
+    // Migrate old `skill` (0–20) to MAX strength; otherwise honor saved `elo`.
+    const savedElo = Number.isFinite(saved.elo) ? saved.elo : ELO_MAX_SENTINEL;
+    document.getElementById("elo-slider").value = savedElo;
+    renderEloDisplay(savedElo);
 
     // Display toggles
     document.getElementById("chk-voice").checked = saved.voice;
@@ -3399,7 +3429,7 @@ function applySettings(msg) {
     sendOpt("MultiPV", saved.multiPV);
     sendOpt("Threads", saved.threads);
     sendOpt("Hash", parseInt(saved.hash));
-    sendOpt("Skill Level", saved.skill);
+    applyEloSetting(Number.isFinite(saved.elo) ? saved.elo : ELO_MAX_SENTINEL);
     // Send switch_engine only if the selected engine is in the dropdown (i.e. compatible)
     if (saved.engine && [...engineSel.options].some(o => o.value === saved.engine)) {
       state.ws.send(JSON.stringify({ type: "switch_engine", name: saved.engine }));
@@ -3449,10 +3479,11 @@ function applySettings(msg) {
     if (s.Hash) {
       document.getElementById("hash-select").value = s.Hash;
     }
-    if (s["Skill Level"] !== undefined) {
-      document.getElementById("skill-slider").value = s["Skill Level"];
-      document.getElementById("skill-value").textContent = s["Skill Level"];
-    }
+    const limited = s.UCI_LimitStrength === true || s.UCI_LimitStrength === "true";
+    const eloNum = Number(s.UCI_Elo);
+    const elo = limited && Number.isFinite(eloNum) ? eloNum : ELO_MAX_SENTINEL;
+    document.getElementById("elo-slider").value = elo;
+    renderEloDisplay(elo);
   }
 }
 

@@ -689,7 +689,7 @@ async function main() {
           engine.setOption(msg.name, msg.value);
         }
         // Clear eval cache when settings that affect results change
-        if (["depth", "MultiPV", "Skill Level"].includes(msg.name)) {
+        if (["depth", "MultiPV", "Skill Level", "UCI_Elo", "UCI_LimitStrength"].includes(msg.name)) {
           _evalCache.clear();
           console.log(`[server] eval cache cleared (${msg.name} changed)`);
         }

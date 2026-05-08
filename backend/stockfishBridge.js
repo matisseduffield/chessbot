@@ -53,7 +53,8 @@ class StockfishBridge {
       Threads: 1,
       Hash: 16,
       MultiPV: 1,
-      "Skill Level": 20,
+      UCI_LimitStrength: false,
+      UCI_Elo: 3190,
       UCI_ShowWDL: true,
     };
   }
@@ -318,6 +319,7 @@ class StockfishBridge {
     // Whitelist of safe UCI options
     const allowed = [
       "Threads", "Hash", "MultiPV", "Skill Level",
+      "UCI_LimitStrength", "UCI_Elo",
       "UCI_Chess960", "UCI_ShowWDL", "SyzygyPath",
       "SyzygyProbeDepth", "Syzygy50MoveRule", "SyzygyProbeLimit",
       "UCI_Variant",
