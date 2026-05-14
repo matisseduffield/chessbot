@@ -166,6 +166,69 @@ export function detectWhoMoved(prevFen, currFen) {
 }
 
 /**
+ * Detect the en-passant target square from a board diff. Returns a FEN
+ * en-passant field value: either `"-"` or an algebraic square like
+ * `"e3"` / `"b6"`.
+ *
+ * Recognises a 2-square pawn push: exactly one piece disappeared from
+ * its starting rank (rank 2 for white, rank 7 for black) and the same
+ * pawn appeared two squares ahead on the same file, with no other
+ * board changes. Captures, castling, promotions, or any read where
+ * more than one piece moved are conservatively rejected.
+ *
+ * Only operates on 8×8 boards; returns `"-"` for variants with
+ * non-standard board sizes (the engine wouldn't accept the EP field
+ * anyway).
+ *
+ * @param {string} prevFen Board part (no side-to-move) before the move.
+ * @param {string} currFen Board part after the move.
+ * @returns {string} EP target square or `"-"`.
+ */
+export function detectEnPassantTarget(prevFen, currFen) {
+  if (!prevFen || !currFen) return '-';
+  const prev = fenBoardToGrid(prevFen);
+  const curr = fenBoardToGrid(currFen);
+  if (prev.length !== 8 || curr.length !== 8) return '-';
+
+  let from = null;
+  let to = null;
+
+  for (let r = 0; r < 8; r++) {
+    const pr = prev[r] || [];
+    const cr = curr[r] || [];
+    if (pr.length !== 8 || cr.length !== 8) return '-';
+    for (let f = 0; f < 8; f++) {
+      const p = pr[f] || null;
+      const c = cr[f] || null;
+      if (p === c) continue;
+      if (p && !c) {
+        if (from) return '-';
+        from = { rank: r, file: f, piece: p };
+      } else if (!p && c) {
+        if (to) return '-';
+        to = { rank: r, file: f, piece: c };
+      } else {
+        return '-';
+      }
+    }
+  }
+
+  if (!from || !to) return '-';
+  if (from.piece !== to.piece) return '-';
+  if (from.file !== to.file) return '-';
+  if (from.piece.toLowerCase() !== 'p') return '-';
+
+  const fileChar = String.fromCharCode(97 + from.file);
+  if (from.piece === 'P' && from.rank === 6 && to.rank === 4) {
+    return `${fileChar}3`;
+  }
+  if (from.piece === 'p' && from.rank === 1 && to.rank === 3) {
+    return `${fileChar}6`;
+  }
+  return '-';
+}
+
+/**
  * Convert a 2-D grid of pieces (see {@link fenBoardToGrid}) back into
  * the board part of a FEN. Optionally accepts a bracketed pocket
  * suffix for drop variants. Castling rights are derived from king +
