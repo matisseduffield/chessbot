@@ -12,6 +12,7 @@ import {
   squareTopLeft,
   squareCenter,
   detectWhoMoved,
+  detectEnPassantTarget,
   gridToFenBoard as _gridToFenBoard,
 } from "./boardMath.js";
 import { isKingInCheck } from "./threeCheck.js";
@@ -1986,9 +1987,13 @@ function readAndSend() {
     return;
   }
 
-  // Build FEN with correct side-to-move
+  // Build FEN with correct side-to-move and en-passant target.
+  // gridToFenBoard always emits "-" for the EP field, so detect a 2-square
+  // pawn push from the prev→curr board diff and patch it in. Without this,
+  // Stockfish will never consider en passant captures legal.
   const parts = fen.split(" ");
   parts[1] = effectiveTurn;
+  parts[3] = detectEnPassantTarget(prevBoard, boardPart);
   const correctedFen = parts.join(" ");
 
   if (correctedFen === lastSentFen) return;

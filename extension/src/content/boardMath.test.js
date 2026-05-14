@@ -6,6 +6,7 @@ import {
   squareTopLeft,
   squareCenter,
   detectWhoMoved,
+  detectEnPassantTarget,
   gridToFenBoard,
 } from './boardMath.js';
 
@@ -113,6 +114,51 @@ describe('detectWhoMoved', () => {
     const before = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/R3K2R';
     const after = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/R4RK1';
     expect(detectWhoMoved(before, after)).toBe('w');
+  });
+});
+
+describe('detectEnPassantTarget', () => {
+  it('detects e2-e4 → e3', () => {
+    expect(detectEnPassantTarget(START, AFTER_E4)).toBe('e3');
+  });
+  it('detects e7-e5 → e6', () => {
+    expect(detectEnPassantTarget(AFTER_E4, AFTER_E4_E5)).toBe('e6');
+  });
+  it('detects the b-file push that triggered this fix (b2-b4 → b3)', () => {
+    // White pushes the b-pawn 2 squares; a black pawn on a4 should now be
+    // able to capture en passant on b3.
+    const before = '8/8/8/8/p7/8/1P6/8';
+    const after = '8/8/8/8/pP6/8/8/8';
+    expect(detectEnPassantTarget(before, after)).toBe('b3');
+  });
+  it('detects a single-pawn-only position (a2-a4)', () => {
+    const before = '8/8/8/8/8/8/P7/8';
+    const after = '8/8/8/8/P7/8/8/8';
+    expect(detectEnPassantTarget(before, after)).toBe('a4'.replace('4', '3')); // a3
+  });
+  it('returns "-" for a one-square pawn push (e2-e3)', () => {
+    const before = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+    const after = 'rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR';
+    expect(detectEnPassantTarget(before, after)).toBe('-');
+  });
+  it('returns "-" for a knight jump from b1 to c3 (different file)', () => {
+    const before = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+    const after = 'rnbqkbnr/pppppppp/8/8/8/2N5/PPPPPPPP/R1BQKBNR';
+    expect(detectEnPassantTarget(before, after)).toBe('-');
+  });
+  it('returns "-" for captures (more than one square changes)', () => {
+    // Black pawn on d5 captures white pawn on e4 (cxe4 style)
+    const before = 'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR';
+    const after = 'rnbqkbnr/ppp1pppp/8/8/4p3/8/PPPP1PPP/RNBQKBNR';
+    expect(detectEnPassantTarget(before, after)).toBe('-');
+  });
+  it('returns "-" when boards are identical', () => {
+    expect(detectEnPassantTarget(START, START)).toBe('-');
+  });
+  it('returns "-" for empty / null input', () => {
+    expect(detectEnPassantTarget('', START)).toBe('-');
+    expect(detectEnPassantTarget(START, '')).toBe('-');
+    expect(detectEnPassantTarget(null, null)).toBe('-');
   });
 });
 
