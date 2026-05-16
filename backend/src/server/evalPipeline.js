@@ -209,11 +209,18 @@ function createEvalPipeline(deps) {
 
       // Send engine progress updates to panel.
       let _lastProgressDepth = 0;
+      const liveStream = !!config.liveEngineStream;
+      const liveStreamMinDepth = Number(config.liveEngineStreamMinDepth) || 6;
       searchOptions.onInfo = (/** @type {any} */ info) => {
         if (gen !== getEvalGeneration() || ws.readyState !== ws.OPEN) return;
         const d = info.depth || 0;
-        if (depth === 0) {
-          // For infinite analysis, send full intermediate results.
+        const isFinalDepthMode = depth === 0;
+        // Stream full PV updates when: (a) infinite analysis (existing
+        // behaviour) OR (b) the panel has enabled live engine streaming
+        // and the engine has reached a non-noisy depth.
+        const shouldStreamPV = isFinalDepthMode || (liveStream && d >= liveStreamMinDepth);
+
+        if (shouldStreamPV) {
           const enrichedLines = enrichLines(info.lines || [], fen);
           const infoMsg = {
             type: 'bestmove',
@@ -221,6 +228,7 @@ function createEvalPipeline(deps) {
             lines: enrichedLines,
             source: 'engine',
             depth: d,
+            targetDepth: isFinalDepthMode ? 0 : depth,
             fen,
             variant: evalVariant,
             eco: posEco ? posEco.name : null,
@@ -229,8 +237,10 @@ function createEvalPipeline(deps) {
           };
           safeSend(ws, infoMsg);
           broadcast(ws, infoMsg);
-        } else if (d > _lastProgressDepth) {
-          // For fixed-depth analysis, send lightweight progress.
+        }
+        // Always emit lightweight progress for fixed-depth so the
+        // "Depth N/M · K nps" indicator updates regardless of streaming.
+        if (!isFinalDepthMode && d > _lastProgressDepth) {
           _lastProgressDepth = d;
           const first = (info.lines && info.lines[0]) || {};
           const progressMsg = {

@@ -125,6 +125,7 @@ let displayMode = "both"; // "arrow" | "box" | "both" — how to show best moves
 let showOpponentResponse = true; // show predicted opponent reply (red arrow/box)
 let searchMovetime = null; // null = disabled, else ms
 let searchNodes = null; // null = disabled, else node count
+let showDepthOverlay = false; // render a depth badge on the chess website overlay
 let wsBackoff = 3000; // WebSocket reconnect backoff (ms), resets on connect
 let contextInvalidated = false; // true once extension context is orphaned
 let detectedVariant = null; // chess variant detected from URL
@@ -701,7 +702,8 @@ function init() {
       "chessbot_trainingMode", "chessbot_trainingDifficulty",
       "chessbot_trainingStrict", "chessbot_trainingAutoReveal", "chessbot_trainingSound",
       "chessbot_autoMove", "chessbot_bulletMode",
-      "chessbot_popup_flipOverride"
+      "chessbot_popup_flipOverride",
+      "chessbot_showDepthOverlay"
     ], (result) => {
       if (result.chessbot_trainingMode) { trainingMode = true; console.log("[chessbot] training mode restored from storage"); }
       if (result.chessbot_trainingDifficulty) trainingDifficulty = result.chessbot_trainingDifficulty;
@@ -714,6 +716,7 @@ function init() {
         _userFlipOverride = result.chessbot_popup_flipOverride;
         console.log(`[chessbot] flip override restored from storage: ${_userFlipOverride}`);
       }
+      if (result.chessbot_showDepthOverlay !== undefined) showDepthOverlay = !!result.chessbot_showDepthOverlay;
       startAfterRestore();
     });
   } else {
@@ -1041,6 +1044,19 @@ function connectWS() {
         resendCurrentPosition();
         return;
       }
+      if (msg.type === "set_show_depth_overlay") {
+        showDepthOverlay = !!msg.value;
+        console.log(`[chessbot] depth overlay: ${showDepthOverlay ? "on" : "off"}`);
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ chessbot_showDepthOverlay: showDepthOverlay });
+        }
+        if (!showDepthOverlay) removeDepthBadge();
+        return;
+      }
+      if (msg.type === "eval_progress") {
+        if (showDepthOverlay) drawDepthBadge(msg.depth, msg.targetDepth, msg.nps);
+        return;
+      }
       if (msg.type === "set_show_opponent_response") {
         showOpponentResponse = !!msg.value;
         console.log(`[chessbot] show opponent response: ${showOpponentResponse}`);
@@ -1161,6 +1177,9 @@ function connectWS() {
       if (msg.type === "bestmove") {
         // For streaming (infinite analysis), keep pendingEval true
         if (!msg.streaming) pendingEval = false;
+        if (showDepthOverlay && typeof msg.depth === "number") {
+          drawDepthBadge(msg.depth, msg.targetDepth || 0, null, !msg.streaming);
+        }
         // Null bestmove = engine timeout / error — just unblock
         if (!msg.bestmove) {
           console.log("[chessbot] received null bestmove (engine timeout?)");
@@ -3036,6 +3055,78 @@ function clearArrow() {
     const bar = root.getElementById("chessbot-eval-bar");
     if (bar) bar.remove();
   }
+  removeDepthBadge();
+}
+
+/** Remove the engine depth badge from the chess website. */
+function removeDepthBadge() {
+  const roots = [document];
+  const board = getBoardElement();
+  if (board && board.shadowRoot) roots.push(board.shadowRoot);
+  for (const root of roots) {
+    const el = root.getElementById("chessbot-depth-badge");
+    if (el) el.remove();
+  }
+}
+
+/**
+ * Draw a small "depth N/M · K nps" badge anchored above the board so the
+ * user can see the engine's search progress while it's still thinking.
+ * Driven by eval_progress messages and streaming bestmove frames.
+ *
+ * @param {number} depth current search depth
+ * @param {number} targetDepth target depth (0 = unbounded / streaming)
+ * @param {number|null} nps optional nodes-per-second
+ * @param {boolean} [isFinal] true when this is the final result (no more updates)
+ */
+function drawDepthBadge(depth, targetDepth, nps, isFinal) {
+  if (!showDepthOverlay) return;
+  const board = getBoardElement();
+  if (!board) return;
+  const { target: parent, dx, dy } = getOverlayTarget(board);
+  if (!parent) return;
+  const rect = (SITE === "chesscom") ? getVisualBoardRect(board) : board.getBoundingClientRect();
+  if (rect.width <= 0) return;
+
+  let badge = parent.querySelector("#chessbot-depth-badge");
+  if (!badge) {
+    badge = document.createElement("div");
+    badge.id = "chessbot-depth-badge";
+    parent.appendChild(badge);
+  }
+  // Position above the top-right of the board.
+  badge.style.cssText = `
+    position: absolute;
+    left: ${dx + rect.width - 96}px;
+    top: ${dy - 24}px;
+    height: 20px;
+    min-width: 90px;
+    padding: 0 8px;
+    border-radius: 4px;
+    background: rgba(16, 20, 28, 0.85);
+    color: #f1f5f9;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    pointer-events: none;
+    z-index: 1000;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    border: 1px solid ${isFinal ? "rgba(34,197,94,0.5)" : "rgba(99,102,241,0.5)"};
+  `;
+  const d = Number.isFinite(depth) ? depth : 0;
+  const t = Number.isFinite(targetDepth) && targetDepth > 0 ? targetDepth : 0;
+  const depthText = t > 0 ? `d${d}/${t}` : `d${d}`;
+  let npsText = "";
+  if (Number.isFinite(nps) && nps > 0) {
+    npsText = nps >= 1e6 ? ` · ${(nps / 1e6).toFixed(1)}M nps`
+            : nps >= 1e3 ? ` · ${Math.round(nps / 1e3)}K nps`
+            : ` · ${nps} nps`;
+  }
+  badge.textContent = depthText + npsText;
 }
 
 // ── Board geometry helpers ───────────────────────────────────

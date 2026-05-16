@@ -728,6 +728,13 @@ async function main() {
         console.log(`[server] Lichess opening book: ${lichessBook.enabled ? "enabled" : "disabled"}`);
       }
 
+      // ── Live engine streaming toggle ───────────────────
+      // Mutates config so evalPipeline picks it up on the next eval.
+      if (msg.type === "set_live_engine_stream") {
+        config.liveEngineStream = !!msg.value;
+        console.log(`[server] live engine streaming: ${config.liveEngineStream ? "enabled" : "disabled"}`);
+      }
+
       if (msg.type === "get_settings") {
         safeSend(ws, {
           type: "settings",
