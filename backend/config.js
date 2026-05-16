@@ -174,7 +174,9 @@ module.exports = {
   // instead of waiting for the final bestmove. Lets the arrow/eval appear
   // and refine while the engine is still thinking. Set from panel.
   liveEngineStream: false,
-  // Minimum search depth at which streaming frames are emitted. Shallow
-  // plies (1-5) have unstable evals and would just cause UI flicker.
-  liveEngineStreamMinDepth: 6,
+  // Minimum search depth at which streaming frames are emitted. The
+  // rAF coalescer on the client caps paints at ~60Hz so flicker isn't
+  // a real concern; emit from depth 1 so the user sees the first
+  // candidate move within a frame of the search starting.
+  liveEngineStreamMinDepth: 1,
 };

@@ -51,7 +51,10 @@ import {
 } from "./protocolBanner.js";
 import { PROTOCOL_VERSION } from "@chessbot/shared";
 import { adapterForDoc } from "./siteAdapters.js";
-import { isLichessFlipped as _isLichessFlippedDoc } from "./lichessBoardReader.js";
+import {
+  isLichessFlipped as _isLichessFlippedDoc,
+  detectLichessFlipConfidence as _detectLichessFlipConfidenceDoc,
+} from "./lichessBoardReader.js";
 import { isChessTempoFlipped as _isChessTempoFlippedDoc } from "./chesstempoBoardReader.js";
 
 // Shim wrappers so the existing call sites in this file (which pass
@@ -60,6 +63,9 @@ import { isChessTempoFlipped as _isChessTempoFlippedDoc } from "./chesstempoBoar
 // production always uses the global one.
 function isLichessFlipped() {
   return _isLichessFlippedDoc(document);
+}
+function detectLichessFlipConfidence() {
+  return _detectLichessFlipConfidenceDoc(document);
 }
 function isChesstempFlipped() {
   return _isChessTempoFlippedDoc(document);
@@ -1917,6 +1923,10 @@ function readAndSend() {
 
   // Determine whose turn it is by diffing board positions
   const turn = inferTurn(prevBoard, boardPart);
+  // Re-check player color before the isMyTurn decision so an initial
+  // deferred lock can latch, and so a mid-game manual flip is picked up.
+  // Cheap on the hot path: a few DOM class reads.
+  maybeRelockPlayerColor();
   const playerColor = getPlayerColor();
 
   console.log(`[chessbot] turn=${turn} player=${playerColor}`);
@@ -2241,6 +2251,52 @@ function chesscomBoardToFen() {
     return null;
   }
   return fen;
+}
+
+/**
+ * Tri-state flip detection for chess.com — returns 'flipped' /
+ * 'unflipped' only when a definitive DOM signal is present (JS property,
+ * class, attribute, shadow DOM, or coordinate label). Returns 'unknown'
+ * when only the piece-position heuristic would apply, since that one
+ * can mis-detect during board animations or partial renders. Callers
+ * use this to decide whether to *lock* the player color or wait for a
+ * confident read.
+ *
+ * @param {Element} board
+ * @returns {'flipped' | 'unflipped' | 'unknown'}
+ */
+function detectChesscomFlipConfidence(board) {
+  if (!board) return 'unknown';
+  try {
+    if (board.isFlipped === true || board.flipped === true) return 'flipped';
+    if (board.isFlipped === false || board.flipped === false) return 'unflipped';
+  } catch (_) {}
+  if (board.classList.contains("flipped")) return 'flipped';
+  if (board.getAttribute("flipped") !== null) return 'flipped';
+  const sroot = board.shadowRoot;
+  if (sroot) {
+    const inner = sroot.querySelector("[class*='flipped'], [flipped]");
+    if (inner) return 'flipped';
+  }
+  let anc = board.parentElement;
+  for (let i = 0; i < 5 && anc && anc !== document.body; i++) {
+    const acls = typeof anc.className === "string" ? anc.className : (anc.getAttribute("class") || "");
+    if (/\bflipped\b/i.test(acls) || anc.getAttribute("flipped") !== null) return 'flipped';
+    anc = anc.parentElement;
+  }
+  const searchRoots = [document];
+  if (sroot) searchRoots.push(sroot);
+  for (const sr of searchRoots) {
+    const coords = sr.querySelectorAll(
+      ".coordinates-row, .coords-row, .coords-files, coords-files, [class*='coord'], [class*='Coord'], [class*='notation'], [class*='files'], [class*='ranks']"
+    );
+    for (const c of coords) {
+      const txt = c.textContent.trim();
+      if (txt.startsWith("h")) return 'flipped';
+      if (txt.startsWith("a")) return 'unflipped';
+    }
+  }
+  return 'unknown';
 }
 
 function isChesscomFlipped(board) {
@@ -2883,12 +2939,72 @@ function getPlayerColor() {
   return color;
 }
 
-/** Lock player color after a reliable detection (many pieces on board). */
+/**
+ * Detect the player's color along with a confidence level. High confidence
+ * means a definitive DOM signal said so (orientation class, coordinate
+ * label, etc.); low confidence means we fell back to a heuristic (piece
+ * Y-position) that can mis-detect during animations or partial renders.
+ *
+ * @returns {{ color: 'w' | 'b', confidence: 'high' | 'low' }}
+ */
+function detectPlayerColorWithConfidence() {
+  if (IS_CHESSGROUND) {
+    const conf = detectLichessFlipConfidence();
+    if (conf === 'flipped')  return { color: 'b', confidence: 'high' };
+    if (conf === 'unflipped') return { color: 'w', confidence: 'high' };
+    return { color: 'w', confidence: 'low' };
+  }
+  if (SITE === 'chesscom') {
+    const board = getBoardElement();
+    if (!board) return { color: 'w', confidence: 'low' };
+    const conf = detectChesscomFlipConfidence(board);
+    if (conf === 'flipped')  return { color: 'b', confidence: 'high' };
+    if (conf === 'unflipped') return { color: 'w', confidence: 'high' };
+    return { color: isChesscomFlipped(board) ? 'b' : 'w', confidence: 'low' };
+  }
+  if (SITE === 'chesstempo') {
+    return { color: isChesstempFlipped() ? 'b' : 'w', confidence: 'high' };
+  }
+  return { color: 'w', confidence: 'low' };
+}
+
+/**
+ * Lock player color only when the adapter returns a confident signal.
+ * Skipping low-confidence reads avoids the failure mode where the board
+ * is mid-render or animating and the heuristic falls back to "white",
+ * locking the user as white for the rest of the game.
+ */
 function lockPlayerColor() {
   if (_cachedPlayerColor) return; // already locked
-  const color = getPlayerColor();
+  const { color, confidence } = detectPlayerColorWithConfidence();
+  if (confidence !== 'high') {
+    console.log(`[chessbot] deferring player color lock — flip detection inconclusive (best guess: ${color})`);
+    return;
+  }
   _cachedPlayerColor = color;
   console.log(`[chessbot] player color locked: ${color}`);
+}
+
+/**
+ * Re-evaluate the cached player color when the board changes. Handles two
+ * cases: (a) initial lock was deferred because flip detection was uncertain
+ * — try again now that the board has more state; (b) the user manually
+ * flipped the board mid-game and we should follow them.
+ *
+ * Only updates on a high-confidence signal so we don't thrash on animation
+ * frames.
+ */
+function maybeRelockPlayerColor() {
+  if (_userFlipOverride === 'w' || _userFlipOverride === 'b') return;
+  const { color, confidence } = detectPlayerColorWithConfidence();
+  if (confidence !== 'high') return;
+  if (!_cachedPlayerColor) {
+    _cachedPlayerColor = color;
+    console.log(`[chessbot] player color locked (deferred): ${color}`);
+  } else if (_cachedPlayerColor !== color) {
+    console.log(`[chessbot] player color re-locked: ${_cachedPlayerColor} → ${color} (board orientation changed)`);
+    _cachedPlayerColor = color;
+  }
 }
 
 // ── FEN helpers ──────────────────────────────────────────────
