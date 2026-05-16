@@ -169,4 +169,12 @@ module.exports = {
   defaultDepth: 15,
   searchMovetime: null,  // ms — set from panel
   searchNodes: null,     // node count — set from panel
+  // When true, the engine streams intermediate PVs to all clients during
+  // fixed-depth searches (info-depth N → bestmove frame with streaming:true)
+  // instead of waiting for the final bestmove. Lets the arrow/eval appear
+  // and refine while the engine is still thinking. Set from panel.
+  liveEngineStream: false,
+  // Minimum search depth at which streaming frames are emitted. Shallow
+  // plies (1-5) have unstable evals and would just cause UI flicker.
+  liveEngineStreamMinDepth: 6,
 };
