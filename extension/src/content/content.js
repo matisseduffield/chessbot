@@ -13,6 +13,7 @@ import {
   squareCenter,
   detectWhoMoved,
   detectEnPassantTarget,
+  epTargetFromHighlightedSquares,
   gridToFenBoard as _gridToFenBoard,
 } from "./boardMath.js";
 import { isKingInCheck } from "./threeCheck.js";
@@ -2020,9 +2021,14 @@ function readAndSend() {
   // gridToFenBoard always emits "-" for the EP field, so detect a 2-square
   // pawn push from the prev→curr board diff and patch it in. Without this,
   // Stockfish will never consider en passant captures legal.
+  // Fall back to reading the site's last-move highlights when the diff
+  // misses (fresh page load, analysis board, page refresh — anywhere
+  // prevBoard is empty because the bot wasn't running when the push happened).
   const parts = fen.split(" ");
   parts[1] = effectiveTurn;
-  parts[3] = detectEnPassantTarget(prevBoard, boardPart);
+  let epTarget = detectEnPassantTarget(prevBoard, boardPart);
+  if (epTarget === "-") epTarget = detectEnPassantFromHighlights();
+  parts[3] = epTarget;
   const correctedFen = parts.join(" ");
 
   if (correctedFen === lastSentFen) return;
@@ -2847,6 +2853,109 @@ function detectTurnFromHighlights() {
   }
 
   return null;
+}
+
+/**
+ * Read the site's "last move" highlights and, if they represent a
+ * 2-square pawn push, return the FEN en-passant target square. This is
+ * the fallback path for en-passant detection used when the bot has no
+ * previous board to diff against (fresh page load, analysis board,
+ * page refresh). Returns '-' if no EP is available.
+ *
+ * Lichess/Chessground: reads `.last-move` square rects + `<piece>`
+ * translate transforms. chess.com: reads `.highlight` square-XY classes
+ * + piece square-XY classes. Other sites return '-'.
+ */
+function detectEnPassantFromHighlights() {
+  if (IS_CHESSGROUND) return _epFromChessgroundHighlights();
+  if (SITE === "chesscom") return _epFromChesscomHighlights();
+  return "-";
+}
+
+function _epFromChessgroundHighlights() {
+  const board = document.querySelector("cg-board");
+  if (!board) return "-";
+  const boardRect = board.getBoundingClientRect();
+  if (boardRect.width <= 0 || boardRect.height <= 0) return "-";
+  const squareW = boardRect.width / 8;
+  const squareH = boardRect.height / 8;
+  const flipped = isLichessFlipped();
+
+  const lastMove = document.querySelectorAll("square.last-move, .last-move");
+  const squares = [];
+  for (const sq of lastMove) {
+    const r = sq.getBoundingClientRect();
+    if (r.width <= 0) continue;
+    const cx = r.left + r.width / 2 - boardRect.left;
+    const cy = r.top + r.height / 2 - boardRect.top;
+    const vf = Math.floor(cx / squareW);
+    const vr = Math.floor(cy / squareH);
+    if (vf < 0 || vf > 7 || vr < 0 || vr > 7) continue;
+    const file = flipped ? 7 - vf : vf;
+    const rank = flipped ? vr : 7 - vr;
+    squares.push({ file, rank, vf, vr });
+    if (squares.length === 2) break;
+  }
+  if (squares.length !== 2) return "-";
+
+  const pieces = board.querySelectorAll("piece");
+  const hasPawnAt = (file, rank, color) => {
+    // Convert algebraic (file, rank) back to visual (vf, vr) for piece lookup.
+    const vf = flipped ? 7 - file : file;
+    const vr = flipped ? rank : 7 - rank;
+    for (const p of pieces) {
+      const t = p.style.transform;
+      const m = t && t.match(/translate\((-?\d+(?:\.\d+)?)px\s*,\s*(-?\d+(?:\.\d+)?)px\)/);
+      if (!m) continue;
+      const pf = Math.round(parseFloat(m[1]) / squareW);
+      const pr = Math.round(parseFloat(m[2]) / squareH);
+      if (pf !== vf || pr !== vr) continue;
+      const cl = p.className || "";
+      if (!cl.includes("pawn")) continue;
+      if (color === "w" && cl.includes("white")) return true;
+      if (color === "b" && cl.includes("black")) return true;
+      return false;
+    }
+    return false;
+  };
+
+  return epTargetFromHighlightedSquares(
+    squares.map((s) => ({ file: s.file, rank: s.rank })),
+    hasPawnAt,
+  );
+}
+
+function _epFromChesscomHighlights() {
+  // chess.com last-move squares carry `highlight` plus `square-XY` (X=file 1-8, Y=rank 1-8).
+  const highlights = document.querySelectorAll(".highlight, [class*='highlight']");
+  const squares = [];
+  for (const hl of highlights) {
+    const classes = typeof hl.className === "string" ? hl.className : (hl.getAttribute("class") || "");
+    const m = classes.match(/\bsquare-(\d)(\d)\b/);
+    if (!m) continue;
+    const file = parseInt(m[1], 10) - 1;
+    const rank = parseInt(m[2], 10) - 1;
+    if (file < 0 || file > 7 || rank < 0 || rank > 7) continue;
+    if (squares.some((s) => s.file === file && s.rank === rank)) continue;
+    squares.push({ file, rank });
+    if (squares.length === 2) break;
+  }
+  if (squares.length !== 2) return "-";
+
+  const board = getBoardElement() || document;
+  const pieces = findChesscomPieces(board) || [];
+  const hasPawnAt = (file, rank, color) => {
+    const want = `square-${file + 1}${rank + 1}`;
+    for (const piece of pieces) {
+      const pcls = typeof piece.className === "string" ? piece.className : (piece.getAttribute("class") || "");
+      if (!pcls.includes(want)) continue;
+      const pm = pcls.match(/\b([wb])p\b/);
+      if (pm && pm[1] === color) return true;
+    }
+    return false;
+  };
+
+  return epTargetFromHighlightedSquares(squares, hasPawnAt);
 }
 
 function detectTurnFromClocks() {

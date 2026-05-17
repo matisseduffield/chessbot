@@ -7,6 +7,7 @@ import {
   squareCenter,
   detectWhoMoved,
   detectEnPassantTarget,
+  epTargetFromHighlightedSquares,
   gridToFenBoard,
 } from './boardMath.js';
 
@@ -159,6 +160,77 @@ describe('detectEnPassantTarget', () => {
     expect(detectEnPassantTarget('', START)).toBe('-');
     expect(detectEnPassantTarget(START, '')).toBe('-');
     expect(detectEnPassantTarget(null, null)).toBe('-');
+  });
+});
+
+describe('epTargetFromHighlightedSquares', () => {
+  // Helper: build a hasPawnAt that always returns true (verifies the geometry path).
+  const anyPawn = () => true;
+  // Helper: returns true only for the given (file, rank, color).
+  const onlyPawnAt = (f, r, c) => (file, rank, color) => file === f && rank === r && color === c;
+
+  it('detects b2-b4 → b3 from highlights', () => {
+    // b2 = file 1, rank 1; b4 = file 1, rank 3
+    const squares = [
+      { file: 1, rank: 1 },
+      { file: 1, rank: 3 },
+    ];
+    expect(epTargetFromHighlightedSquares(squares, onlyPawnAt(1, 3, 'w'))).toBe('b3');
+  });
+  it('detects b4-b2 (reversed order) → b3', () => {
+    const squares = [
+      { file: 1, rank: 3 },
+      { file: 1, rank: 1 },
+    ];
+    expect(epTargetFromHighlightedSquares(squares, anyPawn)).toBe('b3');
+  });
+  it('detects e7-e5 → e6 (black push)', () => {
+    const squares = [
+      { file: 4, rank: 6 },
+      { file: 4, rank: 4 },
+    ];
+    expect(epTargetFromHighlightedSquares(squares, onlyPawnAt(4, 4, 'b'))).toBe('e6');
+  });
+  it('returns "-" when no pawn at destination', () => {
+    const squares = [
+      { file: 1, rank: 1 },
+      { file: 1, rank: 3 },
+    ];
+    expect(epTargetFromHighlightedSquares(squares, () => false)).toBe('-');
+  });
+  it('returns "-" for one-square pushes', () => {
+    const squares = [
+      { file: 1, rank: 1 },
+      { file: 1, rank: 2 },
+    ];
+    expect(epTargetFromHighlightedSquares(squares, anyPawn)).toBe('-');
+  });
+  it('returns "-" for different files (captures, knight moves)', () => {
+    const squares = [
+      { file: 1, rank: 1 },
+      { file: 2, rank: 3 },
+    ];
+    expect(epTargetFromHighlightedSquares(squares, anyPawn)).toBe('-');
+  });
+  it('returns "-" for moves not on the canonical pawn-push ranks', () => {
+    // rank 0→2 (impossible — no pieces start on rank 1 for a 2-square push)
+    const squares = [
+      { file: 0, rank: 0 },
+      { file: 0, rank: 2 },
+    ];
+    expect(epTargetFromHighlightedSquares(squares, anyPawn)).toBe('-');
+  });
+  it('returns "-" for wrong-shape input', () => {
+    expect(epTargetFromHighlightedSquares([], anyPawn)).toBe('-');
+    expect(epTargetFromHighlightedSquares([{ file: 1, rank: 1 }], anyPawn)).toBe('-');
+    expect(epTargetFromHighlightedSquares(null, anyPawn)).toBe('-');
+  });
+  it('returns "-" when hasPawnAt is not a function', () => {
+    const squares = [
+      { file: 1, rank: 1 },
+      { file: 1, rank: 3 },
+    ];
+    expect(epTargetFromHighlightedSquares(squares, null)).toBe('-');
   });
 });
 
