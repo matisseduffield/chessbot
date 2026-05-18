@@ -229,6 +229,52 @@ export function detectEnPassantTarget(prevFen, currFen) {
 }
 
 /**
+ * Compute the en-passant target square from the two highlighted "last
+ * move" squares that the chess site shows, plus a callback that reports
+ * whether a pawn of the given colour is at a given square.
+ *
+ * Used as a fallback for {@link detectEnPassantTarget} when the bot has
+ * no previous board to diff against — fresh page loads, analysis boards,
+ * page refreshes, or any read where the bot wasn't running when the
+ * 2-square push happened.
+ *
+ * Squares use 0-indexed algebraic coords:
+ *   file 0 = 'a', 7 = 'h'; rank 0 = 1st rank, 7 = 8th rank.
+ *
+ * @param {Array<{file:number, rank:number}>} squares  Exactly 2 squares.
+ * @param {(file:number, rank:number, color:'w'|'b') => boolean} hasPawnAt
+ * @returns {string} EP target square ('b3', 'e6', …) or '-'.
+ */
+export function epTargetFromHighlightedSquares(squares, hasPawnAt) {
+  if (!Array.isArray(squares) || squares.length !== 2) return '-';
+  const [a, b] = squares;
+  if (a.file !== b.file) return '-';
+  if (Math.abs(a.rank - b.rank) !== 2) return '-';
+  const file = a.file;
+  if (file < 0 || file > 7) return '-';
+  const ranks = [a.rank, b.rank].sort((x, y) => x - y);
+  // White 2-square push: from rank 1 (algebraic 2) to rank 3 (algebraic 4) → EP rank 2 (algebraic 3).
+  // Black 2-square push: from rank 6 (algebraic 7) to rank 4 (algebraic 5) → EP rank 5 (algebraic 6).
+  let toRank, epRank;
+  /** @type {'w'|'b'} */
+  let color;
+  if (ranks[0] === 1 && ranks[1] === 3) {
+    toRank = 3;
+    color = 'w';
+    epRank = 2;
+  } else if (ranks[0] === 4 && ranks[1] === 6) {
+    toRank = 4;
+    color = 'b';
+    epRank = 5;
+  } else {
+    return '-';
+  }
+  if (typeof hasPawnAt !== 'function') return '-';
+  if (!hasPawnAt(file, toRank, color)) return '-';
+  return String.fromCharCode(97 + file) + (epRank + 1);
+}
+
+/**
  * Convert a 2-D grid of pieces (see {@link fenBoardToGrid}) back into
  * the board part of a FEN. Optionally accepts a bracketed pocket
  * suffix for drop variants. Castling rights are derived from king +
