@@ -37,8 +37,9 @@ import {
   pieceCenterToSquare,
 } from "./lichessBoard.js";
 import {
-  classifyVariantColors,
   nextTurnAfterMove,
+  meanFillLuminance,
+  classifyVariantBoard,
 } from "./chesscomBoard.js";
 import {
   nextDepth as _nextDepth,
@@ -2029,44 +2030,74 @@ function getVisualBoardRect(board) {
 let _variantColorMap = null;
 let _variantColorMapKey = null;
 
-function buildVariantColorMap(pieces, boardRect, flipped) {
-  // Extract pure (dataColor, cy) samples; skip pieces outside the board area
-  // (bank/captured pieces in drop variants).
-  const samples = [];
+/** Decode a variant piece's background SVG and return its mean fill luminance,
+ *  or null. chess.com renders variant pieces as inline base64 SVG data URIs;
+ *  the white sprite has a light body fill, the black sprite a dark one. */
+function chesscomColorLuminance(piece) {
+  const bg = getComputedStyle(piece).backgroundImage || "";
+  const m = bg.match(/base64,([^"')]+)/);
+  if (!m) return null;
+  let svg;
+  try {
+    svg = atob(m[1]);
+  } catch (_) {
+    return null;
+  }
+  const fills = [];
+  const re = /fill\s*[:="']\s*(#[0-9a-fA-F]{3,6})/g;
+  let mm;
+  while ((mm = re.exec(svg)) !== null) fills.push(mm[1]);
+  return meanFillLuminance(fills);
+}
+
+/** Map chess.com variant `data-color` values to white/black + orientation.
+ *  `data-color` numbers are arbitrary per game, so colour comes from the SVG
+ *  fill luminance (absolute) and orientation from piece positions. Captured
+ *  (`data-dead`) pieces and the neutral duck (non-standard `data-piece`) are
+ *  excluded. Returns { white, black, flipped, playerColor, confident }. */
+function buildVariantColorMap(pieces, boardRect) {
+  const STD = /^[pnbrqk]$/;
+  const groups = {};
   for (const p of pieces) {
+    if (p.hasAttribute && p.hasAttribute("data-dead")) continue;
     const dc = p.getAttribute("data-color");
-    if (!dc) continue;
+    const dp = (p.getAttribute("data-piece") || "").toLowerCase();
+    if (!dc || !dp || !STD.test(dp)) continue; // skip missing + duck
     const r = p.getBoundingClientRect();
     if (r.height === 0) continue;
     const cx = r.left + r.width / 2 - boardRect.left;
     const cy = r.top + r.height / 2 - boardRect.top;
-    if (
-      cx < -5 ||
-      cx > boardRect.width + 5 ||
-      cy < -5 ||
-      cy > boardRect.height + 5
-    )
-      continue;
-    samples.push({ dataColor: dc, cy });
+    if (cx < -5 || cx > boardRect.width + 5 || cy < -5 || cy > boardRect.height + 5) continue;
+    if (!groups[dc]) groups[dc] = { dataColor: dc, sumY: 0, count: 0, sample: p };
+    groups[dc].sumY += cy;
+    groups[dc].count++;
   }
-  const result = classifyVariantColors(samples, flipped);
-  return result || { white: null, black: null };
+  const arr = Object.values(groups).map((g) => ({
+    dataColor: g.dataColor,
+    lum: chesscomColorLuminance(g.sample),
+    avgCyNorm: boardRect.height ? g.sumY / g.count / boardRect.height : 0.5,
+    count: g.count,
+  }));
+  return (
+    classifyVariantBoard(arr) || {
+      white: null,
+      black: null,
+      flipped: false,
+      playerColor: "w",
+      confident: false,
+    }
+  );
 }
 
 /** Detect the chess.com duck piece and return DUCK_FEN_CHAR, else null.
- *  ⚠ The exact duck DOM class is unconfirmed without a live Duck game. We
- *  match a `duck` class or data-piece first, then fall back to "a piece that
- *  is neither a standard [wb][prnbqk] nor a data-piece piece" — safe because
- *  this is only consulted when the duck variant is active. */
+ *  Verified on a live Duck game: variant pieces carry `data-piece` = the
+ *  piece TYPE letter, and the duck's type is a non-standard symbol ("Θ").
+ *  So any `data-piece` that isn't a standard P/N/B/R/Q/K is the duck. Also
+ *  matches an explicit `duck` class for older/standard board markup. */
 function chesscomDuckFenChar(classes, piece) {
   if (/duck/i.test(classes)) return DUCK_FEN_CHAR;
-  const dp = (piece.getAttribute("data-piece") || "").toLowerCase();
-  if (dp === "duck" || dp === "*") return DUCK_FEN_CHAR;
-  // Fallback: a positioned piece element that isn't a standard chess piece.
-  const hasSquare = /\bsquare-\d\d\b/.test(classes) || piece.getBoundingClientRect().width > 0;
-  if (hasSquare && !/\b[wb][prnbqk]\b/.test(classes) && !piece.getAttribute("data-piece")) {
-    return DUCK_FEN_CHAR;
-  }
+  const dp = piece.getAttribute("data-piece");
+  if (dp && !/^[pnbrqk]$/i.test(dp)) return DUCK_FEN_CHAR;
   return null;
 }
 
@@ -2094,6 +2125,10 @@ function chesscomBoardToFen() {
   for (const piece of pieces) {
     const classes = typeof piece.className === "string" ? piece.className : (piece.getAttribute("class") || "");
 
+    // Skip captured pieces — chess.com variant boards keep them in the DOM
+    // (marked data-dead) and render them within the board's bounding box,
+    // which would otherwise corrupt the position.
+    if (piece.hasAttribute && piece.hasAttribute("data-dead")) continue;
     // Skip ghost/premove pieces — chess.com adds these for premove visualization
     if (/\bghost\b/.test(classes)) continue;
     // Also skip pieces with very low opacity (premove ghosts are semi-transparent)
@@ -2125,10 +2160,12 @@ function chesscomBoardToFen() {
       if (!dp || !dc) continue;
       const type = dp.toLowerCase();
       if (!/^[prnbqk]$/.test(type)) continue;
-      // Build color map once per call (uses position heuristic)
-      const mapKey = `${boardRect.left},${boardRect.top},${flipped}`;
+      // Build color map once per read. Colour comes from the absolute SVG
+      // luminance (data-color numbers are arbitrary per game), so it no
+      // longer depends on the flip state.
+      const mapKey = `${boardRect.left},${boardRect.top},${boardRect.width}`;
       if (!_variantColorMap || _variantColorMapKey !== mapKey) {
-        _variantColorMap = buildVariantColorMap(pieces, boardRect, flipped);
+        _variantColorMap = buildVariantColorMap(pieces, boardRect);
         _variantColorMapKey = mapKey;
       }
       const isWhite = (dc === _variantColorMap.white);
@@ -2281,6 +2318,16 @@ function detectChesscomFlipConfidence(board) {
       if (txt.startsWith("a")) return 'unflipped';
     }
   }
+  // Variant (data-color) board: classify by absolute SVG colour + position.
+  // Only trust a confident (clear, two-sided) read so we lock at game start.
+  const vpieces = findChesscomPieces(board);
+  if (vpieces && vpieces.length) {
+    const vrect = getVisualBoardRect(board);
+    if (vrect.width > 0) {
+      const vmap = buildVariantColorMap(vpieces, vrect);
+      if (vmap && vmap.confident) return vmap.flipped ? 'flipped' : 'unflipped';
+    }
+  }
   return 'unknown';
 }
 
@@ -2355,6 +2402,18 @@ function isChesscomFlipped(board) {
           return txt === "a"; // a on right = flipped
         }
       }
+    }
+  }
+
+  // Method 5d: variant (data-color) board — absolute SVG colour + position.
+  // chess.com variant pieces have no [wb] class, so derive orientation from
+  // which colour (by SVG luminance) sits where. Only trust a confident read.
+  {
+    const vpieces = findChesscomPieces(board);
+    const vrect = getVisualBoardRect(board);
+    if (vpieces && vpieces.length && vrect.width > 0) {
+      const vmap = buildVariantColorMap(vpieces, vrect);
+      if (vmap && vmap.white && vmap.black && vmap.confident) return vmap.flipped;
     }
   }
 
