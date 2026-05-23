@@ -162,6 +162,32 @@ describe('StockfishBridge handshake', () => {
     await p;
     expect(drive.sentLines().some((l) => l.includes('UCI_ShowWDL'))).toBe(false);
   });
+
+  it('captures the engine variant list from the UCI_Variant combo (Fairy-Stockfish)', async () => {
+    const { proc, drive } = makeFakeProcess();
+    const spawnFn = vi.fn(() => proc);
+    const bridge = new StockfishBridge({
+      spawnFn,
+      binPath: '/tmp/__test_fairy__',
+      syzygyPath: '',
+      handshakeTimeoutMs: 200,
+    });
+    const p = bridge.start();
+    await Promise.resolve();
+    drive.stdout('option name Threads type spin default 1 min 1 max 512');
+    drive.stdout(
+      'option name UCI_Variant type combo default chess var chess var atomic var xiangqi var duck var shogun',
+    );
+    drive.stdout('uciok');
+    drive.stdout('readyok');
+    await p;
+    expect(bridge.getSupportedVariants()).toEqual(['chess', 'atomic', 'xiangqi', 'duck', 'shogun']);
+  });
+
+  it('reports an empty variant list for engines without UCI_Variant (regular Stockfish)', async () => {
+    const { bridge } = await startedBridge();
+    expect(bridge.getSupportedVariants()).toEqual([]);
+  });
 });
 
 describe('StockfishBridge.evaluate', () => {
