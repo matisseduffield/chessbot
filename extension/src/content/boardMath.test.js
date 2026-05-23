@@ -8,6 +8,8 @@ import {
   detectWhoMoved,
   detectEnPassantTarget,
   epTargetFromHighlightedSquares,
+  parseDuckMove,
+  DUCK_FEN_CHAR,
   gridToFenBoard,
 } from './boardMath.js';
 
@@ -231,6 +233,39 @@ describe('epTargetFromHighlightedSquares', () => {
       { file: 1, rank: 3 },
     ];
     expect(epTargetFromHighlightedSquares(squares, null)).toBe('-');
+  });
+});
+
+describe('parseDuckMove', () => {
+  it('splits a comma-separated compound move', () => {
+    expect(parseDuckMove('e2e4,d6')).toEqual({ pieceMove: 'e2e4', duckTo: 'd6' });
+  });
+  it('splits a space-separated compound move', () => {
+    expect(parseDuckMove('e2e4 d6')).toEqual({ pieceMove: 'e2e4', duckTo: 'd6' });
+  });
+  it('splits a concatenated compound move', () => {
+    expect(parseDuckMove('e2e4d6')).toEqual({ pieceMove: 'e2e4', duckTo: 'd6' });
+  });
+  it('keeps a promotion on the chess move and splits the duck square', () => {
+    expect(parseDuckMove('e7e8q,a3')).toEqual({ pieceMove: 'e7e8q', duckTo: 'a3' });
+  });
+  it('returns duckTo null for a plain move', () => {
+    expect(parseDuckMove('e2e4')).toEqual({ pieceMove: 'e2e4', duckTo: null });
+  });
+  it('handles empty / malformed input', () => {
+    expect(parseDuckMove('')).toEqual({ pieceMove: null, duckTo: null });
+    expect(parseDuckMove(null)).toEqual({ pieceMove: null, duckTo: null });
+  });
+});
+
+describe('DUCK_FEN_CHAR serialization', () => {
+  it('gridToFenBoard emits the duck char as a piece', () => {
+    const grid = Array.from({ length: 8 }, () => Array(8).fill(null));
+    grid[7][4] = 'K';
+    grid[0][4] = 'k';
+    grid[3][3] = DUCK_FEN_CHAR; // duck on d5
+    const fen = gridToFenBoard(grid, '', { noCastling: true });
+    expect(fen.split(' ')[0]).toBe('4k3/8/8/3*4/8/8/8/4K3');
   });
 });
 
