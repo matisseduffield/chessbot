@@ -45,7 +45,9 @@ const LARGEBOARD_VARIANTS = new Set([
   'opulent',
 ]);
 
+/** @param {string} name */
 const isLargeboardName = (name) => /largeboard/i.test(name || '');
+/** @param {string} name */
 const isFairyName = (name) => /fairy/i.test(name || '');
 
 /**
