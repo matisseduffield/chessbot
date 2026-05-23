@@ -113,6 +113,7 @@ async function main() {
     antichess:        f("Antichess",                 "antichess",        "popular"),
     horde:            f("Horde",                     "horde",            "popular"),
     racingkings:      f("Racing Kings",              "racingkings",      "popular"),
+    duck:             f("Duck Chess",                "duck",             "popular"),
     // Chess variants
     "5check":         f("Five-check",                "5check",           "chess"),
     almost:           f("Almost Chess",              "almost",           "chess"),
@@ -187,7 +188,6 @@ async function main() {
   // map. Anything the engine reports that isn't here gets an auto-prettified
   // label under the "more" category, so nothing is ever hidden.
   const EXTRA_VARIANT_META = {
-    duck:        { label: "Duck Chess",              category: "popular" },
     xiangqi:     { label: "Xiangqi (Chinese Chess)", category: "regional" },
     manchu:      { label: "Manchu",                  category: "regional" },
     janggi:      { label: "Janggi (Korean Chess)",   category: "regional" },
