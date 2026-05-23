@@ -61,6 +61,90 @@ export function classifyVariantColors(samples, flipped) {
 }
 
 /**
+ * Relative luminance (0–255 scale) of a `#rgb` / `#rrggbb` colour, or null
+ * if unparseable. Used to tell white from black variant pieces by the SVG
+ * fill palette (white pieces have a light body fill, black a dark one).
+ * @param {string} hex
+ * @returns {number | null}
+ */
+export function hexLuminance(hex) {
+  if (typeof hex !== 'string') return null;
+  let h = hex.trim().replace(/^#/, '');
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  if (h.length !== 6) return null;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if ([r, g, b].some(Number.isNaN)) return null;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/**
+ * Mean luminance of a list of `#hex` fills (non-hex entries ignored), or null
+ * if none parse. The white and black sprites share highlight (#fff) and
+ * outline (#1a1a1a) fills, so those cancel out when two groups are compared;
+ * the distinguishing body fill drives the difference.
+ * @param {string[]} fills
+ * @returns {number | null}
+ */
+export function meanFillLuminance(fills) {
+  const lums = [];
+  for (const f of fills || []) {
+    const l = hexLuminance(f);
+    if (l != null) lums.push(l);
+  }
+  if (!lums.length) return null;
+  return lums.reduce((a, b) => a + b, 0) / lums.length;
+}
+
+/**
+ * Decide white/black/orientation for a chess.com variant board from per
+ * `data-color` groups. `data-color` values are arbitrary per game, so colour
+ * is taken from the SVG luminance (lighter group = white) and orientation
+ * from vertical position (white nearer the top ⇒ board is flipped ⇒ the
+ * player is Black).
+ *
+ * `confident` is true only with a clear two-sided opening-like layout (both
+ * sides ≥ 8 pieces, distinct luminance, well-separated vertically) so callers
+ * lock orientation at game start and never on a lopsided/end-game read.
+ *
+ * @param {Array<{ dataColor: string, lum: number|null, avgCyNorm: number, count: number }>} groups
+ * @returns {{ white: string, black: string, flipped: boolean, playerColor: 'w'|'b', confident: boolean } | null}
+ */
+export function classifyVariantBoard(groups) {
+  const valid = (groups || []).filter((g) => g && g.lum != null && g.count > 0);
+  if (valid.length === 0) return null;
+  if (valid.length === 1) {
+    return {
+      white: valid[0].dataColor,
+      black: valid[0].dataColor,
+      flipped: false,
+      playerColor: 'w',
+      confident: false,
+    };
+  }
+  const sorted = [...valid].sort((a, b) => b.count - a.count);
+  const a = sorted[0];
+  const b = sorted[1];
+  const whiteG = a.lum >= b.lum ? a : b;
+  const blackG = a.lum >= b.lum ? b : a;
+  // White nearer the visual top (smaller normalized cy) ⇒ board is flipped.
+  const flipped = whiteG.avgCyNorm < blackG.avgCyNorm;
+  const confident =
+    whiteG.count >= 8 &&
+    blackG.count >= 8 &&
+    Math.abs(whiteG.lum - blackG.lum) > 8 &&
+    Math.abs(whiteG.avgCyNorm - blackG.avgCyNorm) > 0.25;
+  return {
+    white: whiteG.dataColor,
+    black: blackG.dataColor,
+    flipped,
+    playerColor: flipped ? 'b' : 'w',
+    confident,
+  };
+}
+
+/**
  * Last-move piece color → whose turn it is next (inverse).
  * @param {"w" | "b" | "white" | "black" | null | undefined} color
  * @returns {"w" | "b" | null}

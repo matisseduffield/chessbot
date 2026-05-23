@@ -1,5 +1,87 @@
 import { describe, it, expect } from 'vitest';
-import { classifyVariantColors, nextTurnAfterMove } from './chesscomBoard.js';
+import {
+  classifyVariantColors,
+  nextTurnAfterMove,
+  hexLuminance,
+  meanFillLuminance,
+  classifyVariantBoard,
+} from './chesscomBoard.js';
+
+describe('hexLuminance', () => {
+  it('parses #rrggbb and #rgb', () => {
+    expect(Math.round(hexLuminance('#ffffff'))).toBe(255);
+    expect(Math.round(hexLuminance('#000000'))).toBe(0);
+    expect(Math.round(hexLuminance('#fff'))).toBe(255);
+  });
+  it('returns null for junk', () => {
+    expect(hexLuminance('none')).toBeNull();
+    expect(hexLuminance(null)).toBeNull();
+  });
+});
+
+describe('meanFillLuminance', () => {
+  // Real palettes captured from the chess.com Duck variant board.
+  it('white sprite (#f8f8f8 body) is lighter than black (#4e4c4b body)', () => {
+    const white = meanFillLuminance(['#f8f8f8', '#fff', '#1a1a1a']);
+    const black = meanFillLuminance(['#4e4c4b', '#fff', '#1a1a1a']);
+    expect(white).toBeGreaterThan(black);
+  });
+  it('returns null when nothing parses', () => {
+    expect(meanFillLuminance(['none', 'url(#x)'])).toBeNull();
+    expect(meanFillLuminance([])).toBeNull();
+  });
+});
+
+describe('classifyVariantBoard', () => {
+  const whiteFills = ['#f8f8f8', '#fff', '#1a1a1a'];
+  const blackFills = ['#4e4c4b', '#fff', '#1a1a1a'];
+  const wLum = meanFillLuminance(whiteFills);
+  const bLum = meanFillLuminance(blackFills);
+
+  it('player white: white pieces at the bottom, not flipped', () => {
+    const r = classifyVariantBoard([
+      { dataColor: '5', lum: wLum, avgCyNorm: 0.85, count: 16 },
+      { dataColor: '6', lum: bLum, avgCyNorm: 0.15, count: 16 },
+    ]);
+    expect(r.white).toBe('5');
+    expect(r.black).toBe('6');
+    expect(r.flipped).toBe(false);
+    expect(r.playerColor).toBe('w');
+    expect(r.confident).toBe(true);
+  });
+
+  it('player black: white pieces at the top, flipped (the reported bug)', () => {
+    const r = classifyVariantBoard([
+      { dataColor: '5', lum: wLum, avgCyNorm: 0.15, count: 16 },
+      { dataColor: '6', lum: bLum, avgCyNorm: 0.85, count: 16 },
+    ]);
+    expect(r.white).toBe('5');
+    expect(r.flipped).toBe(true);
+    expect(r.playerColor).toBe('b');
+    expect(r.confident).toBe(true);
+  });
+
+  it('not confident on a lopsided/low-piece read (so it never locks wrong)', () => {
+    const r = classifyVariantBoard([
+      { dataColor: '5', lum: wLum, avgCyNorm: 0.39, count: 16 },
+      { dataColor: '6', lum: bLum, avgCyNorm: 0.24, count: 5 },
+    ]);
+    expect(r.confident).toBe(false);
+  });
+
+  it('color mapping still resolves even when not confident', () => {
+    const r = classifyVariantBoard([
+      { dataColor: '5', lum: wLum, avgCyNorm: 0.39, count: 16 },
+      { dataColor: '6', lum: bLum, avgCyNorm: 0.24, count: 5 },
+    ]);
+    expect(r.white).toBe('5');
+    expect(r.black).toBe('6');
+  });
+
+  it('returns null for empty input', () => {
+    expect(classifyVariantBoard([])).toBeNull();
+  });
+});
 
 describe('classifyVariantColors', () => {
   it('returns null for no samples', () => {
