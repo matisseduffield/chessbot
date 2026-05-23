@@ -237,19 +237,17 @@ describe('epTargetFromHighlightedSquares', () => {
 });
 
 describe('parseDuckMove', () => {
-  it('splits a comma-separated compound move', () => {
-    expect(parseDuckMove('e2e4,d6')).toEqual({ pieceMove: 'e2e4', duckTo: 'd6' });
+  // Format verified against pyffish 0.0.89: "<chessmove>,<duckfrom><duckto>".
+  it('splits a compound move and takes the duck destination (last square)', () => {
+    expect(parseDuckMove('e2e4,e4e2')).toEqual({ pieceMove: 'e2e4', duckTo: 'e2' });
   });
-  it('splits a space-separated compound move', () => {
-    expect(parseDuckMove('e2e4 d6')).toEqual({ pieceMove: 'e2e4', duckTo: 'd6' });
-  });
-  it('splits a concatenated compound move', () => {
-    expect(parseDuckMove('e2e4d6')).toEqual({ pieceMove: 'e2e4', duckTo: 'd6' });
+  it('decodes a relocated duck (from differs from chess dest)', () => {
+    expect(parseDuckMove('d7d5,d5a3')).toEqual({ pieceMove: 'd7d5', duckTo: 'a3' });
   });
   it('keeps a promotion on the chess move and splits the duck square', () => {
-    expect(parseDuckMove('e7e8q,a3')).toEqual({ pieceMove: 'e7e8q', duckTo: 'a3' });
+    expect(parseDuckMove('e7e8q,e8a3')).toEqual({ pieceMove: 'e7e8q', duckTo: 'a3' });
   });
-  it('returns duckTo null for a plain move', () => {
+  it('returns duckTo null for a plain move (no comma)', () => {
     expect(parseDuckMove('e2e4')).toEqual({ pieceMove: 'e2e4', duckTo: null });
   });
   it('handles empty / malformed input', () => {

@@ -62,22 +62,23 @@ export function fenBoardToGrid(boardFen) {
 
 /**
  * Fairy-Stockfish duck-chess piece character in the FEN board field.
- *
- * ⚠ VERIFY against the running engine — Fairy-Stockfish represents the
- * neutral duck with `*` in board output, but if a future build differs,
- * change only this constant.
+ * Verified against pyffish 0.0.89: the neutral duck is `*`, e.g.
+ * `rnbqkbnr/pppppppp/8/8/4P3/*7/PPPP1PPP/RNBQKBNR b KQkq - 0 1`.
  */
 export const DUCK_FEN_CHAR = '*';
 
 /**
- * Split a duck-chess move into its chess move and the duck relocation.
+ * Split a Fairy-Stockfish duck-chess move into its chess move and the duck
+ * destination square.
  *
- * A duck-chess turn is a normal chess move followed by moving the neutral
- * duck to any empty square. ⚠ Fairy-Stockfish's exact compound-move
- * separator must be confirmed against the running engine; this accepts the
- * plausible forms defensively: `"e2e4,d6"`, `"e2e4 d6"`, and the
- * concatenated `"e2e4d6"`. A plain move with no duck component returns
- * `duckTo: null`.
+ * A duck-chess turn is ONE compound move, formatted `<chessmove>,<duckmove>`
+ * where the duck part is a 4-char `<from><to>` whose last two chars are the
+ * duck's destination (the `<from>` is the engine's bookkeeping square, not
+ * the duck's true origin, so we ignore it). Verified against pyffish:
+ *   `e2e4,e4e2`  → piece e2e4, duck to e2
+ *   `d7d5,d5a3`  → piece d7d5, duck to a3
+ *   `e7e8q,e8a3` → piece e7e8q (promotion), duck to a3
+ * A plain move with no comma returns `duckTo: null`.
  *
  * @param {string} uci
  * @returns {{ pieceMove: string|null, duckTo: string|null }}
@@ -85,14 +86,13 @@ export const DUCK_FEN_CHAR = '*';
 export function parseDuckMove(uci) {
   if (!uci || typeof uci !== 'string') return { pieceMove: null, duckTo: null };
   const s = uci.trim();
-  // Separator form: "<move>[, ]<square>"
-  const sep = s.match(/^([a-z]\d+[a-z]\d+[a-z]?)[,\s]+([a-z]\d+)$/i);
-  if (sep) return { pieceMove: sep[1], duckTo: sep[2] };
-  // Concatenated form: normal move (4-5 chars) + trailing 2-char square.
-  const cat = s.match(/^([a-z]\d[a-z]\d[a-z]?)([a-z]\d)$/i);
-  if (cat) return { pieceMove: cat[1], duckTo: cat[2] };
-  // Plain move, no duck component.
-  return { pieceMove: s, duckTo: null };
+  const comma = s.indexOf(',');
+  if (comma === -1) return { pieceMove: s, duckTo: null };
+  const pieceMove = s.slice(0, comma);
+  const duckMove = s.slice(comma + 1);
+  // Duck destination = the final square of the duck-move token.
+  const m = duckMove.match(/([a-h][1-8])\s*$/i);
+  return { pieceMove, duckTo: m ? m[1].toLowerCase() : null };
 }
 
 /**
