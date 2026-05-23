@@ -25,6 +25,7 @@ const { computeSafeMovetime } = require("./src/engine/clockCap");
 const { parseClockText } = require("@chessbot/shared");
 const serverLogger = require("./src/logger");
 const { pickSearchLimits } = require("./src/engine/searchLimits");
+const { classifyVariant, chooseFairyBinary } = require("./src/engine/engineSelect");
 const { createPinAuth } = require("./src/auth/pin");
 const { FileCache } = require("./src/server/fileCache");
 const { registerHttpRoutes } = require("./src/server/httpRoutes");
@@ -350,12 +351,31 @@ async function main() {
       await engine.abort();
 
       const needEngine = def.engine; // "stockfish" | "fairy"
-      const needSwitch = needEngine !== currentEngineType;
+      // Auto-pick the right Fairy-Stockfish build for this variant: 8x8
+      // variants (duck, atomic, ...) run on the standard build, large-board
+      // variants (xiangqi, capablanca, ...) on the largeboard build. The
+      // largeboard build segfaults on some 8x8 variants (e.g. duck), so this
+      // routes each variant to a build that can actually play it — when both
+      // binaries are present. Returns null = no preference (keep current).
+      let desiredFairyPath = null;
+      if (needEngine === "fairy") {
+        const cls = classifyVariant(variantKey, (k) => !!VARIANTS[k]);
+        desiredFairyPath = chooseFairyBinary(getCachedFiles().engines, cls);
+      }
+      const switchingType = needEngine !== currentEngineType;
+      const switchingBinary =
+        needEngine === "fairy" &&
+        !!desiredFairyPath &&
+        path.resolve(desiredFairyPath) !== path.resolve(config.stockfishPath);
+      const needSwitch = switchingType || switchingBinary;
 
       if (needSwitch) {
         const newPath = needEngine === "fairy"
-          ? config.fairyStockfishPath
+          ? (desiredFairyPath || config.fairyStockfishPath)
           : originalStockfishPath;
+        if (switchingBinary && !switchingType) {
+          console.log(`[server] auto-selecting fairy build for ${variantKey}: ${path.basename(newPath)}`);
+        }
         if (!fs.existsSync(newPath)) {
           currentVariant = previousVariant; // rollback
           return { switched: false, error: `Engine binary not found: ${newPath}` };
