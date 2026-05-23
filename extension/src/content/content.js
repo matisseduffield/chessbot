@@ -14,6 +14,8 @@ import {
   detectWhoMoved,
   detectEnPassantTarget,
   epTargetFromHighlightedSquares,
+  parseDuckMove,
+  DUCK_FEN_CHAR,
   gridToFenBoard as _gridToFenBoard,
 } from "./boardMath.js";
 import { isKingInCheck } from "./threeCheck.js";
@@ -52,6 +54,7 @@ import {
 } from "./protocolBanner.js";
 import { PROTOCOL_VERSION } from "@chessbot/shared";
 import { adapterForDoc } from "./siteAdapters.js";
+import { variantFromUrl, variantFromText } from "./variantDetect.js";
 import {
   isLichessFlipped as _isLichessFlippedDoc,
   detectLichessFlipConfidence as _detectLichessFlipConfidenceDoc,
@@ -200,35 +203,17 @@ function detectVariant() {
   const path = location.pathname.toLowerCase();
   if (IS_CHESSGROUND) {
     // Lichess / PlayStrategy: /atomic/..., /crazyhouse/..., /chess960/..., etc.
-    if (path.includes("/atomic")) return "atomic";
-    if (path.includes("/crazyhouse")) return "crazyhouse";
-    if (path.includes("/chess960")) return "chess960";
-    if (path.includes("/kingofthehill")) return "kingofthehill";
-    if (path.includes("/threecheck") || path.includes("/three-check")) return "3check";
-    if (path.includes("/fivecheck") || path.includes("/five-check")) return "3check"; // PlayStrategy five-check
-    if (path.includes("/antichess")) return "antichess";
-    if (path.includes("/giveaway")) return "giveaway";
-    if (path.includes("/horde")) return "horde";
-    if (path.includes("/racingkings") || path.includes("/racing-kings")) return "racingkings";
-    if (path.includes("/bughouse")) return "bughouse";
-    if (path.includes("/nocastling") || path.includes("/no-castling")) return null; // standard rules, no special engine
+    const urlKey = variantFromUrl(path, "chessground");
+    if (urlKey) return urlKey;
     // Lichess game pages (/AbCdEfGh) don't have variant in URL.
     // Detect from the game-info label or page title.
     const lichessDom = detectVariantFromLichessDOM();
     if (lichessDom) return lichessDom;
   }
   if (SITE === "chesscom") {
-    // Chess.com: /variants/chess960, /variants/atomic, etc. Also /play/chess960, /live/chess960
-    if (path.includes("chess960") || path.includes("960")) return "chess960";
-    if (path.includes("atomic")) return "atomic";
-    if (path.includes("crazyhouse")) return "crazyhouse";
-    if (path.includes("kingofthehill") || path.includes("king-of-the-hill")) return "kingofthehill";
-    if (path.includes("3-check") || path.includes("3check") || path.includes("threecheck") || path.includes("three-check")) return "3check";
-    if (path.includes("antichess")) return "antichess";
-    if (path.includes("giveaway")) return "giveaway";
-    if (path.includes("horde")) return "horde";
-    if (path.includes("racingkings") || path.includes("racing-kings")) return "racingkings";
-    if (path.includes("bughouse")) return "bughouse";
+    // Chess.com: /variants/chess960, /play/atomic, /live/crazyhouse, etc.
+    const urlKey = variantFromUrl(path, "chesscom");
+    if (urlKey) return urlKey;
     // Chess.com in-game pages (/game/live/12345) don't have variant in URL.
     // Try detecting from page title or DOM elements.
     const domVariant = detectVariantFromDOM();
@@ -239,54 +224,25 @@ function detectVariant() {
 
 /** Detect variant from chess.com DOM when URL doesn't contain variant name.
  *  Chess.com shows variant name in page title ("Atomic • user vs user")
- *  and in game-info elements. */
+ *  and in game-info elements. Patterns live in variantDetect.js. */
 function detectVariantFromDOM() {
   // Method 1: page title — chess.com format: "Variant • Player vs Player"
-  const title = document.title.toLowerCase();
-  const titleVariants = [
-    ["atomic", "atomic"],
-    ["crazyhouse", "crazyhouse"],
-    ["king of the hill", "kingofthehill"],
-    ["3-check", "3check"], ["three-check", "3check"], ["three check", "3check"],
-    ["giveaway", "giveaway"],
-    ["antichess", "giveaway"], // chess.com plays giveaway rules even when labelled "antichess"
-    ["horde", "horde"],
-    ["racing kings", "racingkings"],
-    ["bughouse", "bughouse"],
-    ["chess960", "chess960"], ["fischer random", "chess960"],
-  ];
-  for (const [needle, variant] of titleVariants) {
-    if (title.includes(needle)) return variant;
-  }
+  const titleKey = variantFromText([document.title.toLowerCase()], "chesscom");
+  if (titleKey) return titleKey;
   // Method 2: game-info header text (chess.com shows variant name near player names)
   const infoEls = document.querySelectorAll(
     "[class*='game-info'], [class*='GameInfo'], [class*='header-title'], [class*='game-type'], [data-cy='game-info-variant']"
   );
-  for (const el of infoEls) {
-    const text = (el.textContent || "").toLowerCase();
-    for (const [needle, variant] of titleVariants) {
-      if (text.includes(needle)) return variant;
-    }
-  }
-  return null;
+  const texts = [];
+  for (const el of infoEls) texts.push((el.textContent || "").toLowerCase());
+  return variantFromText(texts, "chesscom");
 }
 
 /** Detect variant from Lichess DOM when URL is just a game ID (/AbCdEfGh).
  *  Lichess shows a variant label (e.g. blue "ATOMIC") in the game info section
- *  and includes the variant name in the page title. */
+ *  and includes the variant name in the page title. Patterns live in
+ *  variantDetect.js. */
 function detectVariantFromLichessDOM() {
-  const variantMap = [
-    ["atomic", "atomic"],
-    ["crazyhouse", "crazyhouse"],
-    ["chess960", "chess960"], ["chess 960", "chess960"], ["960", "chess960"],
-    ["king of the hill", "kingofthehill"],
-    ["three-check", "3check"], ["threecheck", "3check"], ["three check", "3check"], ["3-check", "3check"], ["3check", "3check"],
-    ["antichess", "antichess"],
-    ["horde", "horde"],
-    ["racing kings", "racingkings"],
-    ["no castling", null], // standard rules, no special engine
-  ];
-
   // Method 1: game info section — Lichess has a .game__meta section
   // containing a variant link like <a href="/variant/atomic">ATOMIC</a>
   const metaEls = document.querySelectorAll(
@@ -296,30 +252,26 @@ function detectVariantFromLichessDOM() {
   );
   for (const el of metaEls) {
     const text = (el.textContent || "").toLowerCase().trim();
-    for (const [needle, variant] of variantMap) {
-      if (text.includes(needle)) {
-        console.log(`[chessbot] Lichess DOM variant detected: "${text}" → ${variant || "standard"}`);
-        return variant;
-      }
+    const textKey = variantFromText([text], "chessground");
+    if (textKey) {
+      console.log(`[chessbot] Lichess DOM variant detected: "${text}" → ${textKey}`);
+      return textKey;
     }
-    // Also check href for variant links
+    // Also check href for variant links (spaces stripped from needles).
     const href = (el.getAttribute("href") || "").toLowerCase();
-    for (const [needle, variant] of variantMap) {
-      if (href.includes(needle.replace(/ /g, ""))) {
-        console.log(`[chessbot] Lichess DOM variant detected from href: "${href}" → ${variant || "standard"}`);
-        return variant;
-      }
+    const hrefKey = variantFromText([href], "chessground", { stripSpaces: true });
+    if (hrefKey) {
+      console.log(`[chessbot] Lichess DOM variant detected from href: "${href}" → ${hrefKey}`);
+      return hrefKey;
     }
   }
 
   // Method 2: page title — Lichess format: "player • player in variant"
   // or "Casual Atomic • player vs player"
-  const title = document.title.toLowerCase();
-  for (const [needle, variant] of variantMap) {
-    if (title.includes(needle)) {
-      console.log(`[chessbot] Lichess title variant detected: "${needle}" → ${variant || "standard"}`);
-      return variant;
-    }
+  const titleKey = variantFromText([document.title.toLowerCase()], "chessground");
+  if (titleKey) {
+    console.log(`[chessbot] Lichess title variant detected → ${titleKey}`);
+    return titleKey;
   }
 
   return null;
@@ -2101,6 +2053,23 @@ function buildVariantColorMap(pieces, boardRect, flipped) {
   return result || { white: null, black: null };
 }
 
+/** Detect the chess.com duck piece and return DUCK_FEN_CHAR, else null.
+ *  ⚠ The exact duck DOM class is unconfirmed without a live Duck game. We
+ *  match a `duck` class or data-piece first, then fall back to "a piece that
+ *  is neither a standard [wb][prnbqk] nor a data-piece piece" — safe because
+ *  this is only consulted when the duck variant is active. */
+function chesscomDuckFenChar(classes, piece) {
+  if (/duck/i.test(classes)) return DUCK_FEN_CHAR;
+  const dp = (piece.getAttribute("data-piece") || "").toLowerCase();
+  if (dp === "duck" || dp === "*") return DUCK_FEN_CHAR;
+  // Fallback: a positioned piece element that isn't a standard chess piece.
+  const hasSquare = /\bsquare-\d\d\b/.test(classes) || piece.getBoundingClientRect().width > 0;
+  if (hasSquare && !/\b[wb][prnbqk]\b/.test(classes) && !piece.getAttribute("data-piece")) {
+    return DUCK_FEN_CHAR;
+  }
+  return null;
+}
+
 function chesscomBoardToFen() {
   const board = getBoardElement();
   if (!board) return null;
@@ -2134,8 +2103,18 @@ function chesscomBoardToFen() {
     // Get piece type — Method A: class like "bb", "wp", "bk", etc.
     let fenChar;
     let color; // 'w' or 'b'
-    const pieceMatch = classes.match(/\b([wb][prnbqk])\b/);
-    if (pieceMatch) {
+    // Duck chess: detect the neutral duck before the standard-piece match.
+    if (detectedVariant === "duck") {
+      const duckChar = chesscomDuckFenChar(classes, piece);
+      if (duckChar) {
+        fenChar = duckChar;
+        color = "w"; // neutral — only used by drop-variant pocket logic, which duck isn't
+      }
+    }
+    const pieceMatch = fenChar ? null : classes.match(/\b([wb][prnbqk])\b/);
+    if (fenChar) {
+      // duck already resolved
+    } else if (pieceMatch) {
       color = pieceMatch[1][0];
       const type = pieceMatch[1][1];
       fenChar = color === "w" ? type.toUpperCase() : type.toLowerCase();
@@ -4068,9 +4047,27 @@ function showTrainingFeedback(correct) {
 
 // ── Single best move: green squares (our move) + red squares (opponent response) ──
 
+/** Parse a 2+ char algebraic square ("d6") into {file,rank} (0-indexed), or null. */
+function squareFromAlgebraic(sq) {
+  if (!sq || typeof sq !== "string" || sq.length < 2) return null;
+  const file = sq.charCodeAt(0) - 97;
+  const rank = parseInt(sq.slice(1), 10) - 1;
+  if (file < 0 || file > 7 || rank < 0 || rank > 7) return null;
+  return { file, rank };
+}
+
 function drawSingleMove(uci, bestLine, source) {
   clearArrow();
   if (!uci || uci.length < 3) return;
+  // Duck chess: the engine move is "<chess move><duck square>". Split off the
+  // duck relocation so the chess move draws normally and the duck gets its
+  // own marker.
+  let duckTo = null;
+  if (detectedVariant === "duck") {
+    const parsed = parseDuckMove(uci);
+    if (parsed.pieceMove) uci = parsed.pieceMove;
+    duckTo = parsed.duckTo;
+  }
   const geo = getBoardGeometry();
   if (!geo) { console.log("[chessbot] drawSingleMove: no board geometry"); return; }
   const { board, rect, sqSize, flipped } = geo;
@@ -4104,6 +4101,12 @@ function drawSingleMove(uci, bestLine, source) {
     } else {
       drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, moveColor);
     }
+  }
+
+  // Duck chess: mark where to drop the duck (gold marker, always shown).
+  if (duckTo) {
+    const dsq = squareFromAlgebraic(duckTo);
+    if (dsq) drawDropMarker(svg, dsq.file, dsq.rank, sqSize, flipped, "rgba(234,179,8,0.85)", "🦆", 0.85);
   }
 
   // Red opponent response
@@ -4662,6 +4665,13 @@ function getSquareTarget(file, rank) {
  *  attempt = retry attempt number (1-based), used to alternate strategies. */
 function executeMove(uci, attempt = 1) {
   if (!uci || uci.length < 3) return false;
+  // Duck chess: split the compound move into the chess move + duck relocation.
+  let duckTo = null;
+  if (detectedVariant === "duck") {
+    const parsed = parseDuckMove(uci);
+    if (parsed.pieceMove) uci = parsed.pieceMove;
+    duckTo = parsed.duckTo;
+  }
   const squares = uciToSquares(uci);
   if (!squares) return false;
 
@@ -4675,14 +4685,45 @@ function executeMove(uci, attempt = 1) {
   const { from, to } = squares;
   const promo = uci.length === 5 ? uci[4] : null;
 
+  let result = false;
   if (SITE === "chesscom") {
-    return executeMoveChessCom(from, to, promo, attempt);
+    result = executeMoveChessCom(from, to, promo, attempt);
   } else if (IS_CHESSGROUND) {
-    return executeMoveChessground(from, to, promo);
+    result = executeMoveChessground(from, to, promo);
   } else if (SITE === "chesstempo") {
-    return executeMoveChesstempo(from, to, promo);
+    result = executeMoveChesstempo(from, to, promo);
   }
-  return false;
+  // Duck chess: after the chess move lands, relocate the duck.
+  if (result && duckTo && SITE === "chesscom") {
+    scheduleDuckPlacementChessCom(duckTo);
+  }
+  return result;
+}
+
+/** Place the duck on `duckTo` after a chess.com move.
+ *  ⚠ chess.com's duck-placement interaction is unconfirmed without a live Duck
+ *  game; the likely flow is that the move auto-selects the duck and a single
+ *  click on the empty target square drops it. Delayed so the move's events
+ *  settle first; failures are logged, not fatal. */
+function scheduleDuckPlacementChessCom(duckTo) {
+  const sq = squareFromAlgebraic(duckTo);
+  if (!sq) return;
+  setTimeout(() => {
+    try {
+      _geoCache = null;
+      const t = getSquareTarget(sq.file, sq.rank);
+      if (!t || !t.target) return;
+      firePointer(t.target, "pointerdown", t.clientX, t.clientY);
+      fireMouse(t.target, "mousedown", t.clientX, t.clientY);
+      setTimeout(() => {
+        try {
+          firePointer(t.target, "pointerup", t.clientX, t.clientY);
+          fireMouse(t.target, "mouseup", t.clientX, t.clientY);
+          fireMouse(t.target, "click", t.clientX, t.clientY);
+        } catch (e) { console.log("[chessbot][auto-move] duck placement up failed:", e.message); }
+      }, 60);
+    } catch (e) { console.log("[chessbot][auto-move] duck placement failed:", e.message); }
+  }, 350);
 }
 
 /** Execute a drop move by clicking the pocket piece then the destination square.
