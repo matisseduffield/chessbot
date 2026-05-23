@@ -113,6 +113,7 @@ async function main() {
     antichess:        f("Antichess",                 "antichess",        "popular"),
     horde:            f("Horde",                     "horde",            "popular"),
     racingkings:      f("Racing Kings",              "racingkings",      "popular"),
+    duck:             f("Duck Chess",                "duck",             "popular"),
     // Chess variants
     "5check":         f("Five-check",                "5check",           "chess"),
     almost:           f("Almost Chess",              "almost",           "chess"),
@@ -143,6 +144,22 @@ async function main() {
     shouse:           f("S-House",                   "shouse",           "chess"),
     suicide:          f("Suicide Chess",             "suicide",          "chess"),
     threekings:       f("Three Kings",               "threekings",       "chess"),
+    shogun:           f("Shogun Chess",              "shogun",           "chess"),
+    torpedo:          f("Torpedo Chess",             "torpedo",          "chess"),
+    // Large-board variants
+    capablanca:       f("Capablanca Chess",          "capablanca",       "large"),
+    capahouse:        f("Capablanca House",          "capahouse",        "large"),
+    gothic:           f("Gothic Chess",              "gothic",           "large"),
+    janus:            f("Janus Chess",               "janus",            "large"),
+    modern:           f("Modern Chess",              "modern",           "large"),
+    embassy:          f("Embassy Chess",             "embassy",          "large"),
+    chancellor:       f("Chancellor Chess",          "chancellor",       "large"),
+    courier:          f("Courier Chess",             "courier",          "large"),
+    grand:            f("Grand Chess",               "grand",            "large"),
+    grandhouse:       f("Grandhouse",                "grandhouse",       "large"),
+    shako:            f("Shako",                     "shako",            "large"),
+    tencubed:         f("Ten-Cubed Chess",           "tencubed",         "large"),
+    opulent:          f("Opulent Chess",             "opulent",          "large"),
     // Regional / historical
     "ai-wok":         f("Ai-Wok",                    "ai-wok",           "regional"),
     asean:            f("ASEAN Chess",               "asean",            "regional"),
@@ -154,6 +171,9 @@ async function main() {
     shatar:           f("Shatar",                    "shatar",           "regional"),
     shatranj:         f("Shatranj",                  "shatranj",         "regional"),
     sittuyin:         f("Sittuyin",                  "sittuyin",         "regional"),
+    xiangqi:          f("Xiangqi (Chinese Chess)",   "xiangqi",          "regional"),
+    manchu:           f("Manchu",                    "manchu",           "regional"),
+    janggi:           f("Janggi (Korean Chess)",     "janggi",           "regional"),
     // Shogi variants
     dobutsu:          f("Dobutsu Shogi",             "dobutsu",          "shogi"),
     euroshogi:        f("EuroShogi",                 "euroshogi",        "shogi"),
@@ -172,6 +192,7 @@ async function main() {
     ataxx:            f("Ataxx",                     "ataxx",            "other"),
     breakthrough:     f("Breakthrough",              "breakthrough",     "other"),
     clobber:          f("Clobber",                   "clobber",          "other"),
+    jesonmor:         f("Jeson Mor",                 "jesonmor",         "other"),
   };
   let currentVariant = "chess"; // active variant key
   let currentEngineType = "stockfish"; // "stockfish" | "fairy"
@@ -183,31 +204,11 @@ async function main() {
   // including variants.ini entries — not just the curated VARIANTS map.
   let fairyVariants = [];
 
-  // Friendly labels + categories for built-ins beyond the curated VARIANTS
-  // map. Anything the engine reports that isn't here gets an auto-prettified
-  // label under the "more" category, so nothing is ever hidden.
-  const EXTRA_VARIANT_META = {
-    duck:        { label: "Duck Chess",              category: "popular" },
-    xiangqi:     { label: "Xiangqi (Chinese Chess)", category: "regional" },
-    manchu:      { label: "Manchu",                  category: "regional" },
-    janggi:      { label: "Janggi (Korean Chess)",   category: "regional" },
-    capablanca:  { label: "Capablanca Chess",        category: "large" },
-    capahouse:   { label: "Capablanca House",        category: "large" },
-    gothic:      { label: "Gothic Chess",            category: "large" },
-    janus:       { label: "Janus Chess",             category: "large" },
-    modern:      { label: "Modern Chess",            category: "large" },
-    embassy:     { label: "Embassy Chess",           category: "large" },
-    chancellor:  { label: "Chancellor Chess",        category: "large" },
-    courier:     { label: "Courier Chess",           category: "large" },
-    grand:       { label: "Grand Chess",             category: "large" },
-    grandhouse:  { label: "Grandhouse",              category: "large" },
-    shako:       { label: "Shako",                   category: "large" },
-    tencubed:    { label: "Ten-Cubed Chess",         category: "large" },
-    opulent:     { label: "Opulent Chess",           category: "large" },
-    shogun:      { label: "Shogun Chess",            category: "chess" },
-    torpedo:     { label: "Torpedo Chess",           category: "chess" },
-    jesonmor:    { label: "Jeson Mor",               category: "other" },
-  };
+  // Friendly labels + categories for any built-in the engine reports that
+  // isn't in the curated VARIANTS map above (e.g. custom variants.ini
+  // entries). Anything not listed here gets an auto-prettified label under
+  // the "more" category, so nothing the engine supports is ever hidden.
+  const EXTRA_VARIANT_META = {};
 
   const prettifyVariant = (key) =>
     String(key).replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
