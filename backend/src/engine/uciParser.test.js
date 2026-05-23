@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { parseInfoLine, parseBestmoveLine, parseOptionLine } = require('./uciParser');
+const {
+  parseInfoLine,
+  parseBestmoveLine,
+  parseOptionLine,
+  parseVariantCombo,
+} = require('./uciParser');
 
 describe('parseInfoLine', () => {
   it('returns null for non-info lines', () => {
@@ -110,5 +115,46 @@ describe('parseOptionLine', () => {
     expect(parseOptionLine('option name Skill Level type spin default 20 min 0 max 20')).toBe(
       'Skill Level',
     );
+  });
+});
+
+describe('parseVariantCombo', () => {
+  it('extracts every variant name from the UCI_Variant combo line', () => {
+    const line =
+      'option name UCI_Variant type combo default chess var chess var 3check var atomic var crazyhouse var horde';
+    expect(parseVariantCombo(line)).toEqual([
+      'chess',
+      '3check',
+      'atomic',
+      'crazyhouse',
+      'horde',
+    ]);
+  });
+
+  it('preserves engine order and includes exotic names', () => {
+    const line =
+      'option name UCI_Variant type combo default chess var xiangqi var janggi var capablanca var duck var shogun';
+    expect(parseVariantCombo(line)).toEqual([
+      'xiangqi',
+      'janggi',
+      'capablanca',
+      'duck',
+      'shogun',
+    ]);
+  });
+
+  it('returns null for non-UCI_Variant option lines', () => {
+    expect(parseVariantCombo('option name Threads type spin default 1 min 1 max 1024')).toBeNull();
+    expect(parseVariantCombo('option name UCI_Chess960 type check default false')).toBeNull();
+  });
+
+  it('returns null for non-option lines and junk', () => {
+    expect(parseVariantCombo('id name Fairy-Stockfish')).toBeNull();
+    expect(parseVariantCombo('')).toBeNull();
+    expect(parseVariantCombo(null)).toBeNull();
+  });
+
+  it('returns null when the combo lists no variants', () => {
+    expect(parseVariantCombo('option name UCI_Variant type combo default chess')).toBeNull();
   });
 });

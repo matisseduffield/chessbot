@@ -2240,8 +2240,38 @@ const VARIANT_DATA = [
 // Flat lookup: key → label
 const VARIANT_LABELS = {};
 VARIANT_DATA.forEach(g => g.items.forEach(v => { VARIANT_LABELS[v.key] = v.label; }));
-// All fairy (non-stockfish) variant keys
-const FAIRY_VARIANTS = Object.keys(VARIANT_LABELS).filter(k => k !== "chess" && k !== "chess960");
+// All fairy (non-stockfish) variant keys (rebuilt when the server advertises
+// extra engine built-ins via mergeServerVariants).
+let FAIRY_VARIANTS = Object.keys(VARIANT_LABELS).filter(k => k !== "chess" && k !== "chess960");
+
+// Server variant category-key → display group name for the picker.
+const VARIANT_CATEGORY_LABELS = {
+  standard: "Standard", popular: "Popular", chess: "Chess Variants",
+  large: "Large Board", regional: "Regional", shogi: "Shogi",
+  mini: "Mini Games", other: "Other", more: "More Variants",
+};
+
+// Merge the server-advertised variant list (which includes every built-in the
+// active Fairy-Stockfish reports) into the picker. Any variant we don't
+// already show is appended under its category so nothing the engine supports
+// stays hidden.
+function mergeServerVariants(serverVariants) {
+  if (!Array.isArray(serverVariants)) return;
+  let added = false;
+  for (const v of serverVariants) {
+    if (!v || !v.key || VARIANT_LABELS[v.key]) continue;
+    VARIANT_LABELS[v.key] = v.label || v.key;
+    const catName = VARIANT_CATEGORY_LABELS[v.category] || "More Variants";
+    let group = VARIANT_DATA.find(g => g.cat === catName);
+    if (!group) { group = { cat: catName, items: [] }; VARIANT_DATA.push(group); }
+    group.items.push({ key: v.key, label: VARIANT_LABELS[v.key] });
+    added = true;
+  }
+  if (added) {
+    FAIRY_VARIANTS = Object.keys(VARIANT_LABELS).filter(k => k !== "chess" && k !== "chess960");
+    if (typeof vpRender === "function") vpRender(typeof vpSearch !== "undefined" && vpSearch ? vpSearch.value : "");
+  }
+}
 
 // -- Variant picker widget --
 const vpPicker   = document.getElementById("variant-picker");
@@ -3260,6 +3290,9 @@ function updateResourcesForVariant() {
 
 function applySettings(msg) {
   const saved = getSavedSettings();
+
+  // Surface every variant the engine advertises (curated + all fairy built-ins).
+  mergeServerVariants(msg.variants);
 
   // Store all engines for later filtering
   allEngines = msg.engines || [];

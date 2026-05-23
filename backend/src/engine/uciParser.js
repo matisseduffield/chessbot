@@ -113,8 +113,35 @@ function parseOptionLine(line) {
   return match ? match[1] : null;
 }
 
+/**
+ * Parse the `UCI_Variant` combo option line that Fairy-Stockfish emits
+ * during its UCI handshake, e.g.:
+ *   option name UCI_Variant type combo default chess var chess var 3check var atomic ...
+ * Returns the list of variant names (the `var X` values), or null if the
+ * line isn't the UCI_Variant combo. The order is preserved as the engine
+ * reported it. Regular Stockfish has no such option, so callers get null.
+ *
+ * @param {string} line
+ * @returns {string[] | null}
+ */
+function parseVariantCombo(line) {
+  if (typeof line !== 'string') return null;
+  if (!/^option name UCI_Variant type combo\b/.test(line)) return null;
+  const variants = [];
+  // Match each `var <name>` token. Variant names are single tokens
+  // (no spaces) in Fairy-Stockfish, so split on whitespace and collect
+  // the word following each `var`.
+  const re = /\bvar\s+(\S+)/g;
+  let m;
+  while ((m = re.exec(line)) !== null) {
+    variants.push(m[1]);
+  }
+  return variants.length ? variants : null;
+}
+
 module.exports = {
   parseInfoLine,
   parseBestmoveLine,
   parseOptionLine,
+  parseVariantCombo,
 };

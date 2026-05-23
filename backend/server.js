@@ -177,6 +177,80 @@ async function main() {
   let currentEngineType = "stockfish"; // "stockfish" | "fairy"
   const originalStockfishPath = config.stockfishPath; // preserve for switching back
 
+  // Full variant list reported by the active Fairy-Stockfish build (from its
+  // UCI_Variant combo). Populated by a startup probe and refreshed whenever
+  // fairy starts. Lets us surface *every* built-in the engine supports —
+  // including variants.ini entries — not just the curated VARIANTS map.
+  let fairyVariants = [];
+
+  // Friendly labels + categories for built-ins beyond the curated VARIANTS
+  // map. Anything the engine reports that isn't here gets an auto-prettified
+  // label under the "more" category, so nothing is ever hidden.
+  const EXTRA_VARIANT_META = {
+    duck:        { label: "Duck Chess",              category: "popular" },
+    xiangqi:     { label: "Xiangqi (Chinese Chess)", category: "regional" },
+    manchu:      { label: "Manchu",                  category: "regional" },
+    janggi:      { label: "Janggi (Korean Chess)",   category: "regional" },
+    capablanca:  { label: "Capablanca Chess",        category: "large" },
+    capahouse:   { label: "Capablanca House",        category: "large" },
+    gothic:      { label: "Gothic Chess",            category: "large" },
+    janus:       { label: "Janus Chess",             category: "large" },
+    modern:      { label: "Modern Chess",            category: "large" },
+    embassy:     { label: "Embassy Chess",           category: "large" },
+    chancellor:  { label: "Chancellor Chess",        category: "large" },
+    courier:     { label: "Courier Chess",           category: "large" },
+    grand:       { label: "Grand Chess",             category: "large" },
+    grandhouse:  { label: "Grandhouse",              category: "large" },
+    shako:       { label: "Shako",                   category: "large" },
+    tencubed:    { label: "Ten-Cubed Chess",         category: "large" },
+    opulent:     { label: "Opulent Chess",           category: "large" },
+    shogun:      { label: "Shogun Chess",            category: "chess" },
+    torpedo:     { label: "Torpedo Chess",           category: "chess" },
+    jesonmor:    { label: "Jeson Mor",               category: "other" },
+  };
+
+  const prettifyVariant = (key) =>
+    String(key).replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  /** Look up (or synthesize) a variant definition. Curated VARIANTS win;
+   *  otherwise any built-in the active fairy engine reports is routable. */
+  function variantDef(variantKey) {
+    if (VARIANTS[variantKey]) return VARIANTS[variantKey];
+    if (fairyVariants.includes(variantKey)) {
+      const meta = EXTRA_VARIANT_META[variantKey];
+      return {
+        label: meta ? meta.label : prettifyVariant(variantKey),
+        engine: "fairy",
+        uciVariant: variantKey,
+        uci960: false,
+        category: meta ? meta.category : "more",
+      };
+    }
+    return null;
+  }
+
+  /** Variant list advertised to clients: curated VARIANTS first (nice labels,
+   *  categories, auto-detection), then every other engine-reported built-in. */
+  function buildVariantList() {
+    const out = Object.entries(VARIANTS).map(([key, v]) => ({
+      key,
+      label: v.label,
+      category: v.category,
+    }));
+    const seen = new Set(Object.keys(VARIANTS));
+    for (const key of fairyVariants) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const meta = EXTRA_VARIANT_META[key];
+      out.push({
+        key,
+        label: meta ? meta.label : prettifyVariant(key),
+        category: meta ? meta.category : "more",
+      });
+    }
+    return out;
+  }
+
   // Global variant generation — incremented on each variant switch to invalidate all pending evals
   let globalVariantGen = 0;
 
@@ -209,6 +283,33 @@ async function main() {
     process.exit(1);
   }
 
+  // Probe Fairy-Stockfish once for its full built-in variant list so the
+  // panel can expose everything the engine supports without waiting for the
+  // user to switch into a variant first. Fire-and-forget + graceful: if the
+  // fairy binary isn't installed, fairyVariants stays empty and the curated
+  // list is used. A short-lived process is spawned and quit immediately.
+  async function probeFairyVariants() {
+    if (!config.fairyStockfishPath || !fs.existsSync(config.fairyStockfishPath)) return [];
+    const probe = new StockfishBridge({
+      binPath: config.fairyStockfishPath,
+      handshakeTimeoutMs: 8000,
+    });
+    try {
+      await probe.start();
+      return probe.getSupportedVariants();
+    } finally {
+      try { probe.stop(); } catch { /* already gone */ }
+    }
+  }
+  probeFairyVariants()
+    .then((list) => {
+      if (list.length) {
+        fairyVariants = list;
+        console.log(`[server] Fairy-Stockfish reports ${list.length} built-in variants`);
+      }
+    })
+    .catch((err) => console.warn(`[server] fairy variant probe failed: ${err.message}`));
+
   // ── 2. Load opening book (optional) ───────────────────
   let book = new OpeningBook(config.openingBookPath);
   await book.init();
@@ -228,7 +329,7 @@ async function main() {
   let engineSwitchPromise = null; // resolves when current switch completes
 
   async function switchVariant(variantKey) {
-    const def = VARIANTS[variantKey];
+    const def = variantDef(variantKey);
     if (!def) return { switched: false, error: `Unknown variant: ${variantKey}` };
 
     // Invalidate all pending evals from all clients before switching
@@ -284,6 +385,11 @@ async function main() {
           }
         }
         currentEngineType = needEngine;
+        // Capture the full built-in list the fairy engine just advertised.
+        if (needEngine === "fairy") {
+          const reported = engine.getSupportedVariants();
+          if (reported.length) fairyVariants = reported;
+        }
       }
 
       // Set UCI options for the variant
@@ -748,7 +854,7 @@ async function main() {
           books: getCachedFiles().books.map((b) => b.name),
           syzygy: getCachedFiles().syzygy.map((s) => s.name),
           variant: currentVariant,
-          variants: Object.entries(VARIANTS).map(([key, v]) => ({ key, label: v.label })),
+          variants: buildVariantList(),
         });
       }
 

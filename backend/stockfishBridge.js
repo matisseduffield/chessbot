@@ -5,6 +5,7 @@ const {
   parseInfoLine,
   parseBestmoveLine,
   parseOptionLine,
+  parseVariantCombo,
 } = require("./src/engine/uciParser");
 const { forModule } = require("./src/lib/logger");
 
@@ -49,6 +50,7 @@ class StockfishBridge {
     this._pendingReject = null;
     this._handleLine = this._defaultLineHandler.bind(this);
     this._supportedOptions = new Set(); // populated during UCI handshake
+    this._supportedVariants = []; // variant names from the UCI_Variant combo (Fairy-Stockfish)
     this._settings = {
       Threads: 1,
       Hash: 16,
@@ -164,12 +166,16 @@ class StockfishBridge {
 
       // Wait for "uciok"
       this._supportedOptions = new Set();
+      this._supportedVariants = [];
       const onLine = this._handleLine;
       this._handleLine = (line) => {
         log.info(`${line}`);
         // Collect supported option names during handshake
         const optName = parseOptionLine(line);
         if (optName) this._supportedOptions.add(optName);
+        // Capture the engine's full variant list (Fairy-Stockfish only).
+        const variants = parseVariantCombo(line);
+        if (variants) this._supportedVariants = variants;
         if (line === "uciok") {
           this.ready = true;
           this._handleLine = onLine; // restore
@@ -343,6 +349,13 @@ class StockfishBridge {
   /** Get current settings (for syncing to UI). */
   getSettings() {
     return { ...this._settings };
+  }
+
+  /** Variant names the engine reported in its UCI_Variant combo during the
+   *  handshake. Empty for regular Stockfish (no such option); fully populated
+   *  for Fairy-Stockfish. */
+  getSupportedVariants() {
+    return [...this._supportedVariants];
   }
 
   /** Clear the transposition table. */
