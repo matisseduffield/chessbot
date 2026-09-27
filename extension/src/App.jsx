@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react'
 import './App.css'
-import './study.css'
-import { watchBackendHealth } from './backendHealth.js'
 import {
   loadPopupSettings,
   savePopupSettings,
@@ -23,8 +21,7 @@ function consumeLastError(ctx) {
 
 function App() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS)
-  const [health, setHealth] = useState('checking')
-  const connected = health === 'ready'
+  const [connected, setConnected] = useState(false)
   const [copied, setCopied] = useState(false)
 
   // Load persisted state through the validated schema (popupSettings.js
@@ -55,6 +52,7 @@ function App() {
             // savePopupSettings drops any field that fails validation.
             savePopupSettings(chrome.storage?.local, live)
           }
+          if (typeof resp.connected === 'boolean') setConnected(resp.connected)
         })
       }
     })
@@ -68,7 +66,24 @@ function App() {
     }
   }, [])
 
-  useEffect(() => watchBackendHealth(setHealth), [])
+  useEffect(() => {
+    let ws
+    const check = () => {
+      try {
+        ws = new WebSocket('ws://localhost:8080')
+        ws.onopen = () => { setConnected(true); ws.close() }
+        ws.onerror = () => setConnected(false)
+      } catch {
+        setConnected(false)
+      }
+    }
+    check()
+    const interval = setInterval(check, 5000)
+    return () => {
+      clearInterval(interval)
+      if (ws && ws.readyState <= 1) ws.close()
+    }
+  }, [])
 
   const toggle = () => {
     const next = !settings.enabled
@@ -84,8 +99,7 @@ function App() {
   }
 
   const openPanel = () => {
-    if (chrome.tabs?.create) chrome.tabs.create({ url: 'http://localhost:8080' })
-    else window.open('http://localhost:8080', '_blank', 'noopener')
+    chrome.tabs.create({ url: 'http://localhost:8080' })
   }
 
   const changeDisplayMode = async (mode) => {
@@ -134,17 +148,14 @@ function App() {
         </div>
         <div className="status-badge">
           <span className={`status-dot ${connected ? 'green' : 'red'}`} />
-          <span className="status-text" role="status">{{ready:'Engine ready', checking:'Checking…', starting:'Starting…', offline:'Offline'}[health]}</span>
+          <span className="status-text">{connected ? 'Connected' : 'Offline'}</span>
         </div>
       </header>
 
       <div className="popup-body">
-        <div className="popup-intro"><span className="popup-kicker">YOUR CHESS COMPANION</span><h1>A clearer next move.</h1><p>Hints and analysis, right on your board.</p></div>
-        {health === 'offline' && <div className="connection-help" role="status">Start the local engine with <code>npm start</code> from your ChessBot folder. This panel reconnects automatically.</div>}
         <button
           className={`power-btn ${enabled ? 'on' : 'off'}`}
           onClick={toggle}
-          aria-pressed={enabled}
           title={enabled ? 'Disable analysis' : 'Enable analysis'}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -162,7 +173,6 @@ function App() {
             <button
               className={`mode-btn ${displayMode === 'arrow' ? 'active' : ''}`}
               onClick={() => changeDisplayMode('arrow')}
-              aria-pressed={displayMode === 'arrow'}
               title="Show arrows only"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -174,7 +184,6 @@ function App() {
             <button
               className={`mode-btn ${displayMode === 'box' ? 'active' : ''}`}
               onClick={() => changeDisplayMode('box')}
-              aria-pressed={displayMode === 'box'}
               title="Show square highlights only"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -185,7 +194,6 @@ function App() {
             <button
               className={`mode-btn ${displayMode === 'both' ? 'active' : ''}`}
               onClick={() => changeDisplayMode('both')}
-              aria-pressed={displayMode === 'both'}
               title="Show both arrows and square highlights"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

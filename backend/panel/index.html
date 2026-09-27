@@ -14,6 +14,9 @@
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
 <link rel="manifest" href="/site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg-950: #0a0c13;
@@ -1459,7 +1462,6 @@
 <div id="layout">
   <!-- Left: Board + PV cards -->
   <div id="left-col">
-    <div class="study-heading"><div><h1>Study desk</h1><p>Your current position, candidate moves and the lines worth exploring.</p></div><span>♟ / ANALYSIS</span></div>
     <div id="quick-info-bar" style="display:none">
       <span id="qi-move">Move —</span>
       <span class="qi-sep">·</span>
@@ -1506,7 +1508,7 @@
     </div>
     <div id="eval-progress" style="display:none"></div>
     <div id="pvs">
-      <div class="empty-state">Open a supported board with the extension enabled to see its position and engine suggestions here.</div>
+      <div class="empty-state">Waiting for analysis…</div>
     </div>
   </div>
 
@@ -1536,7 +1538,6 @@
       </div>
     </div>
 
-    <div class="workspace-toolbar"><h2>Analysis workspace</h2><div class="workspace-tabs" role="group" aria-label="Workspace view"><button data-workspace-view="focus" aria-pressed="true">Play &amp; learn</button><button data-workspace-view="all" aria-pressed="false">All settings</button></div><p id="workspace-note"></p></div>
     <div class="settings-body" id="settings-body">
       <div id="settings-body-spacer" style="pointer-events:none;"></div>
       <!-- 1. Analysis -->
@@ -2000,8 +2001,6 @@ import { getRaw, setRaw } from "./src/panelStore.js";
 })();
 </script>
 <script type="module">
-import './src/workspace.css';
-import { initWorkspaceView } from './src/workspaceView.js';
 import {
   escHtml,
   hexToRgb,
@@ -3890,19 +3889,6 @@ function layoutColumns(skipId, placeholder) {
   if (!body || !_colLayout) return;
 
   const bodyWidth = body.clientWidth;
-  if (bodyWidth < 720) {
-    for (const el of body.querySelectorAll('.settings-group[data-section-id]')) {
-      el.style.position = 'relative';
-      el.style.width = '100%';
-      el.style.left = '0';
-      el.style.top = '0';
-      el.style.visibility = '';
-    }
-    const spacer = document.getElementById('settings-body-spacer');
-    if (spacer) spacer.style.height = '0';
-    body.querySelectorAll('.col-resizer').forEach(el => el.remove());
-    return;
-  }
   const widths = getColWidths(bodyWidth);
   const offsets = getColOffsets(widths);
   const elMap = getElMap();
@@ -3918,7 +3904,7 @@ function layoutColumns(skipId, placeholder) {
         if (!el) continue;
       } else {
         el = elMap[id];
-        if (!el || el.hidden || id === skipId) continue;
+        if (!el || id === skipId) continue;
       }
       el.style.position = "absolute";
       el.style.width = thisWidth + "px";
@@ -4286,7 +4272,6 @@ initCollapsible();
 initShortcutsModal();
 initDragAndDrop();
 initBoardResizer();
-initWorkspaceView(document, localStorage, () => layoutColumns());
 renderBoard();
 connect();
 </script>

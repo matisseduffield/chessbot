@@ -11,9 +11,8 @@ The first tagged release will close out the **Unreleased** section below.
 ### Added
 
 - Read-only Chess.com computer-board bridge preserving full FEN metadata, player color and orientation, with validation and stale-snapshot rejection.
-- Default Play & learn dashboard view, persistent All settings switch, responsive layout and matching popup styling.
 
-- Popup health polling uses bounded HTTP requests rather than repeatedly opening analysis WebSockets; startup and ready states are distinct.
+- Current capability map documenting the existing training mode, runtime architecture and confirmed integration gaps; original dashboard and popup retained.
 - Optional WASM helper cancels outstanding promises, isolates replacement searches from late results, and allows retry after startup failure. This does not enable the unfinished fallback integration.
 - Build the dashboard once per root build. Match the declared Node requirement to the current Vite/jsdom toolchain and recommend the current universal Windows Stockfish build.
 
