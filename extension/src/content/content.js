@@ -180,6 +180,7 @@ let showOpponentResponse = true; // show predicted opponent reply (red arrow/box
 let searchMovetime = null; // null = disabled, else ms
 let searchNodes = null; // null = disabled, else node count
 let showDepthOverlay = false; // render a depth badge on the chess website overlay
+let lastDepthResult = null;
 let wsBackoff = 3000; // WebSocket reconnect backoff (ms), resets on connect
 let contextInvalidated = false; // true once extension context is orphaned
 let detectedVariant = null; // chess variant detected from URL
@@ -1078,12 +1079,19 @@ function connectWS() {
           chrome.storage.local.set({ chessbot_showDepthOverlay: showDepthOverlay });
         }
         if (!showDepthOverlay) removeDepthBadge();
+        else if (lastDepthResult?.requestId === analysisRequestId && lastDepthResult.fen === lastSentFen) {
+          const d = lastDepthResult;
+          drawDepthBadge(d.depth, d.targetDepth ?? d.requestedDepth ?? 0, d.nps, d.type === 'bestmove' && !d.streaming, !!d.cached);
+        }
         return;
       }
       if (msg.type === "eval_progress") {
         const currentSnapshot = SITE === 'chesscom' ? readBotPosition(document) : null;
         if (currentSnapshot && (currentSnapshot.gameOver || currentSnapshot.fen !== msg.fen)) return;
-        if (protocolReady && msg.requestId === analysisRequestId && showDepthOverlay) drawDepthBadge(msg.depth, msg.targetDepth, msg.nps);
+        if (protocolReady && msg.requestId === analysisRequestId) {
+          lastDepthResult = msg;
+          if (showDepthOverlay) drawDepthBadge(msg.depth, msg.targetDepth, msg.nps);
+        }
         return;
       }
       if (msg.type === "set_show_opponent_response") {
@@ -1251,8 +1259,9 @@ function connectWS() {
         const lines = msg.lines || [];
         const bestLine = lines[0] || null;
         const paintDepth = () => {
-          if (showDepthOverlay && typeof msg.depth === 'number') {
-            drawDepthBadge(msg.depth, msg.targetDepth ?? msg.requestedDepth ?? 0, null, !msg.streaming, !!msg.cached);
+          if (typeof msg.depth === 'number') {
+            lastDepthResult = msg;
+            if (showDepthOverlay) drawDepthBadge(msg.depth, msg.targetDepth ?? msg.requestedDepth ?? 0, null, !msg.streaming, !!msg.cached);
           }
         };
         // Guard: if the board changed while we were processing, don't draw stale overlays
