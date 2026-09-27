@@ -1,4 +1,5 @@
 import { it, expect } from 'vitest';
+import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -24,11 +25,8 @@ it('persists bounded history, de-duplicates attempts and keeps reset separate fr
     restored.clear();
     expect(restored.history()).toHaveLength(0);
   } finally {
-    if (
-      dirname(resolve(dir)) !== resolve(tmpdir()) ||
-      !basename(dir).startsWith('chessbot-training-')
-    )
-      throw new Error('Unexpected test cleanup directory');
+    assert.equal(dirname(resolve(dir)), resolve(tmpdir()));
+    assert.ok(basename(dir).startsWith('chessbot-training-'));
     await rm(dir, { recursive: true, force: true });
   }
 });
