@@ -25,7 +25,11 @@ class SessionHub {
       if (!this.sessions.has(id))
         this.sessions.set(id, { id, site: msg.site || 'unknown', ...this.makeState() });
       ws.sessionId = id;
-      if (!this.focused) this.focused = id;
+      if (!this.focused) {
+        this.focused = id;
+        for (const panel of this.clients)
+          if (panel.role === 'panel' && panel.followFocus) panel.sessionId = id;
+      }
     } else {
       ws.followFocus = true;
       ws.sessionId = this.focused;

@@ -15,10 +15,11 @@ runs on `/play/computer`; malformed or stale snapshots fall back to the existing
 Chess.com's page API is undocumented, so future site changes can still require updates.
 
 The original dashboard and popup are retained, including the existing training controls.
-See the [current capability map](docs/current-capabilities.md) for implemented features,
-training behavior and known integration gaps.
+The [training and reliability update](docs/training-reliability-update.md) adds isolated
+board sessions, dashboard pinning, spoiler protection and local mistake review. The
+[capability baseline](docs/current-capabilities.md) records the audit behind these changes.
 
-After updating, run `npm run build`, reload the unpacked extension at `chrome://extensions`,
+After updating, run `npm run build`, restart the backend, reload the unpacked extension at `chrome://extensions`,
 and refresh your bot tab. Load `extension/dist` if this is your first installation.
 See [refresh validation](docs/bot-refresh-validation.md) for tested scope and limitations.
 

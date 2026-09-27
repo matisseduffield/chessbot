@@ -18,6 +18,7 @@ function setup() {
 }
 it('previews the original position locally and restores the newest live result', () => {
   const { doc, state, sent } = setup();
+  state.boardFlipped = true;
   ui.consume({
     type: 'training_history',
     attempts: [
@@ -35,10 +36,12 @@ it('previews the original position locally and restores the newest live result',
   sent.length = 0;
   [...doc.querySelectorAll('button')].find((b) => b.textContent === 'Review position').click();
   expect(state.currentData.fen).toBe('original');
+  expect(state.boardFlipped).toBe(false);
   expect(sent).toEqual([]);
   expect(ui.consume({ type: 'bestmove', fen: 'new live' })).toBe(true);
   doc.getElementById('return-live').click();
   expect(state.currentData.fen).toBe('new live');
+  expect(state.boardFlipped).toBe(true);
   expect(sent).toEqual([]);
 });
 it('clears stale answers immediately when training is enabled', () => {

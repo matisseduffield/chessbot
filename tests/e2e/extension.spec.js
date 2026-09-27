@@ -82,7 +82,7 @@ test('installed extension reads Chess.com and Lichess, routes sessions, and hide
       console.log(
         '[fixture diagnostics]',
         await worker.evaluate(async () => {
-          const tabs = await chrome.tabs.query({});
+          const tabs = await globalThis.chrome.tabs.query({});
           const diagnostics = [];
           for (const tab of tabs)
             if (
@@ -90,7 +90,9 @@ test('installed extension reads Chess.com and Lichess, routes sessions, and hide
               tab.url?.startsWith('https://lichess.org/')
             ) {
               try {
-                diagnostics.push(await chrome.tabs.sendMessage(tab.id, { type: 'get_logs' }));
+                diagnostics.push(
+                  await globalThis.chrome.tabs.sendMessage(tab.id, { type: 'get_logs' }),
+                );
               } catch (error) {
                 diagnostics.push(String(error));
               }

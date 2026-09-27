@@ -29,6 +29,7 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
     seq = 0,
     pending = new Map();
   let refreshTimer = null;
+  let liveFlipped = false;
   const defaults = new Map(
     [...doc.querySelectorAll('input')].map((el) => [el, { checked: el.checked, value: el.value }]),
   );
@@ -64,6 +65,7 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
     send({ type: 'clear_training_history' });
   doc.getElementById('return-live').onclick = () => {
     reviewing = false;
+    state.boardFlipped = liveFlipped;
     doc.getElementById('return-live').hidden = true;
     if (live) {
       state.currentData = live;
@@ -103,8 +105,12 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
       preview.className = 'panel-btn';
       preview.textContent = 'Review position';
       preview.onclick = () => {
-        if (!reviewing) live = state.currentData;
+        if (!reviewing) {
+          live = state.currentData;
+          liveFlipped = !!state.boardFlipped;
+        }
         reviewing = true;
+        state.boardFlipped = attempt.player === 'b';
         doc.getElementById('return-live').hidden = false;
         state.currentData = {
           fen: attempt.before,
@@ -279,6 +285,7 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
           live = null;
           doc.getElementById('return-live').hidden = true;
           state.evalHistory = [];
+          state.boardFlipped = false;
           state.gameInfo = { white: {}, black: {}, moveNumber: 0 };
           state.currentData = { fen: '8/8/8/8/8/8/8/8 w - - 0 1', lines: [] };
           render();
@@ -301,7 +308,10 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
         live = msg;
         if (reviewing) return true;
       }
-      if (reviewing && ['game_info', 'eval_progress'].includes(msg.type)) return true;
+      if (reviewing && ['game_info', 'eval_progress'].includes(msg.type)) {
+        if (msg.type === 'game_info' && msg.flipped !== undefined) liveFlipped = !!msg.flipped;
+        return true;
+      }
       return false;
     },
     disconnect() {

@@ -1,6 +1,24 @@
 import { it, expect } from 'vitest';
 import { createRequire } from 'node:module';
 const { SessionHub } = createRequire(import.meta.url)('./sessionHub');
+it('attaches a dashboard opened before the first board to that board', () => {
+  const messages = [];
+  const hub = new SessionHub(
+    (ws, msg) => messages.push({ ws, msg }),
+    () => ({}),
+  );
+  const panel = {},
+    board = {};
+  hub.register(panel, { client: 'panel' });
+  hub.register(board, { client: 'extension', sessionId: 'first' });
+  expect(panel.sessionId).toBe('first');
+  messages.length = 0;
+  hub.relay(board, { type: 'bestmove', bestmove: 'e2e4' });
+  expect(messages[0]).toMatchObject({
+    ws: panel,
+    msg: { type: 'bestmove', sessionId: 'first', bestmove: 'e2e4' },
+  });
+});
 it('routes results only to the subscribed board and removes training spoilers', () => {
   const messages = [];
   const hub = new SessionHub(

@@ -2,7 +2,7 @@ import { it, expect } from 'vitest';
 import { createRequire } from 'node:module';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, dirname, basename } from 'node:path';
 const { TrainingStore } = createRequire(import.meta.url)('./trainingStore');
 it('persists bounded history, de-duplicates attempts and keeps reset separate from deletion', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'chessbot-training-'));
@@ -24,6 +24,11 @@ it('persists bounded history, de-duplicates attempts and keeps reset separate fr
     restored.clear();
     expect(restored.history()).toHaveLength(0);
   } finally {
+    if (
+      dirname(resolve(dir)) !== resolve(tmpdir()) ||
+      !basename(dir).startsWith('chessbot-training-')
+    )
+      throw new Error('Unexpected test cleanup directory');
     await rm(dir, { recursive: true, force: true });
   }
 });
