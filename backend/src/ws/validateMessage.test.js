@@ -4,6 +4,25 @@ const require = createRequire(import.meta.url);
 const { validateInbound } = require('./validateMessage');
 
 describe('validateInbound', () => {
+  it('accepts the dashboard streaming and multi-book controls', () => {
+    expect(validateInbound({ type: 'set_live_engine_stream', value: true }).ok).toBe(true);
+    expect(validateInbound({ type: 'switch_book', name: ['a.bin', 'b.bin'] }).ok).toBe(true);
+  });
+
+  it('preserves variant and training search fields in the parsed request', () => {
+    const msg = {
+      type: 'fen',
+      fen: '8/8/8/8/8/8/8/8[P] w - - 0 1',
+      variant: 'crazyhouse',
+      depth: 0,
+      movetime: 1500,
+      multipv: 3,
+      training: true,
+      sessionId: 'tab-1',
+      requestId: 7,
+    };
+    expect(validateInbound(msg)).toEqual({ ok: true, msg });
+  });
   it('rejects non-objects', () => {
     expect(validateInbound(null).ok).toBe(false);
     expect(validateInbound('hi').ok).toBe(false);

@@ -24,7 +24,7 @@ const DEFAULT_MAX = 500;
 // Bumped whenever the on-disk entry shape or key format changes. Files
 // from a different version are dropped on load instead of silently
 // loading garbage that no current key can hit.
-const CACHE_SCHEMA_VERSION = 1;
+const CACHE_SCHEMA_VERSION = 3;
 
 /**
  * @template T

@@ -5,7 +5,23 @@ extension reads the current position from the page, streams it to a local
 Stockfish/Fairy-Stockfish server, and overlays engine guidance directly on the board while
 also exposing a dashboard at `http://localhost:8080`.
 
-![Dashboard Overview](screenshots/dashboard.png?v=2)
+![Dashboard Overview](screenshots/dashboard.png)
+
+### Bot-board refresh
+
+Chess.com computer games now use the site's complete position when available, preserving
+castling rights, en passant, move counters and board orientation. A small read-only bridge
+runs on `/play/computer`; malformed or stale snapshots fall back to the existing DOM reader.
+Chess.com's page API is undocumented, so future site changes can still require updates.
+
+The original dashboard and popup are retained, including the existing training controls.
+The [training and reliability update](docs/training-reliability-update.md) adds isolated
+board sessions, dashboard pinning, spoiler protection and local mistake review. The
+[capability baseline](docs/current-capabilities.md) records the audit behind these changes.
+
+After updating, run `npm run build`, restart the backend, reload the unpacked extension at `chrome://extensions`,
+and refresh your bot tab. Load `extension/dist` if this is your first installation.
+See [refresh validation](docs/bot-refresh-validation.md) for tested scope and limitations.
 
 ## Supported sites
 
@@ -56,7 +72,7 @@ also exposing a dashboard at `http://localhost:8080`.
 
 ## Requirements
 
-- **Node.js 20+**
+- **Node.js 24 LTS recommended** (supported: 20.19+, 22.13+, or 24+)
 - **Chrome or another Chromium-based browser**
 - **Stockfish binary** for standard chess
 - **Fairy-Stockfish binary** for non-standard variants

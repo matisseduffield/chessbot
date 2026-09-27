@@ -10,6 +10,17 @@ The first tagged release will close out the **Unreleased** section below.
 
 ### Added
 
+- Per-board analysis sessions and dashboard pinning, serialized engine scheduling, cancellation and bounded background searches.
+- Existing training mode now hides streaming/voice spoilers, validates single player moves, preserves strict/top-three grading, and supports local mistake review with estimated post-move feedback and assisted statistics.
+- Protocol v2 uses the actual client contract. Control acknowledgements, opening-book switching, depth zero and achieved-depth cache identity are corrected. Reload the backend and extension together.
+- Installed-extension CI fixture coverage for Chess.com and Lichess, plus session, persistence, cache and training regressions. See [implementation details](docs/training-reliability-update.md).
+
+- Read-only Chess.com computer-board bridge preserving full FEN metadata, player color and orientation, with validation and stale-snapshot rejection.
+
+- Current capability map documenting the existing training mode, runtime architecture and confirmed integration gaps; original dashboard and popup retained.
+- Optional WASM helper cancels outstanding promises, isolates replacement searches from late results, and allows retry after startup failure. This does not enable the unfinished fallback integration.
+- Build the dashboard once per root build. Match the declared Node requirement to the current Vite/jsdom toolchain and recommend the current universal Windows Stockfish build.
+
 - WebSocket heartbeat (server-side ping/pong every 30 s; reaps clients that miss two pings) so half-open TCP connections no longer leak memory or push broadcasts into dead sockets.
 - Eval-cache _depth fallback_: a request for depth `D` now serves any same-position cache entry at depth ≥ `D`, tagging the response with `cachedFromDepth`. Toggling the depth slider down feels instant.
 - Site-adapter contract tests for Lichess / PlayStrategy with checked-in HTML fixtures + jsdom; selector-shape regressions on the live site now break a unit test before they reach users.

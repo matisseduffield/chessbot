@@ -4,6 +4,7 @@
 import { state } from './state.js';
 import { parseBoardDimensions } from './panelUtils.js';
 import { renderPlayerBars } from './playerBars.js';
+import { PV_COLORS } from './movePresentation.js';
 
 export const PIECE_IMG = {
   K: '/pieces/white-king.png',
@@ -207,7 +208,8 @@ export function renderBoard() {
           // Non-selected lines: desaturated + translucent, colour encodes rank.
           const opacity = Math.max(0.25, 0.55 - i * 0.1);
           drawArrow(svg, pv[0], true, numFiles, numRanks, {
-            color: `hsla(45, 100%, 55%, ${opacity})`,
+            color: PV_COLORS[i] || PV_COLORS[0],
+            opacity,
             flipped,
           });
         }
@@ -215,12 +217,49 @@ export function renderBoard() {
     }
     const line = lines[selectedIdx];
     const pv = line.pv || [];
-    if (pv.length >= 1) drawArrow(svg, pv[0], true, numFiles, numRanks, { flipped });
+    if (pv.length >= 1)
+      drawArrow(svg, pv[0], true, numFiles, numRanks, {
+        flipped,
+        color: PV_COLORS[selectedIdx] || PV_COLORS[0],
+        opacity: 0.9,
+      });
     if (pv.length >= 2) drawArrow(svg, pv[1], false, numFiles, numRanks, { flipped });
   } else if (state.currentData.bestmove && state.currentData.bestmove.length >= 3) {
     drawArrow(svg, state.currentData.bestmove, true, numFiles, numRanks, { flipped });
   }
 
+  // Coordinates sit in the corners and follow orientation and variant dimensions.
+  const coordinates = document.createElementNS(SVG_NS, 'g');
+  coordinates.classList.add('board-coordinates');
+  coordinates.setAttribute('aria-hidden', 'true');
+  coordinates.setAttribute('pointer-events', 'none');
+  for (let f = 0; f < numFiles; f++) {
+    const label = document.createElementNS(SVG_NS, 'text');
+    label.textContent = String.fromCharCode(97 + (flipped ? numFiles - 1 - f : f));
+    label.setAttribute('x', (f + 1) * sqSize - 5);
+    label.setAttribute('y', svgH - 5);
+    label.setAttribute('text-anchor', 'end');
+    label.dataset.axis = 'file';
+    const actualF = flipped ? numFiles - 1 - f : f;
+    const actualR = flipped ? 0 : numRanks - 1;
+    label.setAttribute('fill', (actualR + actualF) % 2 ? '#fff' : '#17221b');
+    coordinates.appendChild(label);
+  }
+  for (let r = 0; r < numRanks; r++) {
+    const label = document.createElementNS(SVG_NS, 'text');
+    label.textContent = String(flipped ? r + 1 : numRanks - r);
+    label.setAttribute('x', 5);
+    label.setAttribute('y', r * sqSize + 17);
+    label.dataset.axis = 'rank';
+    const actualR = flipped ? numRanks - 1 - r : r;
+    const actualF = flipped ? numFiles - 1 : 0;
+    label.setAttribute('fill', (actualR + actualF) % 2 ? '#fff' : '#17221b');
+    coordinates.appendChild(label);
+  }
+  coordinates.setAttribute('font-size', '16');
+  coordinates.setAttribute('font-weight', '700');
+  coordinates.setAttribute('font-family', 'system-ui, sans-serif');
+  svg.appendChild(coordinates);
   renderPlayerBars();
 }
 
@@ -257,6 +296,7 @@ export function drawArrow(svg, uci, isOurMove, numFiles, numRanks, opts = {}) {
     const pieceName = PIECE_NAMES[dropMatch[1].toUpperCase()] || 'DROP';
 
     const g = document.createElementNS(SVG_NS, 'g');
+    if (opts.opacity !== undefined) g.setAttribute('opacity', opts.opacity);
 
     const highlight = document.createElementNS(SVG_NS, 'rect');
     highlight.setAttribute('x', tx + sw / 2);
@@ -383,6 +423,7 @@ export function drawArrow(svg, uci, isOurMove, numFiles, numRanks, opts = {}) {
   const path = document.createElementNS(SVG_NS, 'path');
   path.setAttribute('d', d);
   path.setAttribute('fill', color);
+  if (opts.opacity !== undefined) path.setAttribute('opacity', opts.opacity);
   path.setAttribute('filter', 'drop-shadow(0 1px 3px rgba(0,0,0,0.4))');
   path.classList.add('move-arrow');
   svg.appendChild(path);

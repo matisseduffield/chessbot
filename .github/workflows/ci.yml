@@ -78,6 +78,9 @@ jobs:
         # ships them as ESM bare imports the browser can't resolve.
         run: npm run build --workspace @chessbot/panel
 
+      - name: Build installed extension
+        run: npm run build --workspace extension
+
       - name: Run Playwright smoke tests
         run: npm run e2e
         env:
@@ -89,4 +92,12 @@ jobs:
         with:
           name: playwright-trace
           path: test-results/
+          if-no-files-found: ignore
+
+      - name: Upload overlay verification screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: overlay-verification
+          path: test-results/**/ranked-overlay.png
           if-no-files-found: ignore

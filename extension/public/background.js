@@ -51,7 +51,11 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onMessage.addListener((msg) => {
     if (msg._type === "ws_send" && ws && ws.readyState === 1) {
-      ws.send(msg.data);
+      try {
+        const frame=JSON.parse(msg.data);
+        frame.sessionId=`tab-${port.sender?.tab?.id ?? 'unknown'}-frame-${port.sender?.frameId ?? 0}`;
+        ws.send(JSON.stringify(frame));
+      } catch { /* malformed content frame */ }
     }
   });
 

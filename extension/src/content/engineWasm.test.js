@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { initWasmEngine, evaluateWasm, shutdownWasmEngine } from './engineWasm.js';
 
 class FakeWorker {
@@ -7,7 +7,8 @@ class FakeWorker {
     this.sent = [];
     FakeWorker.last = this;
   }
-  addEventListener(_ev, fn) {
+  addEventListener(ev, fn) {
+    if (ev !== 'message') return;
     this.listeners.add(fn);
   }
   removeEventListener(_ev, fn) {
@@ -26,7 +27,11 @@ class FakeWorker {
 describe('engineWasm', () => {
   beforeEach(() => {
     shutdownWasmEngine();
-    globalThis.Worker = FakeWorker;
+    vi.stubGlobal('Worker', FakeWorker);
+  });
+  afterEach(() => {
+    shutdownWasmEngine();
+    vi.unstubAllGlobals();
   });
 
   it('boots on uciok and runs an evaluation', async () => {
@@ -44,5 +49,50 @@ describe('engineWasm', () => {
 
   it('rejects evaluateWasm before init', async () => {
     await expect(evaluateWasm({ fen: 'x' })).rejects.toThrow();
+  });
+
+  it('does not resolve a new position with the cancelled search bestmove', async () => {
+    await initWasmEngine('stockfish.worker.js');
+    const first = evaluateWasm({ fen: 'startpos', depth: 5 });
+    const firstResult = first.catch((err) => err);
+    const oldWorker = FakeWorker.last;
+    let secondSettled = false;
+    const second = evaluateWasm({ fen: 'startpos', depth: 8 });
+    second.then(() => {
+      secondSettled = true;
+    });
+    oldWorker._emit('bestmove a2a3');
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+    // A fresh worker or a drained old search may now analyse the latest request.
+    await Promise.resolve();
+    await Promise.resolve();
+    FakeWorker.last._emit('bestmove e2e4');
+    expect((await second).bestmove).toBe('e2e4');
+    expect((await firstResult).name).toBe('AbortError');
+  });
+
+  it('settles an interrupted search on shutdown', async () => {
+    await initWasmEngine('stockfish.worker.js');
+    const search = evaluateWasm({ fen: 'startpos' }).catch((err) => err);
+    shutdownWasmEngine();
+    expect((await search).name).toBe('AbortError');
+  });
+
+  it('can retry when the worker constructor fails', async () => {
+    vi.stubGlobal(
+      'Worker',
+      class {
+        constructor() {
+          throw new Error('load failed');
+        }
+      },
+    );
+    await expect(initWasmEngine('broken.js')).rejects.toThrow('load failed');
+    vi.stubGlobal('Worker', FakeWorker);
+    await initWasmEngine('working.js');
+    const search = evaluateWasm({ fen: 'startpos' });
+    FakeWorker.last._emit('bestmove 0000');
+    expect((await search).bestmove).toBeNull();
   });
 });

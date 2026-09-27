@@ -191,6 +191,58 @@ describe('StockfishBridge handshake', () => {
 });
 
 describe('StockfishBridge.evaluate', () => {
+  it('streams a forced legal move even when three candidate lines are requested', async () => {
+    const { bridge, drive } = await startedBridge();
+    bridge.setOption('MultiPV', 3);
+    const onInfo = vi.fn();
+    const pending = bridge.evaluate('7k/8/5K2/8/8/8/8/7R b - - 0 1', 12, { onInfo });
+    drive.stdout('info depth 8 multipv 1 score cp -900 pv h8g8');
+    expect(onInfo).toHaveBeenCalledOnce();
+    drive.stdout('bestmove h8g8');
+    await pending;
+    bridge.stop();
+  });
+
+  it('does not present search bounds as exact scores or retain moves at game over', async () => {
+    const { bridge, drive } = await startedBridge();
+    const onInfo = vi.fn();
+    const pending = bridge.evaluate('fen', 12, { onInfo });
+    drive.stdout('info depth 8 multipv 1 score cp 150 lowerbound pv e2e4');
+    expect(onInfo).not.toHaveBeenCalled();
+    drive.stdout('bestmove 0000');
+    expect(await pending).toMatchObject({ bestmove: null, lines: [] });
+    bridge.stop();
+  });
+  it('publishes complete, distinct MultiPV rankings once per depth', async () => {
+    const { bridge, drive } = await startedBridge();
+    bridge.setOption('MultiPV', 2);
+    const onInfo = vi.fn();
+    const pending = bridge.evaluate('fen', 12, { onInfo });
+    drive.stdout('info depth 6 multipv 1 score cp 25 pv e2e4');
+    drive.stdout('info depth 6 multipv 2 score cp 20 pv d2d4');
+    drive.stdout('info depth 7 multipv 1 score cp 30 pv d2d4');
+    expect(onInfo).toHaveBeenCalledTimes(1);
+    drive.stdout('info depth 7 multipv 2 score cp 15 pv e2e4');
+    expect(onInfo).toHaveBeenCalledTimes(2);
+    expect(onInfo.mock.lastCall[0].lines.map((l) => l.depth)).toEqual([7, 7]);
+    drive.stdout('bestmove d2d4');
+    await pending;
+    bridge.stop();
+  });
+
+  it('aligns final PV and score with bestmove if a search stops during reranking', async () => {
+    const { bridge, drive } = await startedBridge();
+    bridge.setOption('MultiPV', 2);
+    const pending = bridge.evaluate('fen', 12);
+    drive.stdout('info depth 6 multipv 1 score cp 25 pv e2e4');
+    drive.stdout('info depth 6 multipv 2 score cp 20 pv d2d4');
+    drive.stdout('info depth 7 multipv 1 score cp 30 pv d2d4');
+    drive.stdout('bestmove e2e4');
+    const result = await pending;
+    expect(result.lines[0]).toMatchObject({ move: 'e2e4', score: 25 });
+    expect(new Set(result.lines.map((l) => l.move)).size).toBe(result.lines.length);
+    bridge.stop();
+  });
   it('sends position+go and resolves on bestmove', async () => {
     const { bridge, drive } = await startedBridge();
     const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';

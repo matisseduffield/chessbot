@@ -1,0 +1,137 @@
+/* Answer presentation uses the dashboard's existing type, colour and spacing tokens. */
+#pvs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  align-content: start;
+  align-items: start;
+}
+#pvs .pv-status,
+#pvs .empty-state {
+  grid-column: 1 / -1;
+}
+#pvs .pv-status {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--text-300);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+#pvs .pv-card {
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  color: var(--text-100);
+  font: inherit;
+  text-align: left;
+  background: var(--bg-800);
+  border: 1px solid var(--bg-600);
+  border-radius: var(--radius-md);
+  transition: none;
+}
+#pvs .pv-card:hover {
+  background: var(--bg-750);
+  transform: none;
+  box-shadow: none;
+}
+#pvs .pv-card.selected {
+  border-color: var(--pv-color);
+  background: var(--bg-800);
+}
+#pvs .pv-card:last-child:nth-child(2) {
+  grid-column: 1 / -1;
+}
+#pvs .pv-card:focus-visible {
+  outline: 2px solid var(--text-100);
+  outline-offset: 3px;
+}
+#pvs .pv-header {
+  gap: 8px;
+  margin-bottom: 8px;
+}
+#pvs .pv-rank {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-300);
+}
+.pv-rank-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--pv-color);
+}
+#pvs .pv-source {
+  margin: 0;
+  background: var(--bg-700);
+  color: var(--text-200);
+}
+#pvs .pv-source.book {
+  color: var(--orange);
+}
+#pvs .pv-score {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pv-primary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+}
+.pv-main-move {
+  font:
+    700 21px 'JetBrains Mono',
+    monospace;
+  color: var(--text-50);
+  overflow-wrap: anywhere;
+}
+.pv-route {
+  font:
+    11px 'JetBrains Mono',
+    monospace;
+  color: var(--text-300);
+}
+#pvs .pv-eco {
+  display: block;
+  color: var(--text-300);
+  margin-bottom: 6px;
+}
+#pvs .pv-moves {
+  color: var(--text-200);
+  font-size: 12px;
+}
+#pvs .pv-movenum {
+  color: var(--text-300);
+}
+#pvs .pv-metrics {
+  flex-wrap: wrap;
+  font-size: 10px;
+  color: var(--text-300);
+  margin-top: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.pv-selected-label {
+  margin-left: auto;
+  color: var(--pv-color);
+}
+#pvs .empty-state {
+  color: var(--text-300);
+  padding: 16px 12px;
+  text-wrap: pretty;
+}
+.pv-empty-title {
+  display: block;
+  color: var(--text-100);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+@media (prefers-reduced-motion: reduce) {
+  #eval-progress {
+    animation: none;
+  }
+}

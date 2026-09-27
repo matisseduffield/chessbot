@@ -12,6 +12,10 @@
 let _worker = null;
 let _ready = null;
 let _pending = null;
+let _workerUrl = null;
+let _bootReject = null;
+let _bootTimer = null;
+let _booted = false;
 
 /**
  * Initialise the wasm engine. Idempotent.
@@ -20,24 +24,41 @@ let _pending = null;
  */
 export function initWasmEngine(workerUrl) {
   if (_ready) return _ready;
+  _workerUrl = workerUrl;
   _ready = new Promise((resolve, reject) => {
+    _bootReject = reject;
     try {
       _worker = new Worker(workerUrl);
     } catch (err) {
       reject(err);
       return;
     }
+    const worker = _worker;
+    _bootTimer = setTimeout(() => {
+      if (_worker === worker) shutdownWasmEngine(new Error('Browser engine startup timed out'));
+    }, 10000);
+    worker.addEventListener('error', () => {
+      if (_worker === worker) shutdownWasmEngine(new Error('Browser engine failed to load or run'));
+    });
     let booted = false;
     const onMsg = (ev) => {
+      if (_worker !== worker) return;
       const line = typeof ev.data === 'string' ? ev.data : String(ev.data);
       if (!booted && line.includes('uciok')) {
         booted = true;
+        _booted = true;
+        clearTimeout(_bootTimer);
+        _bootReject = null;
         _worker.removeEventListener('message', onMsg);
         resolve();
       }
     };
     _worker.addEventListener('message', onMsg);
     _worker.postMessage('uci');
+  });
+  const attempt = _ready;
+  attempt.catch(() => {
+    if (_ready === attempt) _ready = null;
   });
   return _ready;
 }
@@ -50,12 +71,19 @@ export function initWasmEngine(workerUrl) {
  */
 export function evaluateWasm(req) {
   if (!_worker) return Promise.reject(new Error('wasm engine not initialised'));
+  if (!_booted) return _ready.then(() => evaluateWasm(req));
   if (_pending) {
-    _worker.postMessage('stop');
+    // UCI does not label results with a request ID. A late bestmove from a
+    // stopped search must not be consumed by the new position's listener.
+    const url = _workerUrl;
+    shutdownWasmEngine();
+    return initWasmEngine(url).then(() => evaluateWasm(req));
   }
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const worker = _worker;
     const lines = {};
     const onMsg = (ev) => {
+      if (_worker !== worker) return;
       const line = typeof ev.data === 'string' ? ev.data : String(ev.data);
       if (line.startsWith('info ') && line.includes(' pv ')) {
         const mp = /multipv (\d+)/.exec(line);
@@ -70,10 +98,11 @@ export function evaluateWasm(req) {
           ...(mt ? { mate: Number(mt[1]) } : {}),
         };
       } else if (line.startsWith('bestmove')) {
+        clearTimeout(_pending?.timer);
         _worker.removeEventListener('message', onMsg);
         _pending = null;
         const parts = line.split(/\s+/);
-        const bestmove = parts[1] && parts[1] !== '(none)' ? parts[1] : null;
+        const bestmove = parts[1] && !['(none)', '0000'].includes(parts[1]) ? parts[1] : null;
         const pIdx = parts.indexOf('ponder');
         const ponder = pIdx > 0 && parts[pIdx + 1] ? parts[pIdx + 1] : null;
         const ordered = Object.keys(lines)
@@ -84,9 +113,15 @@ export function evaluateWasm(req) {
       }
     };
     _worker.addEventListener('message', onMsg);
-    _pending = onMsg;
+    const timer = setTimeout(
+      () => {
+        if (_worker === worker) shutdownWasmEngine(new Error('Browser engine analysis timed out'));
+      },
+      req.movetime ? req.movetime + 10000 : 120000,
+    );
+    _pending = { onMsg, reject, timer };
     _worker.postMessage(`setoption name MultiPV value ${req.multiPV || 1}`);
-    _worker.postMessage(`position fen ${req.fen}`);
+    _worker.postMessage(req.fen === 'startpos' ? 'position startpos' : `position fen ${req.fen}`);
     if (req.movetime) {
       _worker.postMessage(`go movetime ${req.movetime}`);
     } else {
@@ -96,7 +131,17 @@ export function evaluateWasm(req) {
 }
 
 /** Terminate the worker (e.g. when user toggles WASM off). */
-export function shutdownWasmEngine() {
+export function shutdownWasmEngine(
+  error = new DOMException('Analysis superseded or stopped', 'AbortError'),
+) {
+  clearTimeout(_bootTimer);
+  _bootReject?.(error);
+  _bootReject = null;
+  if (_pending) {
+    clearTimeout(_pending.timer);
+    _worker?.removeEventListener('message', _pending.onMsg);
+    _pending.reject(error);
+  }
   if (_worker) {
     try {
       _worker.postMessage('quit');
@@ -105,5 +150,6 @@ export function shutdownWasmEngine() {
     _worker = null;
   }
   _ready = null;
+  _booted = false;
   _pending = null;
 }
