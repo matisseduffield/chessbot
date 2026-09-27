@@ -52,10 +52,10 @@ test('installed extension reads Chess.com and Lichess, routes sessions, and hide
     }
     const lichessHtml = `<html><body><div class="cg-wrap orientation-white"><cg-board style="display:block;position:relative;width:480px;height:480px">${pieces}</cg-board></div></body></html>`;
     await context.route('https://www.chess.com/**', (route) =>
-      route.fulfill({ contentType: 'text/html', body: chessHtml }),
+      route.fulfill({ contentType: 'text/html; charset=utf-8', body: chessHtml }),
     );
     await context.route('https://lichess.org/**', (route) =>
-      route.fulfill({ contentType: 'text/html', body: lichessHtml }),
+      route.fulfill({ contentType: 'text/html; charset=utf-8', body: lichessHtml }),
     );
     const panel = await context.newPage();
     await panel.goto('http://localhost:8080');

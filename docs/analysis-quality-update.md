@@ -16,6 +16,8 @@ The read-only Chess.com bot bridge now watches board mutations and publishes the
 
 Foreground and background SVGs use a board-relative size and viewBox. Existing arrows resize with the board between engine responses. Candidate ranks remain visually distinct in losing positions; destination badges show rank and evaluation, and promotions identify the piece. The optional depth badge survives final rendering and distinguishes Searching, Ready and Cached.
 
+Changing the number of suggestions now refreshes the current position after the engine acknowledges the new setting. Enabling the depth badge after a completed search displays the saved result immediately without starting another search. Board observation includes open shadow roots and ignores the tool's own overlay changes.
+
 ## Reproducible engine benchmark
 
 Run `node scripts/benchmark-analysis.mjs` with the configured native engine. It checks that suggested moves are legal and that the mate-in-one case ends in checkmate. It reports time to first update, total search time, update count and inconsistent ranking count.
