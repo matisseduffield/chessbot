@@ -53,7 +53,9 @@ test('installed extension reads Chess.com and Lichess, routes sessions, and hide
     await expect
       .poll(() => panel.evaluate(() => window.state.currentData?.fen), { timeout: 15000 })
       .toBe(fen);
-    await expect.poll(() => panel.evaluate(() => window.state.currentData?.bestmove)).toBeTruthy();
+    await expect
+      .poll(() => panel.evaluate(() => window.state.currentData?.bestmove), { timeout: 15000 })
+      .toBeTruthy();
     await expect(chess.locator('#chessbot-arrow-svg')).toBeAttached();
     const chessSession = await panel.evaluate(() => window.state.currentData.sessionId);
     const lichess = await context.newPage();
@@ -74,6 +76,29 @@ test('installed extension reads Chess.com and Lichess, routes sessions, and hide
     expect(worker).toBeTruthy();
     await chess.reload();
     await expect(chess.locator('.chessbot-hint-btn')).toBeAttached({ timeout: 15000 });
+  } catch (error) {
+    const worker = context.serviceWorkers()[0];
+    if (worker)
+      console.log(
+        '[fixture diagnostics]',
+        await worker.evaluate(async () => {
+          const tabs = await chrome.tabs.query({});
+          const diagnostics = [];
+          for (const tab of tabs)
+            if (
+              tab.url?.startsWith('https://www.chess.com/') ||
+              tab.url?.startsWith('https://lichess.org/')
+            ) {
+              try {
+                diagnostics.push(await chrome.tabs.sendMessage(tab.id, { type: 'get_logs' }));
+              } catch (error) {
+                diagnostics.push(String(error));
+              }
+            }
+          return diagnostics;
+        }),
+      );
+    throw error;
   } finally {
     await context.close();
   }
