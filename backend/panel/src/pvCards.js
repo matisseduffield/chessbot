@@ -1,7 +1,4 @@
-// PV card list renderer.
-// Accepts an onSelect callback so the caller (index.html) can trigger a full re-render
-// when a card is clicked.
-
+import './pvCards.css';
 import { state } from './state.js';
 import { escHtml, formatScore, formatPVMoves } from './panelUtils.js';
 import {
@@ -10,88 +7,88 @@ import {
   formatTimeMetric,
   formatNpsMetric,
 } from './panelRender.js';
-
-export const PV_COLORS = [
-  '#2ecc71',
-  '#00bcd4',
-  '#f39c12',
-  '#e74c3c',
-  '#9b59b6',
-  '#e67e22',
-  '#1abc9c',
-  '#e84393',
-];
+import { PV_COLORS, moveRoute } from './movePresentation.js';
+export { PV_COLORS } from './movePresentation.js';
 
 export function renderPVs(onSelect) {
   const container = document.getElementById('pvs');
+  const focusedRank = container.contains(document.activeElement)
+    ? document.activeElement.dataset.pvRank
+    : null;
   if (!document.getElementById('chk-pvs').checked) {
-    container.innerHTML = '';
+    container.replaceChildren();
     return;
   }
-
-  if (state.currentData.trainingHidden) {
-    container.textContent = 'Training: move suggestions are hidden until reveal.';
+  const data = state.currentData;
+  if (data.trainingHidden) {
+    container.innerHTML =
+      '<div class="empty-state"><span class="pv-empty-title">Training: your move</span>Move suggestions are hidden until reveal.</div>';
     return;
   }
-  const lines = state.currentData.lines || [];
-  if (!lines.length && state.currentData.source === 'book') {
-    container.innerHTML = `<div class="pv-card selected">
-      <div class="pv-header">
-        <span class="pv-rank">Book Move</span>
-        <span class="pv-source book">BOOK</span>
-      </div>
-      <div class="pv-eco">${escHtml(state.currentData.eco)}</div>
-      <div style="font-size:18px;font-weight:800;font-family:monospace;color:var(--orange)">${escHtml(state.currentData.bestmove)}</div>
-    </div>`;
-    return;
-  }
-
+  const lines = data.lines?.length
+    ? data.lines
+    : data.source === 'book' && data.bestmove
+      ? [{ move: data.bestmove, eco: data.eco, pv: [data.bestmove] }]
+      : [];
   if (!lines.length) {
-    container.innerHTML = '<div class="empty-state">Waiting for analysis…</div>';
+    container.innerHTML =
+      '<div class="empty-state"><span class="pv-empty-title">Waiting for analysis</span>Open a supported chess board to see move suggestions here.</div>';
     return;
   }
-
-  container.innerHTML = '';
-  if (state.currentData.cached) {
-    const note = document.createElement('div');
-    note.textContent = `Cached analysis · depth ${state.currentData.depth || '—'}`;
-    container.appendChild(note);
-  }
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const card = document.createElement('div');
-    card.className = 'pv-card' + (state.selectedPV === i + 1 ? ' selected' : '');
-    card.style.borderColor = state.selectedPV === i + 1 ? PV_COLORS[i] || PV_COLORS[0] : '';
+  state.selectedPV = Math.max(1, Math.min(state.selectedPV, lines.length));
+  container.replaceChildren();
+  const status = document.createElement('div');
+  status.className = 'pv-status';
+  const phase =
+    data.source === 'review'
+      ? 'Saved position'
+      : data.cached
+        ? 'Cached analysis'
+        : data.streaming
+          ? 'Searching'
+          : 'Analysis ready';
+  const turn = data.fen?.split(' ')[1] === 'b' ? 'Black' : 'White';
+  status.innerHTML = `<span>${phase}</span><span>Scores for ${turn.toLowerCase()} to move</span>`;
+  container.appendChild(status);
+  lines.forEach((line, i) => {
+    const selected = state.selectedPV === i + 1;
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.dataset.pvRank = String(i + 1);
+    card.className = `pv-card${selected ? ' selected' : ''}`;
+    card.style.setProperty('--pv-color', PV_COLORS[i] || PV_COLORS[0]);
+    card.setAttribute('aria-pressed', String(selected));
+    const moves = line.san || line.pv || [];
+    const move = line.move || line.pv?.[0] || '';
+    const first = moves[0] || move;
+    const route = moveRoute(move);
+    const score = formatScore(line);
+    card.setAttribute(
+      'aria-label',
+      `Show suggestion ${i + 1}: ${first}, ${route}, evaluation ${score}`,
+    );
     card.onclick = () => {
       state.selectedPV = i + 1;
       if (onSelect) onSelect();
     };
-
-    const scoreText = formatScore(line);
-    const scoreColor = pvScoreColor(line);
-    const sanMoves = line.san || line.pv || [];
-    const eco = line.eco || '';
-
-    const metrics = [];
-    const nodesStr = formatNodesMetric(line.nodes);
-    if (nodesStr) metrics.push(nodesStr);
-    const timeStr = formatTimeMetric(line.timeMs);
-    if (timeStr) metrics.push(timeStr);
-    const npsStr = formatNpsMetric(line.nps);
-    if (npsStr) metrics.push(npsStr);
-    const metricsHtml = metrics.length
-      ? `<div class="pv-metrics">${metrics.map((m) => `<span>${escHtml(m)}</span>`).join('')}</div>`
-      : '';
-
+    const metrics = [
+      line.depth ? `Depth ${line.depth}` : '',
+      formatNodesMetric(line.nodes),
+      formatTimeMetric(line.timeMs),
+      formatNpsMetric(line.nps),
+    ].filter(Boolean);
+    const source = data.source === 'book' ? 'Book' : data.source === 'review' ? 'Saved' : 'Engine';
     card.innerHTML = `
-      <div class="pv-header">
-        <span class="pv-rank">PV ${i + 1} <span class="pv-source engine">${state.currentData.source === 'book' ? 'BOOK' : state.currentData.source === 'review' ? 'SAVED' : 'ENGINE'}</span>${line.depth ? `<span class="pv-depth">D${escHtml(line.depth)}</span>` : ''}</span>
-        <span class="pv-score" style="color:${scoreColor}">${escHtml(scoreText)}</span>
-      </div>
-      <div class="pv-eco" title="${escHtml(eco)}">${escHtml(eco)}</div>
-      <div class="pv-moves">${formatPVMoves(sanMoves.slice(0, 16), state.currentData.fen)}</div>
-      ${metricsHtml}
-    `;
+      <span class="pv-header">
+        <span class="pv-rank"><span class="pv-rank-dot" aria-hidden="true"></span>Choice ${i + 1}<span class="pv-source ${data.source === 'book' ? 'book' : 'engine'}">${source}</span></span>
+        <span class="pv-score" style="color:${pvScoreColor(line)}">${escHtml(score)}</span>
+      </span>
+      <span class="pv-primary"><span class="pv-main-move">${escHtml(first)}</span><span class="pv-route">${escHtml(route)}</span></span>
+      ${line.eco ? `<span class="pv-eco" title="${escHtml(line.eco)}">${escHtml(line.eco)}</span>` : ''}
+      <span class="pv-moves">${formatPVMoves(moves.slice(0, 16), data.fen)}</span>
+      <span class="pv-metrics">${metrics.map((m) => `<span>${escHtml(m)}</span>`).join('')}<span class="pv-selected-label">${selected ? 'On board' : 'Show on board'}</span></span>`;
     container.appendChild(card);
-  }
+    // Streaming rerenders must not send a keyboard user's focus back to the page.
+    if (focusedRank === card.dataset.pvRank) card.focus({ preventScroll: true });
+  });
 }
