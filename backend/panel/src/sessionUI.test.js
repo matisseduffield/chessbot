@@ -68,3 +68,79 @@ it('pins dashboard commands to the selected board and filters other results', ()
   expect(sent.at(-1).sessionId).toBe('board-a');
   expect(ui.consume({ type: 'bestmove', sessionId: 'board-b' })).toBe(true);
 });
+
+it('loads saved attempts without an open board and lets correct attempts be reviewed', () => {
+  const { doc, state, sent } = setup();
+  expect(sent.some((m) => m.type === 'get_training_history')).toBe(true);
+  ui.consume({
+    type: 'training_history',
+    attempts: [
+      {
+        id: 'correct',
+        before: 'correct-position',
+        correct: true,
+        player: 'w',
+        playedMove: 'e2e4',
+        recommendation: 'e2e4',
+        timestamp: 1,
+      },
+    ],
+  });
+  expect(doc.getElementById('training-attempts').textContent).toContain('No mistakes saved');
+  const filter = doc.getElementById('training-history-filter');
+  filter.value = 'all';
+  filter.dispatchEvent(new doc.defaultView.Event('change'));
+  doc.querySelector('.review-attempt button').click();
+  expect(state.currentData.fen).toBe('correct-position');
+  expect(doc.querySelector('.review-preview').hidden).toBe(false);
+  expect(doc.activeElement.id).toBe('return-live');
+});
+
+it('requires a confirmed deletion and restores live view if the reviewed attempt disappears', () => {
+  const { doc, state, sent } = setup();
+  const dialog = doc.querySelector('dialog');
+  dialog.showModal = () => {
+    dialog.open = true;
+  };
+  dialog.close = (value) => {
+    dialog.returnValue = value;
+    dialog.open = false;
+    dialog.dispatchEvent(new doc.defaultView.Event('close'));
+  };
+  ui.consume({
+    type: 'training_history',
+    attempts: [
+      { id: 'mistake', before: 'original', correct: false, recommendation: 'd2d4', timestamp: 1 },
+    ],
+  });
+  sent.length = 0;
+  doc.querySelector('.review-attempt button').click();
+  ui.consume({ type: 'game_info', white: { name: 'Updated player' }, flipped: true });
+  ui.consume({ type: 'bestmove', fen: 'latest' });
+  doc.getElementById('clear-training-history').click();
+  expect(dialog.open).toBe(true);
+  expect(sent).toEqual([]);
+  dialog.close('cancel');
+  expect(sent).toEqual([]);
+  doc.getElementById('clear-training-history').click();
+  dialog.close('confirm');
+  expect(sent.at(-1).type).toBe('clear_training_history');
+  ui.consume({ type: 'training_history', attempts: [] });
+  expect(state.currentData.fen).toBe('latest');
+  expect(state.gameInfo.white.name).toBe('Updated player');
+  expect(state.boardFlipped).toBe(true);
+  expect(doc.querySelector('.review-preview').hidden).toBe(true);
+  expect(doc.getElementById('clear-training-history').disabled).toBe(true);
+});
+
+it('keeps the board selector available when a pinned board disconnects', () => {
+  const { doc, sent } = setup();
+  ui.consume({ type: 'sessions', selectedSessionId: 'closed', followFocus: false, sessions: [] });
+  const select = doc.getElementById('board-session');
+  expect(select.parentElement.hidden).toBe(false);
+  expect(select.value).toBe('closed');
+  expect(select.selectedOptions[0].textContent).toContain('disconnected');
+  select.value = '';
+  select.dispatchEvent(new doc.defaultView.Event('change'));
+  expect(sent.at(-1)).toMatchObject({ type: 'subscribe_session', followFocus: true });
+});

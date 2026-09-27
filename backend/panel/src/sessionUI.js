@@ -1,4 +1,5 @@
 import { PROTOCOL_VERSION } from '@chessbot/shared';
+import './sessionUI.css';
 
 // Adds session/review controls inside the existing Position and Training groups.
 // No site interaction: previews only replace the dashboard's local render state.
@@ -9,17 +10,59 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
   const select = doc.createElement('select');
   select.id = 'board-session';
   select.setAttribute('aria-label', 'Board session');
-  select.style.cssText =
-    'width:100%;margin:6px 0 0;padding:6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card,#191e2a);color:inherit;font:inherit;font-size:11px';
-  select.hidden = true;
-  position.appendChild(select);
+  select.className = 'session-select';
+  const sessionControl = doc.createElement('div');
+  sessionControl.className = 'session-control';
+  sessionControl.hidden = true;
+  const sessionLabel = doc.createElement('label');
+  sessionLabel.className = 'sub-label';
+  sessionLabel.htmlFor = select.id;
+  sessionLabel.textContent = 'Board';
+  sessionControl.append(sessionLabel, select);
+  position.appendChild(sessionControl);
   const section = doc.querySelector('[data-section-id="training"]');
   const details = doc.createElement('details');
   details.id = 'training-review';
-  details.style.cssText = 'margin-top:12px;font-size:11px;line-height:1.5';
-  details.innerHTML =
-    '<summary>Mistake review</summary><p id="training-feedback" role="status">Feedback appears after a training move.</p><p id="training-assisted"></p><button class="panel-btn" id="return-live" hidden>Return to live board</button><div id="training-attempts"></div><button class="panel-btn" id="more-attempts" hidden>Show more</button><button class="panel-btn" id="clear-training-history">Clear history</button>';
+  details.className = 'training-review';
+  details.innerHTML = `
+    <summary><span>Mistake review</span><span class="review-count" id="training-history-count">0</span></summary>
+    <div class="review-body">
+      <div class="review-latest"><div class="sub-label">Latest feedback</div><p id="training-feedback" role="status">Feedback appears after a training move.</p></div>
+      <p class="review-muted" id="training-assisted">0 assisted · 0 unassisted attempts</p>
+      <div class="review-filter"><label for="training-history-filter" class="sub-label">Saved history</label><select id="training-history-filter" class="session-select"><option value="mistakes">Mistakes & ungraded</option><option value="all">All attempts</option></select></div>
+      <div id="training-attempts" class="review-list" role="region" aria-label="Saved training attempts" tabindex="0"></div>
+      <div class="review-actions"><button class="panel-btn" id="more-attempts" hidden>Show more</button><button class="panel-btn review-quiet" id="clear-training-history" disabled>Clear history</button></div>
+      <p class="review-muted">History is stored on this computer. Clearing it keeps your stats.</p>
+    </div>`;
   section.appendChild(details);
+  const previewNotice = doc.createElement('div');
+  previewNotice.className = 'review-preview';
+  previewNotice.hidden = true;
+  previewNotice.innerHTML =
+    '<span><strong>Reviewing a saved position</strong><span id="review-preview-label"></span></span><button class="panel-btn" id="return-live">Return to live board</button>';
+  (doc.getElementById('left-col') || section).prepend(previewNotice);
+  const confirmation = doc.createElement('dialog');
+  confirmation.className = 'review-dialog';
+  confirmation.setAttribute('role', 'alertdialog');
+  confirmation.setAttribute('aria-labelledby', 'review-confirm-title');
+  confirmation.setAttribute('aria-describedby', 'review-confirm-description');
+  confirmation.innerHTML =
+    '<form method="dialog"><h2 id="review-confirm-title">Clear saved history?</h2><p id="review-confirm-description"></p><div class="review-actions"><button class="panel-btn" value="cancel" autofocus>Cancel</button><button class="panel-btn" id="review-confirm-delete" value="confirm">Clear history</button></div></form>';
+  doc.body.appendChild(confirmation);
+  let confirmedAction = null;
+  confirmation.addEventListener('close', () => {
+    const action = confirmedAction;
+    confirmedAction = null;
+    if (confirmation.returnValue === 'confirm') action?.();
+  });
+  function confirmRemoval(title, description, label, action) {
+    doc.getElementById('review-confirm-title').textContent = title;
+    doc.getElementById('review-confirm-description').textContent = description;
+    doc.getElementById('review-confirm-delete').textContent = label;
+    confirmedAction = action;
+    confirmation.returnValue = '';
+    confirmation.showModal();
+  }
   details.addEventListener('toggle', layout);
   let selected = null,
     live = null,
@@ -30,6 +73,8 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
     pending = new Map();
   let refreshTimer = null;
   let liveFlipped = false;
+  let liveGameInfo = null;
+  let reviewId = null;
   const defaults = new Map(
     [...doc.querySelectorAll('input')].map((el) => [el, { checked: el.checked, value: el.value }]),
   );
@@ -62,15 +107,28 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
     }),
   );
   doc.getElementById('clear-training-history').onclick = () =>
-    send({ type: 'clear_training_history' });
-  doc.getElementById('return-live').onclick = () => {
+    confirmRemoval(
+      'Clear saved history?',
+      `Delete all ${records.length} saved attempts from this computer? This cannot be undone. Your statistics will stay unchanged.`,
+      'Clear history',
+      () => send({ type: 'clear_training_history' }),
+    );
+  function returnToLive() {
     reviewing = false;
+    reviewId = null;
     state.boardFlipped = liveFlipped;
-    doc.getElementById('return-live').hidden = true;
+    if (liveGameInfo) state.gameInfo = liveGameInfo;
+    previewNotice.hidden = true;
     if (live) {
       state.currentData = live;
       render();
     }
+    renderHistory();
+  }
+  doc.getElementById('return-live').onclick = returnToLive;
+  doc.getElementById('training-history-filter').onchange = () => {
+    count = 20;
+    renderHistory();
   };
   doc.getElementById('more-attempts').onclick = () => {
     count += 20;
@@ -80,38 +138,71 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
     return value?.mate != null
       ? `mate ${value.mate}`
       : value?.cp != null
-        ? (value.cp / 100).toFixed(2)
+        ? `${value.cp > 0 ? '+' : ''}${(value.cp / 100).toFixed(2)}`
         : '—';
   }
   function feedbackText(attempt) {
     const f = attempt.feedback || {};
-    const choice = attempt.correct === null ? 'Ungraded' : attempt.correct ? 'Correct' : 'Mistake';
-    const prefix = `${choice} · ${attempt.assisted ? 'assisted' : 'unassisted'} · played ${attempt.playedMove || 'unverified'} · suggested ${attempt.recommendation}`;
-    if (f.status === 'pending') return `${prefix}. Feedback pending.`;
+    if (f.status === 'pending') return 'Evaluation pending…';
     if (f.status === 'unavailable' || f.status === 'ungraded')
-      return `${prefix}. ${f.reason || 'Feedback unavailable'}.`;
-    return `${prefix}. Estimated evaluation ${score(f.before)} → ${score(f.after)}${f.lossCp != null ? ` (${f.lossCp}cp loss)` : ''}${f.mateTransition ? ' · mate transition' : ''}. Depth ${f.beforeDepth}/${f.afterDepth}.`;
+      return f.reason || 'Evaluation unavailable.';
+    if (!f.before || !f.after) return 'Evaluation unavailable.';
+    return `Estimated ${score(f.before)} → ${score(f.after)}${f.lossCp != null ? ` · ${f.lossCp} cp loss` : ''}${f.mateTransition ? ' · mate transition' : ''} · depth ${f.beforeDepth}/${f.afterDepth}`;
   }
+  const siteName = (site) =>
+    ({ chesscom: 'Chess.com', lichess: 'Lichess', unknown: 'Chess board' })[site] ||
+    site ||
+    'Chess board';
+  const variantName = (variant) => (variant === 'chess' || !variant ? 'Standard' : variant);
+  const choiceText = (attempt) =>
+    attempt.correct === null ? 'Ungraded' : attempt.correct ? 'Correct' : 'Mistake';
   function renderHistory() {
     const container = doc.getElementById('training-attempts');
+    const scrollTop = container.scrollTop;
     container.replaceChildren();
-    const mistakes = records.filter((a) => a.correct !== true);
-    for (const attempt of mistakes.slice(0, count)) {
-      const row = doc.createElement('div');
-      row.style.cssText = 'border-top:1px solid var(--border);padding:8px 0';
+    const all = doc.getElementById('training-history-filter').value === 'all';
+    const filtered = all ? records : records.filter((a) => a.correct !== true);
+    doc.getElementById('training-history-count').textContent = records.length;
+    for (const attempt of filtered.slice(0, count)) {
+      const row = doc.createElement('article');
+      row.className = 'review-attempt';
+      row.classList.toggle('is-reviewing', attempt.id === reviewId);
+      const heading = doc.createElement('div');
+      heading.className = 'review-attempt-heading';
+      const status = doc.createElement('strong');
+      status.textContent = choiceText(attempt);
+      const assisted = doc.createElement('span');
+      assisted.className = 'review-muted';
+      assisted.textContent = attempt.assisted ? 'Assisted' : 'Unassisted';
+      heading.append(status, assisted);
+      const meta = doc.createElement('p');
+      meta.className = 'review-muted';
+      meta.textContent = `${new Date(attempt.timestamp).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })} · ${siteName(attempt.site)} · ${variantName(attempt.variant)}`;
+      const moves = doc.createElement('p');
+      moves.className = 'review-moves';
+      moves.textContent = `Played ${attempt.playedMove || 'unverified'} · Suggested ${attempt.recommendation || '—'}`;
       const text = doc.createElement('p');
-      text.textContent = `${new Date(attempt.timestamp).toLocaleString()} · ${attempt.site} · ${attempt.variant}. ${feedbackText(attempt)}`;
+      text.className = 'review-muted';
+      text.textContent = feedbackText(attempt);
+      const actions = doc.createElement('div');
+      actions.className = 'review-actions';
       const preview = doc.createElement('button');
       preview.className = 'panel-btn';
       preview.textContent = 'Review position';
+      preview.setAttribute('aria-pressed', String(attempt.id === reviewId));
       preview.onclick = () => {
         if (!reviewing) {
           live = state.currentData;
           liveFlipped = !!state.boardFlipped;
+          liveGameInfo = state.gameInfo;
         }
         reviewing = true;
+        reviewId = attempt.id;
         state.boardFlipped = attempt.player === 'b';
-        doc.getElementById('return-live').hidden = false;
+        state.gameInfo = { white: {}, black: {}, moveNumber: 0 };
+        previewNotice.hidden = false;
+        doc.getElementById('review-preview-label').textContent =
+          `${siteName(attempt.site)} · ${variantName(attempt.variant)} · ${choiceText(attempt)}`;
         state.currentData = {
           fen: attempt.before,
           variant: attempt.variant,
@@ -129,19 +220,41 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
         };
         state.selectedPV = 1;
         render();
+        renderHistory();
+        doc.getElementById('return-live').focus();
       };
       const remove = doc.createElement('button');
-      remove.className = 'panel-btn';
+      remove.className = 'panel-btn review-quiet';
       remove.textContent = 'Delete';
-      remove.onclick = () => send({ type: 'delete_training_attempt', id: attempt.id });
-      row.append(text, preview, remove);
+      remove.setAttribute(
+        'aria-label',
+        `Delete attempt: ${attempt.playedMove || 'unverified'} on ${new Date(attempt.timestamp).toLocaleDateString()}`,
+      );
+      remove.onclick = () =>
+        confirmRemoval(
+          'Delete this attempt?',
+          'Remove this saved attempt? This cannot be undone. Your statistics will stay unchanged.',
+          'Delete attempt',
+          () => send({ type: 'delete_training_attempt', id: attempt.id }),
+        );
+      actions.append(preview, remove);
+      row.append(heading, meta, moves, text, actions);
       container.appendChild(row);
     }
-    doc.getElementById('more-attempts').hidden = mistakes.length <= count;
-    if (!mistakes.length) container.textContent = 'No recorded mistakes.';
+    container.scrollTop = scrollTop;
+    doc.getElementById('more-attempts').hidden = filtered.length <= count;
+    doc.getElementById('clear-training-history').disabled = !records.length;
+    if (!filtered.length) {
+      const empty = doc.createElement('p');
+      empty.className = 'review-empty';
+      empty.textContent = records.length
+        ? 'No mistakes saved. Choose All attempts to review your correct moves.'
+        : 'Play a move with Training mode enabled to save your first attempt.';
+      container.appendChild(empty);
+    }
     const latest = records.find((a) => !selected || a.sessionId === selected);
     doc.getElementById('training-feedback').textContent = latest
-      ? feedbackText(latest)
+      ? `${choiceText(latest)} · played ${latest.playedMove || 'unverified'}. ${feedbackText(latest)}`
       : 'Feedback appears after a training move.';
     layout();
   }
@@ -255,6 +368,7 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
         nativeSend(JSON.stringify(msg));
       };
       send({ type: 'hello', client: 'panel', protocolVersion: PROTOCOL_VERSION });
+      send({ type: 'get_training_history' });
     },
     applySettings: applyPreferences,
     consume(msg) {
@@ -270,25 +384,40 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
         follow.value = '';
         follow.textContent = 'Follow focused board';
         select.appendChild(follow);
-        for (const session of msg.sessions) {
+        for (const [index, session] of msg.sessions.entries()) {
           const opt = doc.createElement('option');
           opt.value = session.id;
-          opt.textContent = `${session.site} · ${session.variant} · ${session.id}`;
+          opt.textContent = `${siteName(session.site)} · ${variantName(session.variant)} · Board ${index + 1}`;
           select.appendChild(opt);
         }
-        select.value = msg.followFocus ? '' : msg.selectedSessionId;
-        select.hidden = msg.sessions.length < 2;
+        if (
+          !msg.followFocus &&
+          msg.selectedSessionId &&
+          !msg.sessions.some((s) => s.id === msg.selectedSessionId)
+        ) {
+          const offline = doc.createElement('option');
+          offline.value = msg.selectedSessionId;
+          offline.textContent = 'Pinned board · disconnected';
+          select.appendChild(offline);
+        }
+        select.value = msg.followFocus ? '' : msg.selectedSessionId || '';
+        sessionControl.hidden = msg.sessions.length < 2 && msg.followFocus;
         layout();
         if (selected !== msg.selectedSessionId) {
           selected = msg.selectedSessionId;
           reviewing = false;
+          reviewId = null;
           live = null;
-          doc.getElementById('return-live').hidden = true;
+          liveGameInfo = null;
+          previewNotice.hidden = true;
+          doc.getElementById('training-assisted').textContent =
+            '0 assisted · 0 unassisted attempts';
           state.evalHistory = [];
           state.boardFlipped = false;
           state.gameInfo = { white: {}, black: {}, moveNumber: 0 };
           state.currentData = { fen: '8/8/8/8/8/8/8/8 w - - 0 1', lines: [] };
           render();
+          renderHistory();
           send({ type: 'get_settings' });
           send({ type: 'get_training_history' });
         }
@@ -296,6 +425,7 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
       }
       if (msg.type === 'training_history') {
         records = msg.attempts || [];
+        if (reviewId && !records.some((a) => a.id === reviewId)) returnToLive();
         renderHistory();
         return true;
       }
@@ -309,12 +439,17 @@ export function createSessionUI({ state, render, toast, layout = () => {}, doc =
         if (reviewing) return true;
       }
       if (reviewing && ['game_info', 'eval_progress'].includes(msg.type)) {
-        if (msg.type === 'game_info' && msg.flipped !== undefined) liveFlipped = !!msg.flipped;
+        if (msg.type === 'game_info') {
+          liveGameInfo = { ...liveGameInfo, ...msg };
+          if (msg.flipped !== undefined) liveFlipped = !!msg.flipped;
+        }
         return true;
       }
       return false;
     },
     disconnect() {
+      confirmedAction = null;
+      if (confirmation.open) confirmation.close();
       clearTimeout(refreshTimer);
       for (const timer of pending.values()) clearTimeout(timer);
       pending.clear();

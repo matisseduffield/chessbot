@@ -26,6 +26,10 @@ Post-move feedback evaluates the before/after positions from the same player's p
 
 Review position changes only the dashboard preview. Return to live board restores the newest live result. Deleting an attempt or clearing history does not reset aggregate statistics; Reset Stats remains a separate action. Assisted and unassisted attempts are counted separately.
 
+Review controls use the existing dashboard colours, typography, borders and spacing. Saved history has a bounded scrolling list and a filter for mistakes/ungraded moves or all attempts, including correct moves. Each row separates its outcome, moves, evaluation and actions. History remains available without an open chess board. Deletion asks for confirmation and preserves statistics; deleting the currently previewed attempt returns the dashboard to live analysis.
+
+A banner above the board identifies a saved-position preview and provides Return to live board. Saved lines are labelled SAVED. The live position, player details and orientation continue to update in the background and are restored on return. A disconnected pinned board keeps its selector available so the dashboard can follow another board. Narrow dashboard columns wrap the existing visibility toggles instead of spilling into adjacent columns.
+
 ## Maintenance and verification
 
 The shared package now defines the actual client message contract, including bounded variant FEN and move notation, rather than a separate unused protocol. Protocol version is **2**: reload both the backend and extension together.

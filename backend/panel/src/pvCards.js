@@ -85,7 +85,7 @@ export function renderPVs(onSelect) {
 
     card.innerHTML = `
       <div class="pv-header">
-        <span class="pv-rank">PV ${i + 1} <span class="pv-source engine">${state.currentData.source === 'book' ? 'BOOK' : 'ENGINE'}</span>${line.depth ? `<span class="pv-depth">D${escHtml(line.depth)}</span>` : ''}</span>
+        <span class="pv-rank">PV ${i + 1} <span class="pv-source engine">${state.currentData.source === 'book' ? 'BOOK' : state.currentData.source === 'review' ? 'SAVED' : 'ENGINE'}</span>${line.depth ? `<span class="pv-depth">D${escHtml(line.depth)}</span>` : ''}</span>
         <span class="pv-score" style="color:${scoreColor}">${escHtml(scoreText)}</span>
       </div>
       <div class="pv-eco" title="${escHtml(eco)}">${escHtml(eco)}</div>

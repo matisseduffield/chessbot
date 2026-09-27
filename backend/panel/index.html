@@ -1210,7 +1210,7 @@
   /* ── Display toggles 2-column grid ── */
   .toggle-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
     gap: 6px 16px;
   }
   .toggle-grid .toggle-row { margin-bottom: 0; }
