@@ -11,7 +11,15 @@ test('installed extension reads Chess.com and Lichess, routes sessions, and hide
     headless: true,
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
   });
+  context.on('console', (message) => {
+    if (message.type() === 'error') console.error('[extension fixture]', message.text());
+  });
+  context.on('page', (page) =>
+    page.on('pageerror', (error) => console.error('[extension fixture]', error.message)),
+  );
   try {
+    const worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
+    expect(worker.url()).toContain('chrome-extension://');
     const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
     const chessHtml = `<html><body><wc-chess-board id="board-play-computer" style="display:block;width:480px;height:480px"></wc-chess-board><script>
       document.querySelector('wc-chess-board').game={getVariant:()=> 'chess',getFEN:()=> '${fen}',getPlayingAs:()=>1,getOptions:()=>({flipped:false}),isGameOver:()=>false};
@@ -40,6 +48,9 @@ test('installed extension reads Chess.com and Lichess, routes sessions, and hide
     const chess = await context.newPage();
     await chess.goto('https://www.chess.com/play/computer');
     await expect
+      .poll(() => panel.locator('#board-session option').count(), { timeout: 15000 })
+      .toBe(2);
+    await expect
       .poll(() => panel.evaluate(() => window.state.currentData?.fen), { timeout: 15000 })
       .toBe(fen);
     await expect.poll(() => panel.evaluate(() => window.state.currentData?.bestmove)).toBeTruthy();
@@ -60,7 +71,6 @@ test('installed extension reads Chess.com and Lichess, routes sessions, and hide
     await expect(panel.locator('#pvs')).toContainText('Training:');
     expect(await panel.evaluate(() => window.state.currentData.bestmove)).toBeNull();
     await expect(chess.locator('.chessbot-hint-btn')).toBeAttached({ timeout: 15000 });
-    const worker = context.serviceWorkers()[0];
     expect(worker).toBeTruthy();
     await chess.reload();
     await expect(chess.locator('.chessbot-hint-btn')).toBeAttached({ timeout: 15000 });

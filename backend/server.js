@@ -933,6 +933,7 @@ async function main() {
           variant: currentVariant,
           variants: buildVariantList(),
         });
+        safeSend(ws,{type:'training_stats_update',...trainingStore.stats(ws.sessionState.id)});
       }
 
       // ── Switch variant ─────────────────────────────────

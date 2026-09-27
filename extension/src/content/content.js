@@ -591,8 +591,9 @@ if (!SITE) {
   console.log("[chessbot] unsupported site, content script inactive");
 } else {
   console.log(`[chessbot] detected site: ${SITE}`);
-  init();
-  watchForSPANavigation();
+  // Initialize after all module state exists; observers and navigation timers
+  // may run synchronously when installed on an already-loaded board.
+  queueMicrotask(() => { init(); watchForSPANavigation(); });
 }
 
 // ── SPA Navigation Detection ─────────────────────────────────
@@ -1468,7 +1469,7 @@ function waitForBoard() {
     const check = () => {
       const el = getBoardElement();
       if (el) return resolve(el);
-      if (!autoMoveEnabled || trainingMode || !enabled) return;
+      if (contextInvalidated) return;
       attempts++;
       if (attempts % 10 === 0) {
         console.log(`[chessbot] waiting for board element... (attempt ${attempts})`);
