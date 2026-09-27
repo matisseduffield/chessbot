@@ -24,7 +24,7 @@ import {
   plyCountToTurn,
   parseLastRowTurn,
 } from "./moveText.js";
-import { applyUciMoveToBoard } from "./fenApply.js";
+import { assessAttempt, searchDepth, createTrainingTimers } from "./trainingState.js";
 import { formatScore, isLineLosing } from "./evalFormat.js";
 import { filterGhostPieces as _filterGhostPieces } from "./pieceFilter.js";
 import { getEvalTimeout as _getEvalTimeout } from "./evalTimeout.js";
@@ -83,6 +83,25 @@ function gridToFenBoard(grid, pocket) {
 }
 
 const WS_URL = "ws://localhost:8080";
+const contentSessionId = crypto.randomUUID();
+let analysisRequestId = 0;
+let protocolReady = false;
+const trainingTimers = createTrainingTimers();
+let trainingAssisted = false;
+let trainingAttemptSeen = new Set();
+function cancelTrainingReveal() {
+  trainingTimers.cancel(); trainingRevealActive = false;
+  if (_overlayRafId) cancelAnimationFrame(_overlayRafId);
+  _overlayRafId = 0; _overlayPending = null;
+}
+function focusSession() {
+  if (!document.hidden && ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({type:'focus_session'}));
+    if (boardReady) resendCurrentPosition();
+  }
+}
+window.addEventListener('focus', focusSession);
+document.addEventListener('visibilitychange', focusSession);
 let lastExactPosition = '';
 let lastExactView = '';
 document.addEventListener(SNAPSHOT_EVENT, () => {
@@ -581,6 +600,7 @@ if (!SITE) {
 // /variants/atomic/game/... doesn't reload the page. We need
 // to detect URL changes and re-initialise variant detection + board finding.
 let lastKnownPath = location.pathname;
+let navigationTimer = null;
 
 function watchForSPANavigation() {
   // Monkey-patch history methods to detect pushState/replaceState
@@ -600,7 +620,7 @@ function watchForSPANavigation() {
   window.addEventListener("popstate", () => onPossibleNavigation());
 
   // Fallback: poll for URL changes every 1.5s (catches edge cases)
-  setInterval(() => {
+  navigationTimer = setInterval(() => {
     if (location.pathname !== lastKnownPath) {
       onPossibleNavigation();
     }
@@ -613,6 +633,7 @@ function onPossibleNavigation() {
 
   const oldPath = lastKnownPath;
   lastKnownPath = newPath;
+  cancelTrainingReveal(); cancelAutoMove(); trainingBestMove=null; trainingAttemptSeen.clear();
   console.log(`[chessbot] SPA navigation detected: ${oldPath} → ${newPath}`);
 
   // Re-detect variant from the new URL
@@ -882,7 +903,7 @@ function connectWS() {
     CLOSING: 2,
     CLOSED: 3,
     send(data) { try { port.postMessage({ _type: "ws_send", data }); } catch {} },
-    close() { try { port.disconnect(); } catch {} },
+    close() { this.readyState = 3; try { port.disconnect(); } catch {} },
     onopen: null,
     onmessage: null,
     onclose: null,
@@ -899,7 +920,9 @@ function connectWS() {
     },
   };
 
+  const connection=ws;
   port.onMessage.addListener((msg) => {
+    if(ws!==connection) return;
     switch (msg._type) {
       case "ws_open":
         ws.readyState = 1;
@@ -927,14 +950,18 @@ function connectWS() {
   });
 
   port.onDisconnect.addListener(() => {
+    if(ws!==connection) return;
     if (ws.readyState !== 3) {
       ws.readyState = 3;
       if (ws.onclose) ws.onclose();
       ws._emit("close", {});
     }
+    if(!contextInvalidated) setTimeout(connectWS,wsBackoff);
   });
 
   ws.onopen = () => {
+    ws.send(JSON.stringify({type:'hello',client:'extension',protocolVersion:PROTOCOL_VERSION,sessionId:contentSessionId,site:SITE || 'unknown'}));
+    if(!document.hidden) ws.send(JSON.stringify({type:'focus_session'}));
     console.log(`[chessbot] connected to backend (variant=${detectedVariant || "standard"}, site=${SITE}, url=${location.pathname})`);
     wsBackoff = 3000; // reset backoff on successful connect
     // If we queued a FEN before WS was ready, send it now
@@ -974,6 +1001,7 @@ function connectWS() {
       const msg = JSON.parse(evt.data);
       if (msg.type === "server_hello") {
         if (isProtocolMismatch(PROTOCOL_VERSION, msg.protocolVersion)) {
+          protocolReady = false; clearArrow(); cancelAutoMove();
           console.warn(
             `[chessbot] protocol mismatch: extension=${PROTOCOL_VERSION} server=${msg.protocolVersion} — reload the extension.`,
           );
@@ -984,8 +1012,16 @@ function connectWS() {
         } else {
           // A reconnect after the user fixed the mismatch should clear
           // the banner — without this it would linger from the prior session.
-          hideProtocolMismatchBanner();
+          hideProtocolMismatchBanner(); protocolReady = true;
         }
+        return;
+      }
+      if (msg.type === 'training_stats_update') {
+        trainingCorrect = msg.correct || 0; trainingTotal = msg.total || 0; trainingStreak = msg.streak || 0;
+        return;
+      }
+      if (msg.type === 'analysis_cancelled') {
+        if (msg.requestId === analysisRequestId) { pendingEval=false; lastSentFen=''; }
         return;
       }
       if (msg.type === "warning") {
@@ -1038,7 +1074,7 @@ function connectWS() {
         return;
       }
       if (msg.type === "eval_progress") {
-        if (showDepthOverlay) drawDepthBadge(msg.depth, msg.targetDepth, msg.nps);
+        if (protocolReady && msg.requestId === analysisRequestId && showDepthOverlay) drawDepthBadge(msg.depth, msg.targetDepth, msg.nps);
         return;
       }
       if (msg.type === "set_show_opponent_response") {
@@ -1081,13 +1117,14 @@ function connectWS() {
         return;
       }
       if (msg.type === "set_depth") {
-        currentDepth = Number(msg.value) || 15;
+        currentDepth = searchDepth(msg.value);
         console.log(`[chessbot] depth set to ${currentDepth} (from panel)`);
         resendCurrentPosition();
         return;
       }
       if (msg.type === "set_training_mode") {
         trainingMode = !!msg.value;
+        cancelAutoMove(); cancelTrainingReveal();
         trainingStage = 0;
         trainingBestMove = null;
         trainingRevealActive = false;
@@ -1125,12 +1162,14 @@ function connectWS() {
       }
       if (msg.type === "set_training_strict") {
         trainingStrict = !!msg.value;
+        resendCurrentPosition();
         if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
           chrome.storage.local.set({ chessbot_trainingStrict: trainingStrict });
         }
         return;
       }
       if (msg.type === "reset_training_stats") {
+        cancelTrainingReveal(); cancelAutoMove();
         trainingCorrect = 0;
         trainingTotal = 0;
         trainingStreak = 0;
@@ -1159,6 +1198,7 @@ function connectWS() {
         return;
       }
       if (msg.type === "bestmove") {
+        if (!protocolReady || (msg.requestId != null && msg.requestId !== analysisRequestId)) return;
         // For streaming (infinite analysis), keep pendingEval true
         if (!msg.streaming) pendingEval = false;
         if (showDepthOverlay && typeof msg.depth === "number") {
@@ -1197,7 +1237,7 @@ function connectWS() {
           return;
         }
         // Voice announce
-        if (voiceEnabled) speakMove(msg);
+        if (voiceEnabled && !trainingMode) speakMove(msg);
         const source = msg.source || "engine";
         const lines = msg.lines || [];
         const bestLine = lines[0] || null;
@@ -1222,8 +1262,13 @@ function connectWS() {
             }
           }
         }
-        if (trainingMode && !msg.streaming) {
+        if (trainingMode && msg.streaming) {
+          drawEvalBar(bestLine, source, msg.tablebase);
+          return;
+        }
+        if (trainingMode) {
           // Training mode: store best move, show progressive hint
+          trainingAssisted = trainingDifficulty !== "hard";
           trainingBestMove = msg.bestmove;
           trainingLines = lines.slice(0, 3); // store top 3 for non-strict checking
           trainingLastFen = msg.fen || lastSentFen;
@@ -1298,12 +1343,14 @@ function connectWS() {
   };
 
   ws.onclose = () => {
+    protocolReady = false; cancelAutoMove(); cancelTrainingReveal(); clearArrow();
     if (contextInvalidated) return; // don't reconnect if orphaned
     console.log(`[chessbot] disconnected — retrying in ${Math.min(wsBackoff / 1000, 30)}s`);
     pendingEval = false; // unblock so we can resend on reconnect
     waitingForOpponent = false; // unblock board change detection
     _skipNextBoardChange = false;
-    setTimeout(connectWS, wsBackoff);
+    // The service worker owns WebSocket reconnects. Recreate a runtime port
+    // only when onDisconnect fires, otherwise two connections race each other.
     wsBackoff = Math.min(wsBackoff * 1.5, 10000); // exponential backoff, max 10s
   };
 
@@ -1331,7 +1378,8 @@ function sendFen(fen) {
       console.log(`[chessbot] injected 3check counters: ${counters}`);
     }
   }
-  const msg = { type: "fen", fen, depth: currentDepth };
+  const msg = { type: "fen", fen, depth: currentDepth, requestId: ++analysisRequestId,
+    training: trainingMode, multipv: trainingMode && !trainingStrict ? 3 : undefined };
   if (searchMovetime) msg.movetime = searchMovetime;
   if (searchNodes) msg.nodes = searchNodes;
   if (detectedVariant) msg.variant = detectedVariant;
@@ -1420,6 +1468,7 @@ function waitForBoard() {
     const check = () => {
       const el = getBoardElement();
       if (el) return resolve(el);
+      if (!autoMoveEnabled || trainingMode || !enabled) return;
       attempts++;
       if (attempts % 10 === 0) {
         console.log(`[chessbot] waiting for board element... (attempt ${attempts})`);
@@ -1655,51 +1704,8 @@ function observeBoard(boardEl) {
       // Board element changed (Vue re-render, SPA navigation) — re-attach observer
       if (observedBoardEl && currentBoard !== observedBoardEl) {
         console.log("[chessbot] board element replaced — re-attaching observer");
-        observedBoardEl = currentBoard;
-        if (observer) observer.disconnect();
-        observer = new MutationObserver((mutations) => {
-          if (!enabled) return;
-          const dominated = mutations.every((m) => {
-            const t = m.target;
-            if (t.id && t.id.startsWith("chessbot-")) return true;
-            if (t.classList && t.classList.contains("chessbot-eval-badge")) return true;
-            if (t.closest && t.closest("#chessbot-arrow-svg, #chessbot-bg-svg, #chessbot-eval-bar, .chessbot-eval-badge")) return true;
-            if (m.type === "childList") {
-              const allOwn = [...m.addedNodes, ...m.removedNodes].every(
-                n => n.nodeType !== 1 || (n.id && n.id.startsWith("chessbot-")) ||
-                     (n.classList && (n.classList.contains("chessbot-eval-badge") ||
-                      n.classList.contains("chessbot-score-badge") ||
-                      n.classList.contains("chessbot-hint-btn") ||
-                      n.classList.contains("chessbot-training-feedback")))
-              );
-              if (allOwn && m.addedNodes.length + m.removedNodes.length > 0) return true;
-            }
-            return false;
-          });
-          if (dominated) return;
-          lastMutationTime = Date.now();
-          clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(readAndSend, bulletMode ? 100 : 400);
-        });
-        const targets = [currentBoard];
-        if (currentBoard.shadowRoot) targets.push(currentBoard.shadowRoot);
-        for (const target of targets) {
-          observer.observe(target, {
-            childList: true, subtree: true, attributes: true,
-            attributeFilter: ["class", "style", "data-piece", "transform"],
-          });
-        }
-        // Reset drag binding for new element
-        if (!currentBoard.dataset.chessbotDragBound) {
-          currentBoard.dataset.chessbotDragBound = "1";
-          const dragTarget = currentBoard.shadowRoot || currentBoard;
-          dragTarget.addEventListener("mousedown", (e) => {
-            if (e.button !== 0) return;
-            isDragging = true;
-            isDraggingSince = Date.now();
-          }, true);
-          dragTarget.addEventListener("touchstart", () => { isDragging = true; isDraggingSince = Date.now(); }, true);
-        }
+        cancelTrainingReveal(); cancelAutoMove();
+        observeBoard(currentBoard);
         // Reset board reader state for new element
         _variantColorMap = null;
         _variantColorMapKey = null;
@@ -1744,12 +1750,14 @@ function hasPremoveElements() {
 }
 
 function readAndSend() {
-  if (!boardReady) return;
+  if (!boardReady || !enabled || contextInvalidated) return;
 
   // Check if the game has ended — stop analyzing and auto-moving
   if (detectGameOver()) {
     if (!gameOver) {
       gameOver = true;
+      cancelTrainingReveal();
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type:'cancel_search'}));
       console.log("[chessbot] game over detected — stopping analysis");
       cancelAutoMove();
       clearMoveIndicators();
@@ -1861,13 +1869,11 @@ function readAndSend() {
   const prevBoard = lastBoardFen;
   lastBoardFen = boardPart;
   lastPieceCount = pieceCount;
+  cancelTrainingReveal();
+  cancelAutoMove();
   renderGeneration++; // new position — invalidate any in-flight responses
   const myGen = renderGeneration;
 
-  // Training mode: check if user's move matched the engine suggestion
-  if (trainingMode && trainingBestMove) {
-    checkTrainingAccuracy(fen);
-  }
 
   // Detect new game: standard starting position, variant starting position,
   // or piece count jumped significantly upward (board reset).
@@ -1880,6 +1886,7 @@ function readAndSend() {
   const prevPieceCount = prevBoard ? countPieces(prevBoard) : 0;
   const pieceCountJump = prevPieceCount > 0 && pieceCount - prevPieceCount >= 10;
   if (isStartPos || pieceCountJump) {
+    trainingAttemptSeen.clear();
     console.log("[chessbot] new game detected — resetting state");
     gameOver = false;
     waitingForOpponent = false;
@@ -1978,6 +1985,12 @@ function readAndSend() {
         }
       }
     }
+  }
+
+  // Grade before the opponent-turn early return, using the corrected turn.
+  if (trainingMode && trainingBestMove && !isStartPos && !pieceCountJump) {
+    const attemptParts=fen.split(' '); attemptParts[1]=effectiveTurn;
+    checkTrainingAccuracy(exactPosition?.fen || attemptParts.join(' '));
   }
 
   // Only show move suggestions based on runEngineFor setting
@@ -3314,7 +3327,8 @@ function boardToFen() {
 let _overlayRafId = 0;
 let _overlayPending = null;
 function scheduleOverlayUpdate(fn) {
-  _overlayPending = fn;
+  const generation=renderGeneration;
+  _overlayPending = () => { if(generation===renderGeneration && !trainingMode) fn(); };
   if (_overlayRafId) return;
   _overlayRafId = requestAnimationFrame(() => {
     _overlayRafId = 0;
@@ -3332,6 +3346,8 @@ function scheduleOverlayUpdate(fn) {
 
 /** Clear move arrows and eval badges, but keep the eval bar. */
 function clearMoveIndicators() {
+  if(_overlayRafId) cancelAnimationFrame(_overlayRafId);
+  _overlayRafId=0; _overlayPending=null;
   // Check both document and shadow root for our overlay elements
   const roots = [document];
   const board = getBoardElement();
@@ -3452,8 +3468,8 @@ function getBoardGeometry() {
     (IS_CHESSGROUND && isLichessFlipped()) ||
     (SITE === "chesstempo" && isChesstempFlipped());
   // Cache by board identity + dimensions + flip state
-  const key = `${board.id || ""}:${Math.round(rect.width)}:${Math.round(rect.height)}:${flipped}`;
-  if (_geoCache && _geoCacheKey === key) return _geoCache;
+  const key = `${rect.left}:${rect.top}:${rect.width}:${rect.height}:${flipped}`;
+  if (_geoCache?.board === board && _geoCacheKey === key) return _geoCache;
   _geoCache = { board, rect, sqSize, flipped };
   _geoCacheKey = key;
   return _geoCache;
@@ -3739,6 +3755,19 @@ function drawTrainingHint(uci, bestLine, source) {
       txt.textContent = "Drop a piece";
       svg.appendChild(txt);
     }
+    if(trainingDifficulty !== 'hard' && trainingStage < 2) {
+      const {target:parent}=getOverlayTarget(board);
+      if(parent) {
+        parent.querySelectorAll('.chessbot-hint-btn').forEach(el=>el.remove());
+        const button=document.createElement('button'); button.className='chessbot-hint-btn';
+        button.textContent=trainingStage===0?'Hint':'Reveal';
+        button.style.cssText='position:absolute;bottom:0;left:45%;z-index:1001;pointer-events:auto';
+        button.onclick=event=>{event.stopPropagation();trainingStage++;trainingAssisted=true;
+          if(trainingStage>=2 && ws?.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'broadcast',payload:{type:'training_reveal',fen:trainingLastFen}}));
+          drawTrainingHint(uci,bestLine,source);};
+        parent.appendChild(button);
+      }
+    }
     return;
   }
 
@@ -3943,6 +3972,8 @@ function drawTrainingHint(uci, bestLine, source) {
       e.stopPropagation();
       e.preventDefault();
       trainingStage++;
+      trainingAssisted = true;
+      if(trainingStage >= 2 && ws?.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'broadcast',payload:{type:'training_reveal',fen:trainingLastFen}}));
       drawTrainingHint(uci, bestLine, source);
     });
     parent.appendChild(btn);
@@ -3989,74 +4020,36 @@ function drawTrainingHint(uci, bestLine, source) {
   }
 }
 
-/**
- * Apply a UCI move to a FEN and return the resulting board part (piece placement only).
- * Handles standard moves, captures, castling, en passant, and promotions.
- */
-function applyUciMove(fen, uci) {
-  return applyUciMoveToBoard(fen, uci);
-}
-
-/** Check if the user's move matched the engine's suggestion */
+/** Grade a single confirmed player transition; never a guessed variant move. */
 function checkTrainingAccuracy(currentFen) {
   if (!trainingMode || !trainingBestMove || !trainingLastFen) return;
-  const currentBoard = currentFen.split(" ")[0];
-  const trainingBoard = trainingLastFen.split(" ")[0];
-  if (currentBoard === trainingBoard) return; // same position, no move made yet
-
-  trainingTotal++;
-
-  // Apply the engine's best move to the training FEN and compare
-  const expectedBoard = applyUciMove(trainingLastFen, trainingBestMove);
-  let isCorrect = expectedBoard && currentBoard === expectedBoard;
-
-  // Non-strict mode: also accept any of the top 3 engine moves
-  if (!isCorrect && !trainingStrict && trainingLines.length > 1) {
-    for (let i = 1; i < trainingLines.length && i < 3; i++) {
-      const altMove = trainingLines[i]?.pv?.[0];
-      if (altMove) {
-        const altBoard = applyUciMove(trainingLastFen, altMove);
-        if (altBoard && currentBoard === altBoard) { isCorrect = true; break; }
-      }
-    }
+  const before = trainingLastFen;
+  const result = assessAttempt({before,after:currentFen,player:getPlayerColor(),variant:detectedVariant || 'chess',
+    bestmove:trainingBestMove,lines:trainingLines,strict:trainingStrict});
+  const key = before.split(' ').slice(0,4).join(' ') + '>' + currentFen.split(' ').slice(0,2).join(' ');
+  if (!result || trainingAttemptSeen.has(key)) return;
+  trainingAttemptSeen.add(key);
+  if(trainingAttemptSeen.size>500) trainingAttemptSeen.delete(trainingAttemptSeen.values().next().value);
+  const attempt={id:crypto.randomUUID(),before,after:currentFen,variant:detectedVariant || 'chess',site:SITE,
+    player:getPlayerColor(),recommendation:trainingBestMove,playedMove:result.playedMove,correct:result.correct,
+    assisted:trainingAssisted,timestamp:Date.now()};
+  if(ws?.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'training_attempt',attempt}));
+  if(result.correct !== null) {
+    trainingTotal++;
+    if(result.correct) { trainingCorrect++; trainingStreak++; } else trainingStreak=0;
+    showTrainingFeedback(result.correct);
+    if(trainingSound) playTrainingSound(result.correct);
+    broadcastTrainingStats();
   }
-
-  if (isCorrect) {
-    trainingCorrect++;
-    trainingStreak++;
-  } else {
-    trainingStreak = 0;
+  if(trainingAutoReveal && result.correct===false) {
+    const revealMove=trainingBestMove;
+    trainingRevealActive=true;
+    trainingTimers.schedule(()=>{
+      showToast(`Correct move: ${revealMove}`);
+      trainingTimers.schedule(()=>{trainingRevealActive=false;resendCurrentPosition();},2500);
+    },600);
   }
-
-  // Show visual + audio feedback
-  showTrainingFeedback(isCorrect);
-  if (trainingSound) playTrainingSound(isCorrect);
-
-  // Broadcast stats to panel
-  broadcastTrainingStats();
-
-  // Auto-reveal: show the correct move briefly after user plays wrong
-  if (trainingAutoReveal && !isCorrect && trainingBestMove) {
-    const revealMove = trainingBestMove;
-    const revealLines = trainingLines.slice();
-    trainingRevealActive = true;
-    // Delay slightly so user sees the feedback flash first
-    setTimeout(() => {
-      const bestLine = revealLines[0] || null;
-      drawSingleMove(revealMove, bestLine, "engine");
-      // Clear after 2.5 seconds and resume analysis
-      setTimeout(() => {
-        trainingRevealActive = false;
-        clearArrow();
-        resendCurrentPosition();
-      }, 2500);
-    }, 600);
-  }
-
-  trainingBestMove = null;
-  trainingLastFen = "";
-  trainingStage = 0;
-  trainingLines = [];
+  trainingBestMove=null; trainingLastFen=''; trainingStage=0; trainingLines=[];
 }
 
 /** Broadcast training stats to panel via WebSocket */
@@ -5257,6 +5250,7 @@ function scheduleAutoMove(moveUci, lines, fen) {
 
   // Don't auto-move if the game is over
   if (gameOver || detectGameOver()) {
+    cancelTrainingReveal();
     console.log("[chessbot][auto-move] game is over — skipping");
     return;
   }
@@ -5325,8 +5319,10 @@ function scheduleAutoMove(moveUci, lines, fen) {
   autoMoveTimer = setTimeout(() => {
     autoMoveTimer = null;
 
+    if (!autoMoveEnabled || trainingMode || !enabled) return;
     // Check if game ended while we were waiting
     if (gameOver || detectGameOver()) {
+    cancelTrainingReveal();
       console.log("[chessbot][auto-move] game ended during delay — aborting");
       return;
     }
@@ -5395,6 +5391,7 @@ function scheduleAutoMove(moveUci, lines, fen) {
     const maxAttempts = 3;
 
     function attemptMove() {
+      if (!autoMoveEnabled || trainingMode || !enabled) return;
       attempts++;
       console.log(`[chessbot][auto-move] attempt ${attempts}/${maxAttempts} for ${finalMove}`);
 
@@ -5579,6 +5576,7 @@ document.addEventListener("keydown", (e) => {
   } else if (code === "KeyT") {
     e.preventDefault();
     trainingMode = !trainingMode;
+    cancelAutoMove(); cancelTrainingReveal();
     trainingStage = 0;
     trainingBestMove = null;
     console.log(`[chessbot] training mode: ${trainingMode} (Alt+T)`);
@@ -5679,6 +5677,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
     }
     if (msg.type === "set_training_mode") {
       trainingMode = !!msg.value;
+        cancelAutoMove(); cancelTrainingReveal();
       trainingStage = 0;
       trainingBestMove = null;
       console.log(`[chessbot] training mode: ${trainingMode}`);
@@ -5697,7 +5696,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       }
     }
     if (msg.type === "set_depth") {
-      currentDepth = Number(msg.value) || 15;
+      currentDepth = searchDepth(msg.value);
       console.log(`[chessbot] depth set to ${currentDepth}`);
       // Re-evaluate at new depth
       resendCurrentPosition();
@@ -5840,3 +5839,18 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
     }
   });
 }
+
+window.addEventListener('pagehide', () => {
+  cancelTrainingReveal(); cancelAutoMove(); clearArrow();
+  observer?.disconnect(); clearInterval(pollTimer); clearInterval(navigationTimer);
+  clearTimeout(debounceTimer);
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type:'cancel_search'}));
+  contextInvalidated = true;
+  ws?.close();
+});
+window.addEventListener('pageshow', event => {
+  if (!event.persisted) return;
+  contextInvalidated = false; lastSentFen = ''; boardReady = false;
+  connectWS(); findBoard();
+  navigationTimer = setInterval(onPossibleNavigation, 1500);
+});

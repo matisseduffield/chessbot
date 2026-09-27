@@ -1,4 +1,8 @@
-# Current capabilities and implementation map
+# Capability baseline and implementation map
+
+This is the pre-implementation audit. The resolved gaps and current behavior are described in
+[the training and reliability update](training-reliability-update.md). The findings below remain
+as the baseline used to choose the work; they are not all outstanding issues.
 
 Reviewed 27 September 2026 against base `7110989`, with the retained Chess.com snapshot,
 WASM helper and build changes. The dashboard and popup have been restored to that base.

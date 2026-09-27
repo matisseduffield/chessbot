@@ -18,7 +18,7 @@ const {
 const { EvalCache } = require("./src/engine/evalCache");
 const { LichessBook } = require("./src/book/lichess");
 const { PROTOCOL_VERSION } = require("@chessbot/shared");
-const { safeSend, broadcast: wsBroadcast } = require("./src/ws/send");
+const { safeSend: rawSend, broadcast: wsBroadcast } = require("./src/ws/send");
 const { createRateLimiter } = require("./src/ws/rateLimit");
 const { validateInbound } = require("./src/ws/validateMessage");
 const { computeSafeMovetime } = require("./src/engine/clockCap");
@@ -30,6 +30,14 @@ const { createPinAuth } = require("./src/auth/pin");
 const { FileCache } = require("./src/server/fileCache");
 const { registerHttpRoutes } = require("./src/server/httpRoutes");
 const { createEvalPipeline } = require("./src/server/evalPipeline");
+const { EngineScheduler } = require("./src/engine/scheduler");
+const { SessionHub } = require("./src/server/sessionHub");
+const { TrainingStore } = require("./src/analysis/trainingStore");
+const { trainingFeedback } = require("./src/analysis/trainingFeedback");
+function safeSend(ws, message) {
+  return rawSend(ws, { ...message, sessionId: message.sessionId ?? ws.context?.sessionId ?? ws.sessionId,
+    requestId: message.requestId ?? ws.context?.requestId });
+}
 
 // ── Server log buffer ────────────────────────────────────
 serverLogger.install();
@@ -256,16 +264,8 @@ async function main() {
   // Global variant generation — incremented on each variant switch to invalidate all pending evals
   let globalVariantGen = 0;
 
-  // Global evaluation mutex — ensures only one eval accesses the engine at a time.
-  // Per-client queues still exist for ordering, but this prevents cross-client interleave.
-  let globalEvalLock = Promise.resolve();
-  function acquireEvalLock() {
-    let release;
-    const prev = globalEvalLock;
-    globalEvalLock = new Promise(r => { release = r; });
-    return prev.then(() => release);
-  }
-
+  const scheduler = new EngineScheduler(() => engine.abort());
+  // The scheduler owns the engine for the entire dispatch, including switches.
   // ── 1. Start the Stockfish engine ──────────────────────
   let engine = new StockfishBridge();
   try {
@@ -328,12 +328,12 @@ async function main() {
   /** Switch to a different variant, auto-switching engine if needed.
    *  Returns { switched: bool, error?: string } */
   let engineSwitchLock = false; // prevents concurrent engine swaps
-  let engineSwitchPromise = null; // resolves when current switch completes
 
   async function switchVariant(variantKey) {
     const def = variantDef(variantKey);
     if (!def) return { switched: false, error: `Unknown variant: ${variantKey}` };
 
+    if (variantKey === currentVariant && engine.ready) return { switched: true };
     // Invalidate all pending evals from all clients before switching
     globalVariantGen++;
 
@@ -343,8 +343,6 @@ async function main() {
 
     // Acquire lock to prevent concurrent engine operations
     engineSwitchLock = true;
-    let resolveSwitchPromise;
-    engineSwitchPromise = new Promise(r => { resolveSwitchPromise = r; });
 
     try {
       // Abort any pending evaluation before switching
@@ -383,7 +381,7 @@ async function main() {
         console.log(`[server] variant ${variantKey} requires ${needEngine} engine — switching`);
         // Preserve user settings (Threads, Hash, MultiPV, etc.) across engine switch
         const savedSettings = engine.getSettings();
-        engine.stop();
+        await engine.stop();
         const oldPath = config.stockfishPath;
         config.stockfishPath = newPath;
         engine = new StockfishBridge();
@@ -439,8 +437,6 @@ async function main() {
       return { switched: true };
     } finally {
       engineSwitchLock = false;
-      resolveSwitchPromise();
-      engineSwitchPromise = null;
     }
   }
 
@@ -505,7 +501,13 @@ async function main() {
     panelDir: path.join(__dirname, "panel"),
     bookBaseName: (p) => path.basename(p),
     express,
-    getEngine: () => engine,
+    getEngine: () => ({ ready: engine.ready, evaluate: (...args) => scheduler.submit({
+      key:'selfcheck', priority:3, run: async cancelled => {
+        await activateSession(panelDefaults);
+        const result=await engine.evaluate(...args);
+        if(cancelled()) throw new Error('Self-check interrupted by live analysis');
+        return result;
+      } }) }),
     getCurrentEngineType: () => currentEngineType,
     getCurrentVariant: () => currentVariant,
     getLichessBook: () => lichessBook,
@@ -563,13 +565,13 @@ async function main() {
   heartbeat.unref();
   wss.on("close", () => clearInterval(heartbeat));
 
-  server.on("error", (err) => {
+  server.on("error", async (err) => {
     if (err.code === "EADDRINUSE") {
       console.error(`[server] port ${config.port} is already in use. Kill the other process or set PORT env var.`);
     } else {
       console.error("[server] HTTP server error:", err.message);
     }
-    engine.stop();
+    await engine.stop();
     book.close();
     process.exit(1);
   });
@@ -595,9 +597,9 @@ async function main() {
     }
   });
 
-  /** Broadcast a message to all OTHER connected clients (for panel sync). */
+  /** Relay a message only within its originating board session. */
   function broadcast(senderWs, message) {
-    return wsBroadcast(wss, senderWs, message);
+    return hub.relay(senderWs, message);
   }
 
   /** (Re-)attach event hooks whenever the engine instance is replaced. */
@@ -610,27 +612,78 @@ async function main() {
   // safeSend is imported from src/ws/send; it no-ops on closed sockets
   // and stringifies objects on the fly.
 
-  // Eval pipeline (book → cache → engine cascade). Lives in
-  // src/server/evalPipeline.js; the per-connection message handler
-  // chains runFen() onto its evaluationQueue so requests serialise.
-  // Stable deps are bound here once; mutable state (engine instance,
-  // engineSwitchPromise, per-connection generation counters) flows
-  // through closure getters.
+  // The scheduler serializes resource changes and evaluation. Getters read the
+  // currently activated session resources at evaluation time.
   const runFen = createEvalPipeline({
     config,
-    book,
+    getBook: () => book,
     lichessLookup,
     enrichLines,
-    acquireEvalLock,
     getCachedEval,
     getCachedEvalAtLeast,
     setCachedEval,
     getEngine: () => engine,
-    getEngineSwitchPromise: () => engineSwitchPromise,
     broadcast,
     safeSend,
     getEco,
   });
+
+  const baseConfig = { ...config };
+  const baseOptions = engine.getSettings();
+  const basePreferences = {};
+  let baseBookPaths = book.bookPaths.slice(), baseLichess = lichessBook.enabled;
+  const hub = new SessionHub(rawSend, () => ({ config: { ...baseConfig }, options: { ...baseOptions },
+    preferences:{...basePreferences}, variant: 'chess', enginePath: null, book: new OpeningBook(baseBookPaths), lichess: baseLichess, training: false, generation: 0 }));
+  const panelDefaults = { id: 'defaults', ...hub.makeState() };
+  const trainingStore = new TrainingStore(path.join(path.dirname(_evalCachePath), 'training-history.json'));
+  async function publishTraining() {
+    await trainingStore.save();
+    for(const client of hub.clients) {
+      rawSend(client,{type:'training_stats_update',sessionId:client.sessionId,...trainingStore.stats(client.sessionId)});
+      if(client.role==='panel') rawSend(client,{type:'training_history',attempts:trainingStore.history()});
+    }
+  }
+
+  async function activateSession(session) {
+    const physicalPath = config.stockfishPath;
+    Object.assign(config, session.config);
+    config.stockfishPath = physicalPath;
+    const switched = await switchVariant(session.variant);
+    if (!switched.switched) throw new Error(switched.error);
+    if (session.enginePath && session.enginePath !== config.stockfishPath) {
+      const previousPath = config.stockfishPath;
+      await engine.stop();
+      config.stockfishPath = session.enginePath;
+      engine = new StockfishBridge();
+      try { await engine.start(); }
+      catch (error) {
+        config.stockfishPath = previousPath; engine = new StockfishBridge(); await engine.start();
+        throw error;
+      }
+      bindEngineHandlers();
+    }
+    if (!session.bookInitialized) { await session.book.init(); session.bookInitialized = true; }
+    book = session.book;
+    lichessBook.setEnabled(session.lichess);
+    for (const [key, value] of Object.entries(session.options)) {
+      if (key === 'UCI_Variant' || key === 'UCI_Chess960' || key === 'SyzygyPath') continue;
+      if (String(engine.getSettings()[key]) !== String(value)) engine.setOption(key, value);
+    }
+    const def = variantDef(session.variant);
+    if (def?.uciVariant && engine.getSettings().UCI_Variant!==def.uciVariant) engine.setOption('UCI_Variant', def.uciVariant);
+    if(String(engine.getSettings().UCI_Chess960)!==String(!!def?.uci960)) engine.setOption('UCI_Chess960', !!def?.uci960);
+    const tablePath=['chess','chess960'].includes(session.variant) ? config.syzygyPath || '<empty>' : '<empty>';
+    if(engine.getSettings().SyzygyPath!==tablePath) engine.setOption('SyzygyPath',tablePath);
+  }
+  function saveSession(session, seedDefaults=false) {
+    session.config = { ...config }; session.options = engine.getSettings();
+    session.variant = currentVariant; session.enginePath = config.stockfishPath;
+    session.book = book; session.lichess = lichessBook.enabled;
+    if(seedDefaults) {
+      Object.assign(baseConfig,session.config);Object.assign(baseOptions,session.options);
+      Object.assign(basePreferences,session.preferences);baseBookPaths=book.bookPaths.slice();baseLichess=session.lichess;
+    }
+  }
 
   wss.on("connection", (ws, req) => {
     const remote = req.socket.remoteAddress;
@@ -657,22 +710,15 @@ async function main() {
     // backend/src/ws/rateLimit.js for the algorithm + tests.
     const rateLimiter = createRateLimiter({ max: 300, windowMs: 10_000 });
 
-    // Send current depth setting so newly-connected clients sync immediately
-    if (config.defaultDepth !== undefined) {
-      safeSend(ws, { type: "set_depth", value: config.defaultDepth });
-    }
-    // Send current search limits
-    if (config.searchMovetime || config.searchNodes) {
-      safeSend(ws, { type: "set_search_limits", movetime: config.searchMovetime, nodes: config.searchNodes });
-    }
+    // Send settings only after hello identifies the owning board session.
 
     // Per-client generation counter — prevents cross-client eval interference
     let evalGeneration = 0;
-    let evaluationQueue = Promise.resolve();
+
     // Latest game_info received — used for clock-aware movetime caps (§8.3).
     let lastGameInfo = null;
 
-    ws.on("message", async (data) => {
+    async function handleMessage(data) {
       const gate = rateLimiter.hit();
       if (!gate.ok) {
         if (gate.firstHit) {
@@ -706,6 +752,7 @@ async function main() {
         return;
       }
 
+      msg = gateResult.msg;
       // During shutdown, refuse anything that would enqueue engine work
       // — we've already bumped evalGeneration and are tearing down. Cheap
       // utility frames (hello, get_settings) still pass through so the
@@ -736,13 +783,16 @@ async function main() {
         }
 
         // If content script detected a variant, auto-switch
-        if (msg.variant && VARIANTS[msg.variant] && msg.variant !== currentVariant) {
+        if (msg.variant && variantDef(msg.variant) && msg.variant !== currentVariant) {
           console.log(`[server] content script detected variant: ${msg.variant}`);
           const result = await switchVariant(msg.variant);
+          if (!result.switched) {
+            safeSend(ws,{type:'error',code:'variant_unsupported',message:result.error}); return;
+          }
           if (result.switched) {
             evalGeneration++;
             // Notify all clients of the variant change
-            const variantMsg = { type: "variant_switched", variant: msg.variant, label: VARIANTS[msg.variant].label };
+            const variantMsg = { type: "variant_switched", variant: msg.variant, label: variantDef(msg.variant).label };
             safeSend(ws, variantMsg);
             broadcast(ws, variantMsg);
           }
@@ -781,39 +831,38 @@ async function main() {
         const evalVariant = currentVariant; // snapshot variant for this eval (prevents stale reads)
         console.log(`[server] ← FEN (gen ${gen}): ${fen} [variant: ${evalVariant}]`);
 
-        // Queue the evaluation so requests are processed one at a time.
-        // The pipeline body (book → cache → engine cascade) lives in
-        // src/server/evalPipeline.js; we chain it onto evaluationQueue
-        // so requests serialise on the shared engine.
-        evaluationQueue = evaluationQueue
-          .then(() =>
-            runFen({
-              ws,
-              fen,
-              depth,
-              searchOptions,
-              evalVariant,
-              gen,
-              variantGen,
-              getEvalGeneration: () => evalGeneration,
-              getGlobalVariantGen: () => globalVariantGen,
-            }),
-          )
-          .catch((err) => {
-            console.error("[server] evaluation error:", err.message);
-            safeSend(ws, { type: "error", code: "engine_error", message: err.message });
-          });
+        // Temporary training settings are restored before the scheduler releases ownership.
+        const savedPV = engine.getSettings().MultiPV;
+        if (msg.training && !searchOptions.movetime) searchOptions.movetime = 1500;
+        if (msg.multipv) engine.setOption('MultiPV', Math.max(Number(savedPV) || 1, msg.multipv));
+        searchOptions.training = !!msg.training;
+        if (ws.sessionId !== hub.focused && !searchOptions.movetime) searchOptions.movetime = 1500;
+        ws.analysisConfig = { options: engine.getSettings(), variant: evalVariant, enginePath: config.stockfishPath };
+        try {
+          await runFen({ ws, fen, depth, searchOptions, evalVariant, gen, variantGen,
+            getEvalGeneration: () => ws.isCancelled?.() ? -1 : evalGeneration,
+            getGlobalVariantGen: () => globalVariantGen });
+        } finally { engine.setOption('MultiPV', savedPV); }
+
       }
 
       // ── Engine settings ────────────────────────────────
       if (msg.type === "set_option" && msg.name && msg.value !== undefined) {
         console.log(`[server] ← set_option: ${msg.name} = ${msg.value}`);
+        const ranges = {depth:[0,50], MultiPV:[1,8], Threads:[1,128], Hash:[1,65536], 'Skill Level':[0,20], UCI_Elo:[100,4000], SyzygyProbeDepth:[1,100], SyzygyProbeLimit:[0,7]};
+        const range = ranges[msg.name];
+        if (range && (!Number.isInteger(Number(msg.value)) || Number(msg.value)<range[0] || Number(msg.value)>range[1])) {
+          safeSend(ws,{type:'error',code:'invalid_option',message:`${msg.name} must be between ${range[0]} and ${range[1]}`}); return;
+        }
         if (msg.name === "depth") {
           const d = Number(msg.value);
           // Depth 0 = infinite analysis, otherwise clamp 1–50
           config.defaultDepth = d === 0 ? 0 : Math.min(50, Math.max(1, d || 15));
         } else {
           engine.setOption(msg.name, msg.value);
+          if (String(engine.getSettings()[msg.name]) !== String(msg.value)) {
+            safeSend(ws, { type: 'error', code: 'unsupported_option', message: `Option not applied: ${msg.name}` }); return;
+          }
         }
         // Clear eval cache when settings that affect results change
         if (["depth", "MultiPV", "Skill Level", "UCI_Elo", "UCI_LimitStrength"].includes(msg.name)) {
@@ -846,12 +895,16 @@ async function main() {
           config.searchNodes = (nd > 0 && isFinite(nd)) ? nd : null;
           console.log(`[server] search limits: movetime=${config.searchMovetime} nodes=${config.searchNodes}`);
         }
+        if(typeof msg.payload.type === 'string' && msg.payload.type.startsWith('set_')) {
+          ws.sessionState.preferences ||= {};
+          ws.sessionState.preferences[msg.payload.type] = msg.payload;
+        }
         broadcast(ws, msg.payload);
       }
 
       // ── Lichess opening explorer toggle ────────────────
       if (msg.type === "set_lichess_book") {
-        lichessBook.setEnabled(!!msg.value);
+        lichessBook.setEnabled(!!(msg.value ?? msg.enabled));
         console.log(`[server] Lichess opening book: ${lichessBook.enabled ? "enabled" : "disabled"}`);
       }
 
@@ -866,9 +919,12 @@ async function main() {
         safeSend(ws, {
           type: "settings",
           settings: engine.getSettings(),
+          liveEngineStream: !!config.liveEngineStream,
+          preferences: ws.sessionState?.preferences || {},
+          searchMovetime: config.searchMovetime, searchNodes: config.searchNodes,
           defaultDepth: config.defaultDepth,
           activeEngine: path.basename(config.stockfishPath),
-          activeBook: book.enabled ? path.basename(book.bookPath) : null,
+          activeBook: book.enabled ? book.bookPaths.map(p => path.basename(p)) : [],
           activeSyzygy: config.syzygyPath || null,
           lichessBook: lichessBook.enabled,
           engines: getCachedFiles().engines.map((e) => e.name),
@@ -902,7 +958,7 @@ async function main() {
         const result = await switchVariant(msg.variant);
         if (result.switched) {
           evalGeneration++;
-          const variantMsg = { type: "variant_switched", variant: currentVariant, label: VARIANTS[currentVariant].label, activeEngine: path.basename(config.stockfishPath) };
+          const variantMsg = { type: "variant_switched", variant: currentVariant, label: variantDef(currentVariant).label, activeEngine: path.basename(config.stockfishPath) };
           safeSend(ws, variantMsg);
           broadcast(ws, variantMsg);
         } else {
@@ -922,7 +978,7 @@ async function main() {
           books,
           syzygy,
           activeEngine: path.basename(config.stockfishPath),
-          activeBook: book.enabled ? path.basename(book.bookPath) : null,
+          activeBook: book.enabled ? book.bookPaths.map(p => path.basename(p)) : [],
           activeSyzygy: config.syzygyPath ? path.basename(config.syzygyPath) : null,
         });
       }
@@ -940,11 +996,11 @@ async function main() {
           return;
         }
         // Guard: if the active variant requires a specific engine type, block incompatible switches
-        const requiredType = VARIANTS[currentVariant]?.engine || "stockfish";
+        const requiredType = variantDef(currentVariant)?.engine || "stockfish";
         const requestedType = found.name.toLowerCase().includes("fairy") ? "fairy" : "stockfish";
         if (requiredType !== requestedType) {
           console.log(`[server] ignoring switch_engine to ${found.name} — variant ${currentVariant} requires ${requiredType} engine`);
-          safeSend(ws, { type: "engine_switched", name: path.basename(config.stockfishPath) });
+          safeSend(ws, { type: "error", code: "incompatible_engine", message: "Engine is incompatible with the selected variant" });
           return;
         }
         // Skip if the requested engine is already active (avoid unnecessary restart)
@@ -960,7 +1016,7 @@ async function main() {
         try {
           // Preserve user settings across engine switch
           const savedSettings = engine.getSettings();
-          engine.stop();
+          await engine.stop();
           config.stockfishPath = found.path;
           engine = new StockfishBridge();
           await engine.start();
@@ -1001,13 +1057,14 @@ async function main() {
       // ── Switch opening book (supports multiple books) ──
       if (msg.type === "switch_book" && msg.name !== undefined) {
         try {
-          await book.close();
+          const previousBook = book;
           // Accept single name (string) or array of names
           const names = Array.isArray(msg.name) ? msg.name : [msg.name];
           const validNames = names.filter(n => n && n !== "");
           if (validNames.length === 0) {
             // Disable book
             book = new OpeningBook([]);
+            await previousBook.close();
             config.openingBookPath = "";
             console.log("[server] opening book disabled");
             safeSend(ws, { type: "book_switched", name: null });
@@ -1022,13 +1079,16 @@ async function main() {
                 resolvedNames.push(found.name);
               }
             }
-            if (paths.length === 0) {
+            if (paths.length !== validNames.length) {
               safeSend(ws, { type: "error", code: "resource_missing", message: `No valid books found` });
               return;
             }
+            const replacement = new OpeningBook(paths);
+            await replacement.init();
+            if (replacement.books.length !== paths.length) { await replacement.close(); throw new Error('A selected book could not be opened'); }
             config.openingBookPath = paths[0];
-            book = new OpeningBook(paths);
-            await book.init();
+            book = replacement;
+            await previousBook.close();
             console.log(`[server] switched book to: ${resolvedNames.join(", ")}`);
             safeSend(ws, { type: "book_switched", name: resolvedNames.length === 1 ? resolvedNames[0] : resolvedNames });
           }
@@ -1038,6 +1098,9 @@ async function main() {
         }
       }
 
+      if (['set_live_engine_stream','set_lichess_book','broadcast'].includes(msg.type)) {
+        safeSend(ws, { type: 'setting_applied', command: msg.type, payload: msg.payload, value: msg.value });
+      }
       // ── Switch Syzygy tablebases ───────────────────────
       if (msg.type === "switch_syzygy" && msg.name !== undefined) {
         if (msg.name === "" || msg.name === null) {
@@ -1057,11 +1120,103 @@ async function main() {
           safeSend(ws, { type: "syzygy_switched", name: found.name });
         }
       }
+    }
+
+    ws.on('message', async data => {
+      let raw; try { raw = JSON.parse(data); } catch { return; }
+      const parsed = validateInbound(raw);
+      if (!parsed.ok) { safeSend(ws,{type:'error',code:parsed.code,message:parsed.message,requestId:raw?.requestId}); return; }
+      const msg = parsed.msg;
+      if (msg.type === 'hello') {
+        if (msg.protocolVersion !== PROTOCOL_VERSION) {
+          safeSend(ws,{type:'error',code:'protocol_mismatch',message:'Update the backend and reload the extension.'}); return;
+        }
+        hub.register(ws,msg);
+        if(ws.role==='extension') {
+          const state=hub.state(ws);
+          rawSend(ws,{type:'set_depth',value:state.config.defaultDepth});
+          rawSend(ws,{type:'set_search_limits',movetime:state.config.searchMovetime,nodes:state.config.searchNodes});
+          for(const pref of Object.values(state.preferences || {})) rawSend(ws,pref);
+        }
+        rawSend(ws,{type:'training_stats_update',sessionId:ws.sessionId,...trainingStore.stats(ws.sessionId)});
+        if(ws.role==='panel') rawSend(ws,{type:'training_history',attempts:trainingStore.history()});
+        return;
+      }
+      if (!ws.role) { safeSend(ws,{type:'error',code:'protocol_mismatch',message:'Reload the updated extension and dashboard.'}); return; }
+      if (msg.type === 'focus_session') { if(ws.role==='extension' && hub.focused !== ws.sessionId) { scheduler.cancelAnalysis(hub.focused); hub.focus(ws.sessionId); } return; }
+      if (msg.type === 'subscribe_session') { hub.subscribe(ws,msg.sessionId,msg.followFocus !== false); return; }
+      const session = (ws.role==='panel' && msg.sessionId ? hub.sessions.get(msg.sessionId) : hub.state(ws)) || (ws.role==='panel' ? panelDefaults : null);
+      if (!session) return;
+      if (msg.type === 'game_info') { lastGameInfo=msg; session.gameInfo=msg; hub.relay(ws,{...msg,sessionId:session.id}); return; }
+      if (msg.type === 'broadcast' && msg.payload.type === 'training_stats_update') return;
+      if (msg.type === 'get_training_history') { rawSend(ws,{type:'training_history',attempts:trainingStore.history()}); return; }
+      if (ws.role==='panel' && ['delete_training_attempt','clear_training_history'].includes(msg.type)) {
+        if(msg.type==='clear_training_history') trainingStore.clear(); else trainingStore.delete(msg.id);
+        await publishTraining(); return;
+      }
+      if(msg.type==='broadcast' && msg.payload.type==='reset_training_stats') {
+        trainingStore.reset(session.id); await publishTraining();
+      }
+      if(msg.type==='training_attempt' && ws.role==='extension') {
+        if(!validateFen(msg.attempt.before).valid || !validateFen(msg.attempt.after).valid) return;
+        if(!trainingStore.add(session.id,msg.attempt)) return;
+        await publishTraining();
+        const snapshot={...session,config:{...session.config},options:{...(ws.analysisConfig?.options || session.options)},
+          variant:msg.attempt.variant,enginePath:ws.analysisConfig?.enginePath || session.enginePath};
+        scheduler.submit({key:`review:${msg.attempt.id}`,sessionId:session.id,priority:3,
+          run:async cancelled=>{
+            try { await activateSession(snapshot); trainingStore.update(msg.attempt.id,await trainingFeedback(engine,msg.attempt,cancelled)); }
+            catch(error) {trainingStore.update(msg.attempt.id,{status:'unavailable',reason:error.message});}
+            await publishTraining();
+          }}).then(async outcome=>{
+            if(outcome?.cancelled) {trainingStore.update(msg.attempt.id,{status:'unavailable',reason:'Review cancelled before analysis'});await publishTraining();}
+          }).catch(error=>console.warn('[training]',error.message));
+        return;
+      }
+      if (msg.type === 'cancel_search') { scheduler.cancelAnalysis(session.id); return; }
+      if (msg.type === 'fen') {
+        session.training = !!msg.training;
+        session.preferences ||= {};
+        session.preferences.set_training_mode={type:'set_training_mode',value:session.training};
+        session.revealedFen = null;
+      }
+      if (msg.type === 'broadcast' && msg.payload.type === 'set_training_mode') {
+        session.training = !!msg.payload.value; session.revealedFen = null;
+      }
+      if (msg.type === 'broadcast' && msg.payload.type === 'training_reveal') {
+        if(msg.payload.fen === session.lastResult?.fen) {
+          session.revealedFen = msg.payload.fen;
+          hub.relay(ws,session.lastResult);
+        }
+        return;
+      }
+      const isFen = msg.type === 'fen';
+      const sessionId = session.id;
+      try {
+        const outcome = await scheduler.submit({ key: isFen ? `fen:${sessionId}` : Symbol('control'), sessionId,
+          priority: isFen ? (sessionId===hub.focused ? 1 : 2) : (['get_settings','list_files','get_server_logs'].includes(msg.type) ? 1 : 0), replace:isFen,
+          run: async cancelled => {
+            if(ws.readyState!==ws.OPEN) return;
+            ws.context={requestId:msg.requestId,sessionId}; ws.sessionState=session; ws.isCancelled=cancelled;
+            await activateSession(session);
+            if(cancelled()) return;
+            try { await handleMessage(JSON.stringify(msg)); }
+            finally {
+              saveSession(session,ws.role==='panel' && ['set_option','broadcast','set_live_engine_stream','set_lichess_book','switch_book','switch_syzygy'].includes(msg.type));
+              if(cancelled() && isFen) safeSend(ws,{type:'analysis_cancelled',requestId:msg.requestId});
+            }
+          } });
+        if (outcome?.cancelled && isFen) rawSend(ws,{type:'analysis_cancelled',sessionId,requestId:msg.requestId});
+      } catch(error) {
+        safeSend(ws,{type:'error',code:'engine_error',message:error.message,requestId:msg.requestId});
+      }
     });
 
     ws.on("close", () => {
       console.log(`[server] client disconnected (${remote})`);
       rateLimiter.stop();
+      if(ws.role==='extension') scheduler.cancel(ws.sessionId);
+      hub.remove(ws);
       evalGeneration++; // discard any in-flight evals for this client
     });
 
@@ -1075,6 +1230,8 @@ async function main() {
   async function shutdown() {
     if (shuttingDown) return; // ignore repeated SIGINTs
     shuttingDown = true;
+    await scheduler.close();
+    await trainingStore.save();
     console.log("\n[server] shutting down…");
     clearInterval(heartbeat);
     stopFileCachePoller();
@@ -1111,7 +1268,7 @@ async function main() {
     } catch (err) {
       console.error("[server] engine stop failed:", err.message);
     }
-    book.close();
+    await Promise.all([...new Set([book,panelDefaults.book,...[...hub.sessions.values()].map(s=>s.book)])].map(b=>b.close()));
     wss.close(() => {
       clearTimeout(forceExit);
       process.exit(0);

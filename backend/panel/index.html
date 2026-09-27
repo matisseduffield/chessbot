@@ -1930,7 +1930,7 @@
         <div class="sub-label" style="margin-top:12px">PGN</div>
         <textarea id="pgn-textarea" class="panel-select" rows="3" style="width:100%;resize:vertical;font-family:monospace;font-size:11px;padding:6px;background:var(--bg-2);color:var(--fg);border:1px solid var(--border);border-radius:6px" placeholder="Paste PGN here to import, or click Export to download…"></textarea>
         <div style="display:flex;gap:6px;margin-top:6px">
-          <button id="btn-pgn-import" class="header-btn" style="flex:1">Import</button>
+          <button id="btn-pgn-import" class="header-btn" style="flex:1">Preview PGN</button>
           <button id="btn-pgn-export" class="header-btn" style="flex:1">Export</button>
         </div>
         <div id="pgn-status" class="sub-label" style="margin-top:4px;min-height:16px">—</div>
@@ -2028,6 +2028,7 @@ import { renderEvalBar } from "./src/evalBar.js";
 import { renderPlayerBars } from "./src/playerBars.js";
 import { renderPVs, PV_COLORS } from "./src/pvCards.js";
 import { renderBoard, BOARD_THEMES, PIECE_SETS } from "./src/board.js";
+import { createSessionUI } from "./src/sessionUI.js";
 import { buildPgnFromHistory } from "./src/pgn.js";
 import {
   showProtocolMismatchBanner,
@@ -2426,12 +2427,15 @@ function updateVariantHint(variant) {
   }
 }
 
+const sessionUI = createSessionUI({state,render:renderAll,toast:showPanelToast,layout:requestLayout});
+
 // ── WebSocket ────────────────────────────────────────────
 function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   state.ws = new WebSocket(`${proto}//${location.host}`);
 
   state.ws.onopen = () => {
+    sessionUI.connect(state.ws);
     state.wsBackoff = 1000; // reset backoff on successful connection
     document.getElementById("status-dot").className = "status-dot connected";
     document.getElementById("status-text").textContent = "Connected";
@@ -2442,6 +2446,7 @@ function connect() {
   };
 
   state.ws.onclose = () => {
+    sessionUI.disconnect();
     document.getElementById("status-dot").className = "status-dot disconnected";
     document.getElementById("status-text").textContent = "Disconnected";
     // Watchdog toast (improvement-plan §10): if we stay offline for
@@ -2467,6 +2472,7 @@ function connect() {
     // speaks a different protocol, render a sticky banner so the user
     // notices instead of silently seeing half-working behaviour. The
     // banner clears on a clean reconnect (mismatch resolved).
+    if(sessionUI.consume(msg)) return;
     if (msg.type === "server_hello") {
       if (isProtocolMismatch(PROTOCOL_VERSION, msg.protocolVersion)) {
         console.warn(
@@ -2533,7 +2539,7 @@ function connect() {
       const progEl = document.getElementById("eval-progress");
       if (progEl && !msg.streaming) progEl.style.display = "none";
       renderAll();
-      if (state.voiceEnabled) speak(msg);
+      if (state.voiceEnabled && !msg.trainingHidden) speak(msg);
     }
     if (msg.type === "eval_progress") {
       const progEl = document.getElementById("eval-progress");
@@ -2557,6 +2563,8 @@ function connect() {
     }
     if (msg.type === "settings") {
       applySettings(msg);
+      sessionUI.applySettings(msg);
+      saveSettings();
     }
     if (msg.type === "variant_switched") {
       vpSetValue(msg.variant, true);
@@ -3311,7 +3319,8 @@ function updateResourcesForVariant() {
 }
 
 function applySettings(msg) {
-  const saved = getSavedSettings();
+  const saved = !state.settingsRestored ? getSavedSettings() : null;
+  state.settingsRestored = true;
 
   // Surface every variant the engine advertises (curated + all fairy built-ins).
   mergeServerVariants(msg.variants);
@@ -3344,7 +3353,7 @@ function applySettings(msg) {
 
   if (saved) {
     // Restore variant
-    if (saved.variant) {
+    if (saved.variant && (!msg.sessionId || msg.sessionId === 'defaults')) {
       vpSetValue(saved.variant, true);
       updateVariantHint(saved.variant);
       // Re-filter engine dropdown for the restored variant
@@ -3559,9 +3568,9 @@ function applySettings(msg) {
       vpSetValue(msg.variant, true);
       updateVariantHint(msg.variant);
     }
-    if (msg.defaultDepth) {
+    if (msg.defaultDepth !== undefined) {
       document.getElementById("depth-slider").value = msg.defaultDepth;
-      document.getElementById("depth-value").textContent = msg.defaultDepth;
+      document.getElementById("depth-value").textContent = msg.defaultDepth === 0 ? "∞" : msg.defaultDepth;
     }
     const s = msg.settings || {};
     if (s.MultiPV) {

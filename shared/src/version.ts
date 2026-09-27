@@ -5,7 +5,7 @@
  * Bump this whenever the shape of any message in `./messages` changes in a
  * way that is not backwards compatible.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /**
  * Returns true if `serverVersion` is a number that disagrees with the

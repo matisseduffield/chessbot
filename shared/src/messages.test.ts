@@ -5,6 +5,7 @@ import {
   ServerMessageSchema,
   parseClientMessage,
   parseServerMessage,
+  UciMoveSchema,
 } from './index';
 
 describe('shared protocol version', () => {
@@ -17,10 +18,11 @@ describe('shared protocol version', () => {
 describe('client message schema', () => {
   it('accepts a valid search request', () => {
     const result = parseClientMessage({
-      type: 'search',
-      id: 'abc',
+      type: 'fen',
+      requestId: 'abc',
       fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
-      limits: { depth: 12, movetimeMs: 1500 },
+      depth: 12,
+      movetime: 1500,
     });
     expect(result.success).toBe(true);
   });
@@ -30,13 +32,11 @@ describe('client message schema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects malformed UCI moves', () => {
-    const result = ClientMessageSchema.safeParse({
-      type: 'position',
-      fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
-      moves: ['e2e4', 'not-a-move'],
-    });
-    expect(result.success).toBe(false);
+  it('preserves variant notation while rejecting protocol injection', () => {
+    for (const move of ['P@e4', 'e2e4,a1a2', 'a10b10', 'e7e8q'])
+      expect(UciMoveSchema.safeParse(move).success).toBe(true);
+    expect(UciMoveSchema.safeParse('e2e4\nquit').success).toBe(false);
+    expect(ClientMessageSchema.safeParse({ type: 'broadcast', payload: {} }).success).toBe(false);
   });
 });
 

@@ -10,6 +10,11 @@ The first tagged release will close out the **Unreleased** section below.
 
 ### Added
 
+- Per-board analysis sessions and dashboard pinning, serialized engine scheduling, cancellation and bounded background searches.
+- Existing training mode now hides streaming/voice spoilers, validates single player moves, preserves strict/top-three grading, and supports local mistake review with estimated post-move feedback and assisted statistics.
+- Protocol v2 uses the actual client contract. Control acknowledgements, opening-book switching, depth zero and achieved-depth cache identity are corrected. Reload the backend and extension together.
+- Installed-extension CI fixture coverage for Chess.com and Lichess, plus session, persistence, cache and training regressions. See [implementation details](docs/training-reliability-update.md).
+
 - Read-only Chess.com computer-board bridge preserving full FEN metadata, player color and orientation, with validation and stale-snapshot rejection.
 
 - Current capability map documenting the existing training mode, runtime architecture and confirmed integration gaps; original dashboard and popup retained.

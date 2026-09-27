@@ -17,14 +17,19 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { WebSocket } from 'ws';
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { PROTOCOL_VERSION } from '@chessbot/shared';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
-const fakeStockfish = resolve(repoRoot, 'tests/fixtures/fake-stockfish.mjs');
+const fakeStockfish =
+  process.env.TEST_STOCKFISH_PATH || resolve(repoRoot, 'tests/fixtures/fake-stockfish.mjs');
 
 // `it.skipIf` lets us bail out cleanly on Windows runners without
 // reporting a false failure.
-const isWindows = process.platform === 'win32';
+const isWindows = process.platform === 'win32' && !process.env.TEST_STOCKFISH_PATH;
 const itLinux = isWindows ? it.skip : it;
 
 /**
@@ -60,7 +65,7 @@ function waitForListening(child) {
  * matching one frame) and the next `ws.on` where fast server replies
  * could land in no listener and be dropped.
  */
-function openClient(port) {
+function openClient(port, client = 'extension', sessionId = randomUUID()) {
   return new Promise((resolveP, rejectP) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);
     /** @type {object[]} */
@@ -69,8 +74,19 @@ function openClient(port) {
     const waiters = [];
 
     ws.on('open', () => {
+      ws.send(
+        JSON.stringify({
+          type: 'hello',
+          client,
+          sessionId,
+          protocolVersion: PROTOCOL_VERSION,
+          site: 'fixture',
+        }),
+      );
       resolveP({
         ws,
+        sessionId,
+        buffer,
         next(pred = () => true, timeoutMs = 2000) {
           // Drain anything already buffered.
           for (let i = 0; i < buffer.length; i++) {
@@ -139,7 +155,7 @@ describe.skipIf(isWindows)('server integration', () => {
         // explicit console.log "[server] listening" line, which is
         // not gated by LOG_LEVEL.
         NODE_ENV: 'test',
-        CHESSBOT_DATA_DIR: '/tmp/.chessbot-integration-test',
+        CHESSBOT_DATA_DIR: mkdtempSync(resolve(tmpdir(), 'chessbot-integration-')),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -174,14 +190,14 @@ describe.skipIf(isWindows)('server integration', () => {
     const c = await openClient(port);
     try {
       const hello = await c.next((m) => m.type === 'server_hello');
-      expect(hello.protocolVersion).toBe(1);
+      expect(hello.protocolVersion).toBe(PROTOCOL_VERSION);
       expect(typeof hello.serverVersion).toBe('string');
     } finally {
       c.close();
     }
   });
 
-  itLinux('rejects valid JSON missing the type field with code=bad_frame', async () => {
+  itLinux('rejects valid JSON missing the type field with code=invalid_frame', async () => {
     const c = await openClient(port);
     try {
       await c.next((m) => m.type === 'server_hello');
@@ -189,7 +205,7 @@ describe.skipIf(isWindows)('server integration', () => {
       // emits bad_frame for JSON that isn't an object-with-string-type.
       c.ws.send(JSON.stringify({ foo: 'bar' }));
       const err = await c.next((m) => m.type === 'error');
-      expect(err.code).toBe('bad_frame');
+      expect(err.code).toBe('invalid_frame');
     } finally {
       c.close();
     }
@@ -236,4 +252,121 @@ describe.skipIf(isWindows)('server integration', () => {
       c.close();
     }
   });
+
+  itLinux(
+    'isolates two boards, correlates replies, and hides training answers in the panel',
+    async () => {
+      const a = await openClient(port),
+        b = await openClient(port),
+        panel = await openClient(port, 'panel');
+      const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+      try {
+        panel.ws.send(
+          JSON.stringify({ type: 'subscribe_session', sessionId: a.sessionId, followFocus: false }),
+        );
+        await panel.next((m) => m.type === 'sessions' && m.selectedSessionId === a.sessionId);
+        a.ws.send(
+          JSON.stringify({
+            type: 'fen',
+            fen,
+            depth: 3,
+            training: true,
+            multipv: 3,
+            requestId: 'train-a',
+          }),
+        );
+        a.ws.send(JSON.stringify({ type: 'game_info', white: { clock: '2:00' } }));
+        const move = await a.next((m) => m.type === 'bestmove' && !m.streaming);
+        expect(move.requestId).toBe('train-a');
+        expect(move.sessionId).toBe(a.sessionId);
+        const hidden = await panel.next((m) => m.type === 'bestmove' && !m.streaming);
+        expect(hidden.trainingHidden).toBe(true);
+        expect(hidden.bestmove).toBeNull();
+        expect(hidden.lines[0].pv).toBeUndefined();
+        b.ws.send(JSON.stringify({ type: 'fen', fen, depth: 3, requestId: 'normal-b' }));
+        await b.next((m) => m.type === 'bestmove' && m.requestId === 'normal-b');
+        expect(a.buffer.some((m) => m.requestId === 'normal-b')).toBe(false);
+        expect(panel.buffer.some((m) => m.requestId === 'normal-b')).toBe(false);
+        a.ws.send(JSON.stringify({ type: 'get_settings', requestId: 'check-pv' }));
+        const settings = await a.next((m) => m.type === 'settings' && m.requestId === 'check-pv');
+        expect(Number(settings.settings.MultiPV)).toBe(1);
+      } finally {
+        a.close();
+        b.close();
+        panel.close();
+      }
+    },
+  );
+
+  itLinux(
+    'acknowledges real controls and rejects invalid settings without applying them',
+    async () => {
+      const a = await openClient(port);
+      try {
+        for (const frame of [
+          { type: 'set_live_engine_stream', value: true },
+          { type: 'set_lichess_book', value: false },
+        ]) {
+          a.ws.send(JSON.stringify(frame));
+          await a.next((m) => m.type === 'setting_applied' && m.command === frame.type);
+        }
+        a.ws.send(JSON.stringify({ type: 'set_option', name: 'depth', value: 0 }));
+        await a.next((m) => m.type === 'option_set');
+        a.ws.send(JSON.stringify({ type: 'set_option', name: 'Threads', value: -1 }));
+        expect((await a.next((m) => m.type === 'error')).code).toBe('invalid_option');
+        a.ws.send(JSON.stringify({ type: 'get_settings' }));
+        const settings = await a.next((m) => m.type === 'settings');
+        expect(settings.defaultDepth).toBe(0);
+        expect(settings.liveEngineStream).toBe(true);
+        expect(Number(settings.settings.Threads)).toBeGreaterThan(0);
+      } finally {
+        a.close();
+      }
+    },
+  );
+
+  itLinux(
+    'persists a training attempt, supplies post-move feedback and clears history independently',
+    async () => {
+      const a = await openClient(port),
+        panel = await openClient(port, 'panel');
+      try {
+        const id = randomUUID();
+        a.ws.send(
+          JSON.stringify({
+            type: 'training_attempt',
+            attempt: {
+              id,
+              before: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+              after: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+              variant: 'chess',
+              site: 'fixture',
+              player: 'w',
+              recommendation: 'e2e4',
+              playedMove: 'e2e4',
+              correct: true,
+              assisted: false,
+              timestamp: Date.now(),
+            },
+          }),
+        );
+        const history = await panel.next(
+          (m) =>
+            m.type === 'training_history' &&
+            m.attempts.some((a) => a.id === id && a.feedback.status === 'ready'),
+          8000,
+        );
+        expect(history.attempts.find((a) => a.id === id).feedback.lossCp).toBeGreaterThanOrEqual(0);
+        panel.ws.send(JSON.stringify({ type: 'clear_training_history' }));
+        await panel.next((m) => m.type === 'training_history' && !m.attempts.length);
+        a.ws.send(JSON.stringify({ type: 'get_training_history' }));
+        expect((await a.next((m) => m.type === 'training_history')).attempts).toEqual([]);
+        const stats = await a.next((m) => m.type === 'training_stats_update' && m.total === 1);
+        expect(stats.unassisted).toBe(1);
+      } finally {
+        a.close();
+        panel.close();
+      }
+    },
+  );
 });

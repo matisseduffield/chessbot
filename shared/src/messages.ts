@@ -1,146 +1,128 @@
 import { z } from 'zod';
 
-/**
- * Shared WebSocket message schemas.
- *
- * These are the single source of truth for the wire protocol between:
- *   - backend server (Node)
- *   - content script (browser extension)
- *   - dashboard panel (localhost web UI)
- *
- * Phase 1 scope: define the schemas without wiring them into the existing
- * runtime code. A follow-up task will replace the ad-hoc JSON shapes in
- * `backend/server.js` and `extension/src/content/content.js` with these
- * validators. See plans/improvement-plan.md §2.2 and §7.4.
- */
-
-export const FenSchema = z.string().min(10);
-
-export const UciMoveSchema = z.string().regex(/^[a-h][1-8][a-h][1-8][qrbn]?$/, 'invalid UCI move');
-
-export const ChessSiteSchema = z.enum(['chesscom', 'lichess', 'unknown']);
-export type ChessSite = z.infer<typeof ChessSiteSchema>;
-
-export const ColorSchema = z.enum(['w', 'b']);
-export type Color = z.infer<typeof ColorSchema>;
-
-export const SearchLimitsSchema = z.object({
-  depth: z.number().int().min(1).max(40).optional(),
-  movetimeMs: z.number().int().min(50).max(600_000).optional(),
-  nodes: z.number().int().min(1).optional(),
-  multipv: z.number().int().min(1).max(5).default(1),
-});
-export type SearchLimits = z.infer<typeof SearchLimitsSchema>;
-
-export const PvLineSchema = z.object({
-  multipv: z.number().int().min(1),
-  depth: z.number().int().min(0),
-  seldepth: z.number().int().min(0).optional(),
-  scoreCp: z.number().int().optional(),
-  scoreMate: z.number().int().optional(),
-  nodes: z.number().int().optional(),
-  nps: z.number().int().optional(),
-  timeMs: z.number().int().optional(),
-  moves: z.array(UciMoveSchema),
-});
-export type PvLine = z.infer<typeof PvLineSchema>;
-
-export const GameInfoSchema = z.object({
-  site: ChessSiteSchema,
-  url: z.string().url().optional(),
-  fen: FenSchema,
-  playerColor: ColorSchema.nullable().optional(),
-  flipped: z.boolean().optional(),
-  whiteName: z.string().optional(),
-  blackName: z.string().optional(),
-  whiteRating: z.number().int().optional(),
-  blackRating: z.number().int().optional(),
-  timeControl: z.string().optional(),
-});
-export type GameInfo = z.infer<typeof GameInfoSchema>;
-
-export const HelloClientSchema = z.object({
-  type: z.literal('hello'),
-  protocolVersion: z.number().int(),
-  client: z.enum(['extension', 'panel']),
-  clientVersion: z.string(),
-});
-
-export const GameInfoMsgSchema = z.object({
-  type: z.literal('game_info'),
-  data: GameInfoSchema,
-});
-
-export const PositionMsgSchema = z.object({
-  type: z.literal('position'),
-  fen: FenSchema,
-  moves: z.array(UciMoveSchema).default([]),
-});
-
-export const SearchRequestSchema = z.object({
-  type: z.literal('search'),
-  id: z.string(),
-  fen: FenSchema,
-  limits: SearchLimitsSchema,
-});
-
-export const CancelSearchSchema = z.object({
-  type: z.literal('cancel_search'),
-  id: z.string(),
-});
-
+// Actual production wire contract. Variant FEN and moves must remain compatible
+// with drops, compound moves, extra counters and non-8x8 boards.
+export const FenSchema = z
+  .string()
+  .min(10)
+  .max(2048)
+  .regex(/^[^\r\n]+$/);
+export const UciMoveSchema = z
+  .string()
+  .min(3)
+  .max(40)
+  .regex(/^[a-zA-Z0-9@,+-]+$/);
+const name = z
+  .string()
+  .max(200)
+  .regex(/^[^\r\n]*$/);
+const id = z.union([z.string().max(160), z.number()]);
+const route = { sessionId: z.string().max(160).optional(), requestId: id.optional() };
+const limits = {
+  depth: z.number().int().min(0).max(50).optional(),
+  movetime: z.number().int().min(1).max(600000).optional(),
+  nodes: z.number().int().positive().optional(),
+  multipv: z.number().int().min(1).max(8).optional(),
+};
 export const ClientMessageSchema = z.discriminatedUnion('type', [
-  HelloClientSchema,
-  GameInfoMsgSchema,
-  PositionMsgSchema,
-  SearchRequestSchema,
-  CancelSearchSchema,
+  z.object({
+    type: z.literal('fen'),
+    ...route,
+    ...limits,
+    fen: FenSchema,
+    variant: name.optional(),
+    flipped: z.boolean().optional(),
+    training: z.boolean().optional(),
+    remainingClockMs: z.number().nonnegative().optional(),
+  }),
+  z.object({
+    type: z.literal('set_option'),
+    ...route,
+    name,
+    value: z.union([name, z.number().finite(), z.boolean()]),
+  }),
+  z.object({
+    type: z.literal('broadcast'),
+    ...route,
+    payload: z.object({ type: name.min(1) }).passthrough(),
+  }),
+  z.object({ type: z.literal('game_info'), ...route }).passthrough(),
+  z.object({
+    type: z.literal('set_lichess_book'),
+    ...route,
+    value: z.boolean().optional(),
+    enabled: z.boolean().optional(),
+  }),
+  z.object({ type: z.literal('set_live_engine_stream'), ...route, value: z.boolean() }),
+  z.object({
+    type: z.literal('switch_variant'),
+    ...route,
+    variant: name,
+    isChess960: z.boolean().optional(),
+  }),
+  z.object({ type: z.literal('switch_engine'), ...route, name }),
+  z.object({
+    type: z.literal('switch_book'),
+    ...route,
+    name: z.union([name, z.array(name).max(32), z.null()]),
+  }),
+  z.object({ type: z.literal('switch_syzygy'), ...route, name: name.nullable() }),
+  z.object({
+    type: z.literal('list_files'),
+    ...route,
+    kind: z.enum(['engine', 'book', 'syzygy']).optional(),
+  }),
+  z.object({ type: z.literal('get_settings'), ...route }),
+  z.object({ type: z.literal('get_server_logs'), ...route }),
+  z.object({ type: z.literal('clear_hash'), ...route }),
+  z.object({
+    type: z.literal('hello'),
+    ...route,
+    protocolVersion: z.number().int(),
+    client: z.enum(['extension', 'panel']),
+    site: name.optional(),
+  }),
+  z.object({ type: z.literal('focus_session'), ...route }),
+  z.object({ type: z.literal('subscribe_session'), ...route, followFocus: z.boolean().optional() }),
+  z.object({ type: z.literal('cancel_search'), ...route }),
+  z.object({ type: z.literal('get_training_history'), ...route }),
+  z.object({ type: z.literal('clear_training_history'), ...route }),
+  z.object({ type: z.literal('delete_training_attempt'), ...route, id: z.string().max(160) }),
+  z.object({
+    type: z.literal('training_attempt'),
+    ...route,
+    attempt: z.object({
+      id: z.string().max(160),
+      before: FenSchema,
+      after: FenSchema,
+      variant: name,
+      site: name,
+      player: z.enum(['w', 'b']),
+      recommendation: UciMoveSchema,
+      playedMove: UciMoveSchema.nullable(),
+      correct: z.boolean().nullable(),
+      assisted: z.boolean(),
+      timestamp: z.number(),
+    }),
+  }),
 ]);
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
-
-export const HelloServerSchema = z.object({
-  type: z.literal('hello'),
-  protocolVersion: z.number().int(),
-  serverVersion: z.string(),
-  engine: z.object({
-    name: z.string(),
-    version: z.string().optional(),
-  }),
-});
-
-export const SearchInfoSchema = z.object({
-  type: z.literal('search_info'),
-  id: z.string(),
-  lines: z.array(PvLineSchema),
-});
-
-export const SearchBestMoveSchema = z.object({
-  type: z.literal('bestmove'),
-  id: z.string(),
-  bestmove: UciMoveSchema,
-  ponder: UciMoveSchema.optional(),
-  line: PvLineSchema.optional(),
-});
-
-export const ErrorFrameSchema = z.object({
-  type: z.literal('error'),
-  code: z.string(),
-  message: z.string(),
-  id: z.string().optional(),
-});
-
-export const ServerMessageSchema = z.discriminatedUnion('type', [
-  HelloServerSchema,
-  SearchInfoSchema,
-  SearchBestMoveSchema,
-  ErrorFrameSchema,
-]);
+export const ServerMessageSchema = z.object({ type: z.string(), ...route }).passthrough();
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;
-
-export function parseClientMessage(raw: unknown) {
-  return ClientMessageSchema.safeParse(raw);
-}
-
-export function parseServerMessage(raw: unknown) {
-  return ServerMessageSchema.safeParse(raw);
+export const parseClientMessage = (raw: unknown) => ClientMessageSchema.safeParse(raw);
+export const parseServerMessage = (raw: unknown) => ServerMessageSchema.safeParse(raw);
+export function validateInbound(
+  raw: unknown,
+): { ok: true; msg: ClientMessage } | { ok: false; code: string; message: string } {
+  if (!raw || typeof raw !== 'object' || !('type' in raw) || typeof raw.type !== 'string')
+    return { ok: false, code: 'invalid_frame', message: 'frame.type missing' };
+  const result = parseClientMessage(raw);
+  if (result.success) return { ok: true, msg: result.data };
+  const issue = result.error.issues[0];
+  const known = ClientMessageSchema.options.some((s) => s.shape.type.value === raw.type);
+  return {
+    ok: false,
+    code: known ? 'invalid_payload' : 'unknown_type',
+    message: `${issue.path.join('.') || 'frame'}: ${issue.message}`,
+  };
 }

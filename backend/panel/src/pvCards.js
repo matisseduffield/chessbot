@@ -29,6 +29,10 @@ export function renderPVs(onSelect) {
     return;
   }
 
+  if (state.currentData.trainingHidden) {
+    container.textContent = 'Training: move suggestions are hidden until reveal.';
+    return;
+  }
   const lines = state.currentData.lines || [];
   if (!lines.length && state.currentData.source === 'book') {
     container.innerHTML = `<div class="pv-card selected">
@@ -48,6 +52,11 @@ export function renderPVs(onSelect) {
   }
 
   container.innerHTML = '';
+  if (state.currentData.cached) {
+    const note = document.createElement('div');
+    note.textContent = `Cached analysis · depth ${state.currentData.depth || '—'}`;
+    container.appendChild(note);
+  }
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const card = document.createElement('div');
