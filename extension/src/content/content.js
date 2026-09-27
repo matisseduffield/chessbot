@@ -55,6 +55,7 @@ import {
 } from "./protocolBanner.js";
 import { PROTOCOL_VERSION } from "@chessbot/shared";
 import { adapterForDoc } from "./siteAdapters.js";
+import { readBotPosition, SNAPSHOT_EVENT } from "./chesscomSnapshot.js";
 import { variantFromUrl, variantFromText } from "./variantDetect.js";
 import {
   isLichessFlipped as _isLichessFlippedDoc,
@@ -82,6 +83,23 @@ function gridToFenBoard(grid, pocket) {
 }
 
 const WS_URL = "ws://localhost:8080";
+let lastExactPosition = '';
+let lastExactView = '';
+document.addEventListener(SNAPSHOT_EVENT, () => {
+  if (!enabled || !boardReady) return;
+  const snapshot = readBotPosition(document);
+  if (snapshot) {
+    const view = `${snapshot.flipped}:${snapshot.playerColor}`;
+    if (view !== lastExactView) {
+      lastExactView = view;
+      _geoCache = null;
+      lastSentFen = '';
+      waitingForOpponent = false;
+    }
+  }
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(readAndSend, 75);
+});
 
 // Variants that support piece drops (captured pieces placed back on the board)
 const DROP_VARIANTS = new Set([
@@ -763,6 +781,12 @@ function initialRead() {
   // Initialize 3-check counters from move list (for page refresh mid-game)
   initThreeCheckFromMoveList();
 
+  if (SITE === 'chesscom' && readBotPosition(document)) {
+    lastExactPosition = '';
+    readAndSend();
+    return;
+  }
+
   // Determine whose turn it is using all available methods
   const turn = inferTurn("", boardPart);
   const playerColor = getPlayerColor();
@@ -1417,6 +1441,8 @@ function waitForBoard() {
 /** Detect whether the current game has ended by checking DOM indicators.
  *  Uses only high-confidence selectors to avoid false positives on variant pages. */
 function detectGameOver() {
+  const exactPosition = SITE === 'chesscom' ? readBotPosition(document) : null;
+  if (exactPosition) return exactPosition.gameOver;
   if (SITE === "chesscom") {
     // Chess.com standard game: game-over modal overlay that covers the board.
     // This is the most reliable indicator — only appears when the game actually ends.
@@ -1756,7 +1782,10 @@ function readAndSend() {
     waitingForOpponent = false; // unblock so board changes trigger re-analysis
   }
 
-  const fen = boardToFen();
+  const exactPosition = SITE === 'chesscom' ? readBotPosition(document) : null;
+  const fen = exactPosition?.fen || boardToFen();
+  const exactChanged = !!exactPosition && exactPosition.fen !== lastExactPosition;
+  lastExactPosition = exactPosition?.fen || '';
   if (!fen) {
     // Track consecutive null reads — if persistent, the board DOM may have changed
     nullFenCount++;
@@ -1792,7 +1821,7 @@ function readAndSend() {
   const boardPart = fen.split(" ")[0];
 
   // Board hasn't changed — skip
-  if (boardPart === lastBoardFen) {
+  if (boardPart === lastBoardFen && !exactChanged) {
     // If we're waiting for the opponent, don't re-analyze the same position
     if (waitingForOpponent || lastSentFen) return;
   } else {
@@ -1820,7 +1849,7 @@ function readAndSend() {
   // in a single capture, so we use a much higher threshold.
   const pieceCount = countPieces(boardPart);
   const animThreshold = detectedVariant === "atomic" ? 10 : 2;
-  if (lastPieceCount > 0 && pieceCount < lastPieceCount - animThreshold) {
+  if (!exactPosition && lastPieceCount > 0 && pieceCount < lastPieceCount - animThreshold) {
     console.log(`[chessbot] piece count dropped ${lastPieceCount}→${pieceCount}, likely mid-animation — skipping`);
     // DON'T update lastBoardFen here — we want the next stable read to see
     // the real diff from the last confirmed position (prevents double-alternation)
@@ -1876,7 +1905,7 @@ function readAndSend() {
   }
 
   // Determine whose turn it is by diffing board positions
-  const turn = inferTurn(prevBoard, boardPart);
+  const turn = exactPosition ? exactPosition.fen.split(' ')[1] : inferTurn(prevBoard, boardPart);
   // Re-check player color before the isMyTurn decision so an initial
   // deferred lock can latch, and so a mid-game manual flip is picked up.
   // Cheap on the hot path: a few DOM class reads.
@@ -1979,10 +2008,14 @@ function readAndSend() {
   // prevBoard is empty because the bot wasn't running when the push happened).
   const parts = fen.split(" ");
   parts[1] = effectiveTurn;
-  let epTarget = detectEnPassantTarget(prevBoard, boardPart);
-  if (epTarget === "-") epTarget = detectEnPassantFromHighlights();
-  parts[3] = epTarget;
-  const correctedFen = parts.join(" ");
+  if (!exactPosition) {
+    let epTarget = detectEnPassantTarget(prevBoard, boardPart);
+    if (epTarget === "-") epTarget = detectEnPassantFromHighlights();
+    parts[3] = epTarget;
+  }
+  // Preserve authoritative castling, en-passant and move counters on bot
+  // boards. Reconstructing these from visible pieces can create illegal rights.
+  const correctedFen = exactPosition?.fen || parts.join(" ");
 
   if (correctedFen === lastSentFen) return;
   pendingEval = true;
@@ -2332,6 +2365,8 @@ function detectChesscomFlipConfidence(board) {
 }
 
 function isChesscomFlipped(board) {
+  const exactPosition = readBotPosition(document);
+  if (exactPosition) return exactPosition.flipped;
   // If player color was already locked (reliable detection at game start),
   // derive flip state from it — avoids unreliable piece-position heuristics
   // in endgames with few pieces (e.g. giveaway with 3 pieces left).
@@ -3069,6 +3104,8 @@ function getPlayerColor() {
   // User override is the highest-priority signal — short-circuit before any
   // adapter heuristics run.
   if (_userFlipOverride === "w" || _userFlipOverride === "b") return _userFlipOverride;
+  const exactPosition = SITE === 'chesscom' ? readBotPosition(document) : null;
+  if (exactPosition) return exactPosition.playerColor;
   // Once locked (after initial board read with enough pieces), return cached value.
   // This prevents mid-game flips when piece-position heuristics become unreliable
   // (e.g. giveaway endgame with 3 pieces left).
@@ -3095,6 +3132,8 @@ function getPlayerColor() {
  * @returns {{ color: 'w' | 'b', confidence: 'high' | 'low' }}
  */
 function detectPlayerColorWithConfidence() {
+  const exactPosition = SITE === 'chesscom' ? readBotPosition(document) : null;
+  if (exactPosition) return { color: exactPosition.playerColor, confidence: 'high' };
   if (IS_CHESSGROUND) {
     const conf = detectLichessFlipConfidence();
     if (conf === 'flipped')  return { color: 'b', confidence: 'high' };
@@ -3241,6 +3280,8 @@ function readPocketChessCom() {
 }
 
 function boardToFen() {
+  const exactPosition = SITE === 'chesscom' ? readBotPosition(document) : null;
+  if (exactPosition) return exactPosition.fen;
   // chess.com still uses the inline reader because its variant pages
   // (data-piece + data-color, with piece-Y-centroid colour
   // classification and crazyhouse drop pockets) aren't covered by the

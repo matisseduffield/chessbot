@@ -27,8 +27,8 @@ const RELEASE_PAGE = 'https://stockfishchess.org/download/';
 function recommend() {
   if (isWin && arch === 'x64') {
     return {
-      filename: 'stockfish-windows-x86-64-avx2.exe',
-      url: 'https://stockfishchess.org/download/windows/  (pick the AVX2 build)',
+      filename: 'stockfish-windows-x86-64-universal.exe',
+      url: 'https://stockfishchess.org/download/  (Windows x64 universal build)',
     };
   }
   if (platform === 'darwin') {

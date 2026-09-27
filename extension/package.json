@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && vite build --mode content && node scripts/copy-content-css.mjs",
+    "build": "vite build && vite build --mode content && vite build --mode bridge && node scripts/copy-content-css.mjs",
     "build:popup": "vite build",
     "build:content": "vite build --mode content",
     "lint": "eslint .",
@@ -13,6 +13,7 @@
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
+    "chess.js": "^1.4.0",
     "@chessbot/shared": "*",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
