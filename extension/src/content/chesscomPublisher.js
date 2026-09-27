@@ -7,7 +7,14 @@ export function startPositionPublisher(doc, host) {
     previousValue = '',
     lastPublished = 0,
     frame = null;
-  const ownNode = (node) => node.nodeType !== 1 || !!node.closest?.('[id^="chessbot-"]');
+  let observedShadow = null;
+  const ownNode = (node) => node.nodeType === 3 || !!node.closest?.('[id^="chessbot-"]');
+  const observerOptions = {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class', 'style'],
+  };
   const observer = new host.MutationObserver((mutations) => {
     if (
       mutations.every(
@@ -28,15 +35,14 @@ export function startPositionPublisher(doc, host) {
     if (board !== previousBoard) {
       previousBoard?.removeAttribute(SNAPSHOT_ATTRIBUTE);
       observer.disconnect();
+      observedShadow = null;
       previousValue = '';
-      if (board)
-        observer.observe(board, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeFilter: ['class', 'style'],
-        });
+      if (board) observer.observe(board, observerOptions);
       previousBoard = board;
+    }
+    if (board?.shadowRoot && board.shadowRoot !== observedShadow) {
+      observedShadow = board.shadowRoot;
+      observer.observe(observedShadow, observerOptions);
     }
     const snapshot = captureBotPosition(board, doc.location.href);
     if (!snapshot) {

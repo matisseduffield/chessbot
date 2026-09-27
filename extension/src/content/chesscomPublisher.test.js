@@ -10,6 +10,8 @@ it('publishes a board change on the next frame, ignores its own overlays and cle
   );
   const doc = dom.window.document,
     board = doc.querySelector('wc-chess-board');
+  const shadow = board.attachShadow({ mode: 'open' });
+  shadow.innerHTML = '<i class="piece"></i>';
   let fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
   board.game = {
     getVariant: () => 'chess',
@@ -47,8 +49,9 @@ it('publishes a board change on the next frame, ignores its own overlays and cle
     board.append(overlay);
     await Promise.resolve();
     expect(host.requestAnimationFrame).toHaveBeenCalledOnce();
-    board.querySelector('i').className = 'piece square-55';
+    shadow.querySelector('i').className = 'piece square-55';
     await Promise.resolve();
+    expect(host.requestAnimationFrame).toHaveBeenCalledTimes(2);
   } finally {
     stop();
   }
