@@ -87,6 +87,18 @@ test('installed extension reads Chess.com and Lichess, routes sessions, and hide
     await expect(panel.locator('#board-svg .board-coordinates text')).toHaveCount(16);
     await expect(panel.locator('#board-svg .move-arrow[fill="#00bcd4"]')).toHaveCount(1);
     await choices.first().press('Enter');
+    const originalSize = panel.viewportSize();
+    await panel.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await panel.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await expect(choices.first()).toBeVisible();
+    expect(
+      await panel
+        .locator('#board-svg')
+        .evaluate((el) => el.getBoundingClientRect().right <= innerWidth),
+    ).toBe(true);
+    await panel.setViewportSize(originalSize);
     await expect(chess.locator('#chessbot-depth-badge')).toContainText(/Ready|Cached/);
     await chess.screenshot({
       path: testInfo.outputPath('ranked-overlay.png'),

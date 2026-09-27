@@ -1,0 +1,65 @@
+/* Keep the desktop's saved column widths; use normal document flow on small windows. */
+@media (max-width: 1100px) {
+  body {
+    height: auto;
+    min-height: 100dvh;
+    overflow: auto;
+  }
+  #layout {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+  #left-col {
+    width: 100%;
+    max-width: 680px;
+    margin-inline: auto;
+    overflow: visible;
+  }
+  #board-resizer,
+  .col-resizer,
+  #settings-body-spacer,
+  .drag-handle {
+    display: none !important;
+  }
+  #pvs {
+    flex: none;
+    overflow: visible;
+  }
+  #settings {
+    height: auto;
+    overflow: visible;
+  }
+  #settings-body {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+    flex: none;
+  }
+  #settings-body > [data-section-id] {
+    position: static !important;
+    width: auto !important;
+    min-width: 0;
+  }
+  .panel-header {
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 600px) {
+  #settings-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  #board-area {
+    padding: 12px;
+    gap: 8px;
+  }
+  #pvs {
+    padding: 10px 12px 16px;
+  }
+  .panel-header {
+    padding: 12px;
+  }
+}
