@@ -79,3 +79,12 @@ it('does not invent depth or fail on a terminal position without a move', async 
   });
   expect(f.deps.setCachedEval).not.toHaveBeenCalled();
 });
+
+it('does not call an ordinary endgame evaluation a proven tablebase result', async () => {
+  const f = fixture();
+  f.ctx.fen = '7k/8/6K1/8/8/8/4P3/8 w - - 0 1';
+  f.ctx.searchOptions.training = true;
+  f.deps.config.syzygyPath = '/some/tables';
+  await f.run(f.ctx);
+  expect(f.deps.safeSend.mock.lastCall[1].tablebase).toBeNull();
+});

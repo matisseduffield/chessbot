@@ -56,6 +56,7 @@ import {
 import { PROTOCOL_VERSION } from "@chessbot/shared";
 import { adapterForDoc } from "./siteAdapters.js";
 import { readBotPosition, SNAPSHOT_EVENT } from "./chesscomSnapshot.js";
+import { sizeOverlay } from './overlaySurface.js';
 import { variantFromUrl, variantFromText } from "./variantDetect.js";
 import {
   isLichessFlipped as _isLichessFlippedDoc,
@@ -117,7 +118,12 @@ document.addEventListener(SNAPSHOT_EVENT, () => {
     }
   }
   clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(readAndSend, 75);
+  // The bot API supplies a validated position without intermediate animation states.
+  if (snapshot) {
+    clearMoveIndicators();
+    cancelAutoMove();
+    readAndSend();
+  } else debounceTimer = setTimeout(readAndSend, 75);
 });
 
 // Variants that support piece drops (captured pieces placed back on the board)
@@ -1075,6 +1081,8 @@ function connectWS() {
         return;
       }
       if (msg.type === "eval_progress") {
+        const currentSnapshot = SITE === 'chesscom' ? readBotPosition(document) : null;
+        if (currentSnapshot && (currentSnapshot.gameOver || currentSnapshot.fen !== msg.fen)) return;
         if (protocolReady && msg.requestId === analysisRequestId && showDepthOverlay) drawDepthBadge(msg.depth, msg.targetDepth, msg.nps);
         return;
       }
@@ -1200,14 +1208,14 @@ function connectWS() {
       }
       if (msg.type === "bestmove") {
         if (!protocolReady || (msg.requestId != null && msg.requestId !== analysisRequestId)) return;
+        // Reject a previous position even before the next board read is sent.
+        const currentSnapshot = SITE === 'chesscom' ? readBotPosition(document) : null;
+        if (currentSnapshot && (currentSnapshot.gameOver || currentSnapshot.fen !== msg.fen)) return;
         // For streaming (infinite analysis), keep pendingEval true
         if (!msg.streaming) pendingEval = false;
-        if (showDepthOverlay && typeof msg.depth === "number") {
-          drawDepthBadge(msg.depth, msg.targetDepth || 0, null, !msg.streaming);
-        }
         // Null bestmove = engine timeout / error — just unblock
         if (!msg.bestmove) {
-          console.log("[chessbot] received null bestmove (engine timeout?)");
+          clearArrow();
           return;
         }
         // If we just auto-moved and are waiting for the opponent, discard any
@@ -1242,6 +1250,11 @@ function connectWS() {
         const source = msg.source || "engine";
         const lines = msg.lines || [];
         const bestLine = lines[0] || null;
+        const paintDepth = () => {
+          if (showDepthOverlay && typeof msg.depth === 'number') {
+            drawDepthBadge(msg.depth, msg.targetDepth ?? msg.requestedDepth ?? 0, null, !msg.streaming, !!msg.cached);
+          }
+        };
         // Guard: if the board changed while we were processing, don't draw stale overlays
         if (genAtReceive !== renderGeneration) {
           console.log("[chessbot] board changed during bestmove processing — skipping draw");
@@ -1265,6 +1278,7 @@ function connectWS() {
         }
         if (trainingMode && msg.streaming) {
           drawEvalBar(bestLine, source, msg.tablebase);
+          paintDepth();
           return;
         }
         if (trainingMode) {
@@ -1285,6 +1299,7 @@ function connectWS() {
           // hint appears the same frame the user requested it.
           drawTrainingHint(msg.bestmove, bestLine, source);
           drawEvalBar(bestLine, source, msg.tablebase);
+          paintDepth();
         } else if (lines.length > 1) {
           // Streaming-eval frames arrive at 5–20 Hz; coalesce to rAF
           // so we paint at most once per browser frame. Final results
@@ -1300,10 +1315,12 @@ function connectWS() {
             scheduleOverlayUpdate(() => {
               drawMultiPV(_lines, _source);
               drawEvalBar(_bestLine, _source, _tablebase);
+              paintDepth();
             });
           } else {
             drawMultiPV(lines, source);
             drawEvalBar(bestLine, source, msg.tablebase);
+            paintDepth();
           }
         } else {
           if (msg.streaming) {
@@ -1314,10 +1331,12 @@ function connectWS() {
             scheduleOverlayUpdate(() => {
               drawSingleMove(_bestmove, _bestLine, _source);
               drawEvalBar(_bestLine, _source, _tablebase);
+              paintDepth();
             });
           } else {
             drawSingleMove(msg.bestmove, bestLine, source);
             drawEvalBar(bestLine, source, msg.tablebase);
+            paintDepth();
           }
         }
 
@@ -3400,11 +3419,11 @@ function removeDepthBadge() {
  * @param {number|null} nps optional nodes-per-second
  * @param {boolean} [isFinal] true when this is the final result (no more updates)
  */
-function drawDepthBadge(depth, targetDepth, nps, isFinal) {
+function drawDepthBadge(depth, targetDepth, nps, isFinal, cached = false) {
   if (!showDepthOverlay) return;
   const board = getBoardElement();
   if (!board) return;
-  const { target: parent, dx, dy } = getOverlayTarget(board);
+  const { target: parent, dy } = getOverlayTarget(board);
   if (!parent) return;
   const rect = (SITE === "chesscom") ? getVisualBoardRect(board) : board.getBoundingClientRect();
   if (rect.width <= 0) return;
@@ -3418,7 +3437,7 @@ function drawDepthBadge(depth, targetDepth, nps, isFinal) {
   // Position above the top-right of the board.
   badge.style.cssText = `
     position: absolute;
-    left: ${dx + rect.width - 96}px;
+    right: 4px;
     top: ${dy - 24}px;
     height: 20px;
     min-width: 90px;
@@ -3447,7 +3466,7 @@ function drawDepthBadge(depth, targetDepth, nps, isFinal) {
             : nps >= 1e3 ? ` · ${Math.round(nps / 1e3)}K nps`
             : ` · ${nps} nps`;
   }
-  badge.textContent = depthText + npsText;
+  badge.textContent = `${cached ? 'Cached' : isFinal ? 'Ready' : 'Searching'} · ${depthText}${npsText}`;
 }
 
 // ── Board geometry helpers ───────────────────────────────────
@@ -3525,6 +3544,8 @@ function drawArrowOnBoard(svg, fromFile, fromRank, toFile, toRank, sqSize, flipp
   const d = `M${points[0]},${points[1]} L${points[2]},${points[3]} L${points[4]},${points[5]} L${points[6]},${points[7]} L${points[8]},${points[9]} L${points[10]},${points[11]} L${points[12]},${points[13]}Z`;
 
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.dataset.from = `${String.fromCharCode(97 + fromFile)}${fromRank + 1}`;
+  path.dataset.to = `${String.fromCharCode(97 + toFile)}${toRank + 1}`;
   path.setAttribute("d", d);
   path.setAttribute("fill", color);
   path.setAttribute("opacity", op);
@@ -3644,9 +3665,7 @@ function getOrCreateBgSvg(board, rect) {
   if (!bg) {
     bg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     bg.id = "chessbot-bg-svg";
-    bg.setAttribute("width", rect.width);
-    bg.setAttribute("height", rect.height);
-    bg.style.cssText = `position:absolute;top:${dy}px;left:${dx}px;width:${rect.width}px;height:${rect.height}px;pointer-events:none;z-index:0;`;
+    bg.style.cssText = 'position:absolute;pointer-events:none;z-index:0;';
     // Insert as first child so it's behind pieces in DOM stacking order
     if (target.firstChild) {
       target.insertBefore(bg, target.firstChild);
@@ -3654,6 +3673,7 @@ function getOrCreateBgSvg(board, rect) {
       target.appendChild(bg);
     }
   }
+  sizeOverlay(bg, rect, dx, dy);
   return bg;
 }
 
@@ -3671,10 +3691,7 @@ function getOrCreateArrowSvg(board, rect) {
   // on top of chess.com's own overlays (highlights, animations) that may
   // have been inserted after our SVG since the last draw cycle.
   target.appendChild(svg);
-  svg.setAttribute("width", rect.width);
-  svg.setAttribute("height", rect.height);
-  svg.style.width = `${rect.width}px`;
-  svg.style.height = `${rect.height}px`;
+  sizeOverlay(svg, rect, dx, dy);
   svg.innerHTML = "";
   return svg;
 }
@@ -4279,7 +4296,7 @@ function drawSingleMove(uci, bestLine, source) {
     text.setAttribute("font-weight", "800");
     text.setAttribute("font-family", "monospace");
     text.setAttribute("fill", textColor);
-    text.textContent = scoreText;
+    text.textContent = /[qrbn]$/i.test(uci) ? `=${uci.at(-1).toUpperCase()} ${scoreText}` : scoreText;
     svg.appendChild(text);
   }
 }
@@ -4316,9 +4333,8 @@ function drawMultiPV(lines) {
     if (!lineSquares) continue;
     const { from, to } = lineSquares;
     const lineDrop = !!lineSquares.drop;
-    // Use red for losing lines, otherwise position-based color
-    const losing = isLineLosing(line);
-    const color = losing ? "#e74c3c" : (EVAL_COLORS[i] || EVAL_COLORS[EVAL_COLORS.length - 1]);
+    // Keep rank colours distinct even when every candidate is losing.
+    const color = EVAL_COLORS[i] || EVAL_COLORS[EVAL_COLORS.length - 1];
     const opacity = i === 0 ? 0.9 : 0.6;
     // Box highlights first (behind arrows)
     if (displayMode === "box" || displayMode === "both") {
@@ -4338,17 +4354,18 @@ function drawMultiPV(lines) {
         drawArrowOnBoard(svg, from.file, from.rank, to.file, to.rank, sqSize, flipped, color, opacity);
       }
     }
-    parsed.push({ line, from, to, color, dk: `${to.file},${to.rank}` });
+    parsed.push({ line, from, to, color, rank: i + 1, dk: `${to.file},${to.rank}` });
   }
 
   // Draw eval badges on destination squares — stack vertically when sharing a square
   const badgeH = sqSize * 0.28;
   const dstSlots = {};
-  for (const { line, from, to, color, dk } of parsed) {
+  for (const { line, from, to, color, rank, dk } of parsed) {
     const dst = squareTopLeft(to.file, to.rank, sqSize, flipped);
     const scoreText = formatScore(line);
     const sanMove = (line.san && line.san[0]) ? line.san[0] : "";
-    const badgeText = sanMove ? `${sanMove} ${scoreText}` : scoreText;
+    const promotion = /^[a-h][1-8][a-h][1-8][qrbn]$/i.test(line.move) ? `=${line.move.at(-1).toUpperCase()} ` : '';
+    const badgeText = `${rank}. ${promotion}${scoreText}`;
     if (!dstSlots[dk]) dstSlots[dk] = 0;
     const slot = dstSlots[dk]++;
     const fontSize = Math.max(10, sqSize * 0.20);
@@ -4374,6 +4391,9 @@ function drawMultiPV(lines) {
     text.setAttribute("font-family", "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, monospace");
     text.setAttribute("fill", "#fff");
     text.textContent = badgeText;
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    title.textContent = `Choice ${rank}: ${sanMove || line.move} · ${scoreText}`;
+    text.appendChild(title);
     svg.appendChild(text);
   }
 }

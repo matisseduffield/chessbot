@@ -1,12 +1,15 @@
-import { test, expect, chromium } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
+import { Chess } from 'chess.js';
 
 // Isolated Chromium profile with the actual MV3 worker and both content worlds.
 // Supported-site URLs serve local fixtures; no chess account or game is touched.
-test('installed extension reads Chess.com and Lichess, routes sessions, and hides training PVs', async () => {
+test('installed extension reads Chess.com and Lichess, routes sessions, and hides training PVs', async ({
+  playwright,
+}, testInfo) => {
   test.setTimeout(60000);
   const extension = resolve('extension/dist');
-  const context = await chromium.launchPersistentContext('', {
+  const context = await playwright.chromium.launchPersistentContext('', {
     channel: 'chromium',
     headless: true,
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
@@ -21,8 +24,19 @@ test('installed extension reads Chess.com and Lichess, routes sessions, and hide
     const worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
     expect(worker.url()).toContain('chrome-extension://');
     const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-    const chessHtml = `<html><body><wc-chess-board id="board-play-computer" style="display:block;width:480px;height:480px"></wc-chess-board><script>
-      document.querySelector('wc-chess-board').game={getVariant:()=> 'chess',getFEN:()=> '${fen}',getPlayingAs:()=>1,getOptions:()=>({flipped:false}),isGameOver:()=>false};
+    const glyphs = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
+    const squares = new Chess(fen)
+      .board()
+      .flatMap((row, r) =>
+        row.map(
+          (piece, f) =>
+            `<div style="background:${(r + f) % 2 ? '#769656' : '#eeeed2'};display:grid;place-items:center;font-size:48px;color:${piece?.color === 'w' ? 'white' : '#17221b'};text-shadow:0 1px 2px #17221b">${piece ? glyphs[piece.type] : ''}</div>`,
+        ),
+      )
+      .join('');
+    const chessHtml = `<html><body style="background:#10141c;color:#e2e8f0;font:14px system-ui;padding:28px"><p style="margin:0 0 32px">ChessBot overlay verification · controlled starting position</p><wc-chess-board id="board-play-computer" style="position:relative;display:block;width:480px;height:480px"><div style="position:absolute;inset:0;display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr)">${squares}</div></wc-chess-board><p>Ranked suggestions · engine depth shown above the board</p><script>
+      window.fixtureFen='${fen}'; window.fixtureFlipped=false; window.fixtureOver=false;
+      document.querySelector('wc-chess-board').game={getVariant:()=> 'chess',getFEN:()=> window.fixtureFen,getPlayingAs:()=>1,getOptions:()=>({flipped:window.fixtureFlipped}),isGameOver:()=>window.fixtureOver};
     </script></body></html>`;
     const names = { r: 'rook', n: 'knight', b: 'bishop', q: 'queen', k: 'king', p: 'pawn' };
     let pieces = '';
@@ -57,6 +71,94 @@ test('installed extension reads Chess.com and Lichess, routes sessions, and hide
       .poll(() => panel.evaluate(() => window.state.currentData?.bestmove), { timeout: 15000 })
       .toBeTruthy();
     await expect(chess.locator('#chessbot-arrow-svg')).toBeAttached();
+    await panel.getByText('Depth on website', { exact: true }).click();
+    await expect(chess.locator('#chessbot-depth-badge')).toContainText(/Ready|Cached/);
+    await panel.locator('#multipv-slider').press('Home');
+    await panel.locator('#multipv-slider').press('ArrowRight');
+    await panel.locator('#multipv-slider').press('ArrowRight');
+    await expect(chess.locator('#chessbot-arrow-svg path[data-from]')).toHaveCount(3);
+    await expect(chess.locator('#chessbot-depth-badge')).toContainText(/Ready|Cached/);
+    await chess.screenshot({
+      path: testInfo.outputPath('ranked-overlay.png'),
+      clip: { x: 20, y: 16, width: 540, height: 600 },
+    });
+    const arrowsMatchSquares = () =>
+      chess.evaluate(() => {
+        const board = document.querySelector('#board-play-computer').getBoundingClientRect();
+        const paths = [...document.querySelectorAll('#chessbot-arrow-svg path[data-from]')];
+        const inside = (point, square) => {
+          const file = square.charCodeAt(0) - 97,
+            rank = Number(square[1]) - 1;
+          const x = window.fixtureFlipped ? 7 - file : file;
+          const y = window.fixtureFlipped ? rank : 7 - rank;
+          return (
+            point.x >= board.left + (x * board.width) / 8 &&
+            point.x <= board.left + ((x + 1) * board.width) / 8 &&
+            point.y >= board.top + (y * board.height) / 8 &&
+            point.y <= board.top + ((y + 1) * board.height) / 8
+          );
+        };
+        return (
+          paths.length > 0 &&
+          paths.every((path) => {
+            const points = path
+              .getAttribute('d')
+              .match(/-?\d+(?:\.\d+)?/g)
+              .map(Number);
+            const matrix = path.getScreenCTM();
+            return (
+              inside(
+                new DOMPoint(points[0], points[1]).matrixTransform(matrix),
+                path.dataset.from,
+              ) &&
+              inside(new DOMPoint(points[6], points[7]).matrixTransform(matrix), path.dataset.to)
+            );
+          })
+        );
+      });
+    await expect.poll(arrowsMatchSquares).toBe(true);
+    await chess.evaluate(() =>
+      Object.assign(document.querySelector('#board-play-computer').style, {
+        width: '640px',
+        height: '640px',
+      }),
+    );
+    await expect.poll(arrowsMatchSquares).toBe(true);
+    await chess.evaluate(() => {
+      window.fixtureFlipped = true;
+      document.querySelector('#board-play-computer').classList.add('flipped');
+    });
+    await expect.poll(arrowsMatchSquares).toBe(true);
+    // A new authoritative position must replace the previous answer, including EP.
+    const nextFen = '4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 29';
+    const snapshotMs = await chess.evaluate(
+      (next) =>
+        new Promise((resolve) => {
+          const started = performance.now();
+          document.addEventListener('chessbot-position', function changed() {
+            document.removeEventListener('chessbot-position', changed);
+            resolve(performance.now() - started);
+          });
+          window.fixtureFen = next;
+          document.querySelector('#board-play-computer').classList.add('position-changed');
+        }),
+      nextFen,
+    );
+    console.log(
+      `[fixture timing] board mutation to position snapshot: ${Math.round(snapshotMs)} ms`,
+    );
+    await expect.poll(() => panel.evaluate(() => window.state.currentData?.fen)).toBe(nextFen);
+    await expect.poll(() => panel.evaluate(() => window.state.currentData?.bestmove)).toBeTruthy();
+    const answer = await panel.evaluate(() => window.state.currentData.bestmove);
+    expect(new Chess(nextFen).move(answer)).toBeTruthy();
+    await expect.poll(arrowsMatchSquares).toBe(true);
+    await chess.evaluate((initial) => {
+      window.fixtureFen = initial;
+      window.fixtureFlipped = false;
+      document.querySelector('#board-play-computer').className = 'restored';
+    }, fen);
+    await expect.poll(() => panel.evaluate(() => window.state.currentData?.fen)).toBe(fen);
+    await expect.poll(arrowsMatchSquares).toBe(true);
     const chessSession = await panel.evaluate(() => window.state.currentData.sessionId);
     const lichess = await context.newPage();
     await lichess.goto('https://lichess.org/analysis');

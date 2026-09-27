@@ -299,23 +299,9 @@ function createEvalPipeline(deps) {
       const enrichedLines = enrichLines(result.lines || [], fen);
       log.info(`[server] → bestmove (engine): ${result.bestmove}`);
 
-      // Endgame tablebase classification.
-      let tbResult = null;
-      if (config.syzygyPath && isStandard) {
-        const pieceCount = fen.split(' ')[0].replace(/[^a-zA-Z]/g, '').length;
-        if (pieceCount <= 7 && result.lines && result.lines[0]) {
-          const line = result.lines[0];
-          const score = line.score;
-          const mate = line.mate;
-          if (mate !== undefined && mate !== null) {
-            tbResult = mate > 0 ? 'win' : 'loss';
-          } else if (score !== undefined && score !== null) {
-            if (Math.abs(score) >= 9000) tbResult = score > 0 ? 'win' : 'loss';
-            else if (Math.abs(score) <= 5) tbResult = 'draw';
-            else tbResult = score > 0 ? 'win' : 'loss';
-          }
-        }
-      }
+      // A configured tablebase and a centipawn score do not prove root WDL.
+      // Native probing remains enabled; reserve a result label for an explicit root probe.
+      const tbResult = null;
 
       const engineMsg = {
         type: 'bestmove',

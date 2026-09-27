@@ -1,5 +1,6 @@
 const { spawn } = require("child_process");
 const fs = require("fs");
+const { Chess } = require('chess.js');
 const config = require("./config");
 const {
   parseInfoLine,
@@ -254,6 +255,14 @@ class StockfishBridge {
       this._pendingReject = reject;
       this._pendingPV = pvLines;
       this._pendingMultiPV = multiPV;
+      // Standard chess may have fewer legal moves than the requested MultiPV.
+      // Keep the configured limit for variants whose rules chess.js cannot verify.
+      if ((!this._settings.UCI_Variant || this._settings.UCI_Variant === 'chess') &&
+          ![true, 'true'].includes(this._settings.UCI_Chess960)) {
+        try { this._pendingMultiPV = Math.min(multiPV, new Chess(fen).moves().length); } catch { /* variant / test FEN */ }
+      }
+      this._pendingByMove = new Map();
+      this._lastInfoDepth = -1;
       this._pendingTargetDepth = depth;
       this._isInfinite = isInfinite;
       this._onInfoCallback = options.onInfo || null;
@@ -484,7 +493,7 @@ class StockfishBridge {
     // Collect info lines with multipv data
     if (line.startsWith("info") && line.includes(" pv ")) {
       const entry = parseInfoLine(line);
-      if (entry) {
+      if (entry && !entry.scoreBound) {
         // Log at key depth milestones to reduce noise
         const targetDepth = this._pendingTargetDepth || 15;
         if (entry.depth <= 2 || entry.depth >= targetDepth - 1) {
@@ -498,6 +507,10 @@ class StockfishBridge {
         const idx = entry.multipv;
         // Keep latest (highest depth) per multipv index
         if (this._pendingPV) {
+          // Rank slots can be overwritten mid-iteration. Retain each move's own
+          // score so a stop/bestmove cannot borrow another move's evaluation.
+          const movePrevious = this._pendingByMove?.get(entry.move);
+          if (!movePrevious || entry.depth >= movePrevious.depth) this._pendingByMove?.set(entry.move, entry);
           const prev = this._pendingPV[idx];
           if (!prev || entry.depth >= prev.depth) {
             this._pendingPV[idx] = entry;
@@ -511,7 +524,12 @@ class StockfishBridge {
                 .map(Number)
                 .sort((a, b) => a - b)
                 .map((i) => this._pendingPV[i]);
-              this._onInfoCallback({ bestmove: lines[0].move, lines, depth: entry.depth });
+              if (entry.depth > this._lastInfoDepth &&
+                  lines.length === mpv && lines.every(l => l.depth === entry.depth) &&
+                  new Set(lines.map(l => l.move)).size === lines.length) {
+                this._lastInfoDepth = entry.depth;
+                this._onInfoCallback({ bestmove: lines[0].move, lines, depth: entry.depth });
+              }
             }
           }
         }
@@ -533,7 +551,7 @@ class StockfishBridge {
       const ponder = parsed && parsed.ponder ? parsed.ponder : null;
 
       // Build lines array from collected PV data
-      const lines = [];
+      let lines = [];
       if (this._pendingPV) {
         const indices = Object.keys(this._pendingPV)
           .map(Number)
@@ -543,10 +561,26 @@ class StockfishBridge {
         }
       }
 
+      if (bestmove) {
+        const best = this._pendingByMove?.get(bestmove);
+        // If the engine gives a move without a corresponding info line, show
+        // the move with unknown score/depth rather than a mismatched score.
+        const first = best || { move: bestmove, pv: [bestmove], depth: 0, multipv: 1 };
+        const seen = new Set([bestmove]);
+        lines = [first, ...lines.filter(line => {
+          if (seen.has(line.move)) return false;
+          seen.add(line.move);
+          return true;
+        })].slice(0, this._pendingMultiPV || 1);
+      } else {
+        lines = [];
+      }
+
       if (this._pendingResolve) {
         this._pendingResolve({ bestmove, ponder, lines });
         this._pendingResolve = null;
         this._pendingPV = null;
+        this._pendingByMove = null;
       }
       // If we were aborting, signal that the abort is complete
       if (this._abortResolve) {

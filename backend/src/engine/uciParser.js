@@ -16,6 +16,7 @@
  *   depth: number,
  *   multipv: number,
  *   score?: number,
+ *   scoreBound?: 'lowerbound' | 'upperbound',
  *   mate?: number,
  *   nodes?: number,
  *   nps?: number,
@@ -64,6 +65,8 @@ function parseInfoLine(line) {
   };
   if (seldepthMatch) info.seldepth = parseInt(seldepthMatch[1], 10);
   if (cpMatch) info.score = parseInt(cpMatch[1], 10);
+  if (/\blowerbound\b/.test(line)) info.scoreBound = 'lowerbound';
+  else if (/\bupperbound\b/.test(line)) info.scoreBound = 'upperbound';
   if (mateMatch) info.mate = parseInt(mateMatch[1], 10);
   if (nodesMatch) info.nodes = parseInt(nodesMatch[1], 10);
   if (npsMatch) info.nps = parseInt(npsMatch[1], 10);
@@ -89,7 +92,7 @@ function parseBestmoveLine(line) {
   const parts = line.trim().split(/\s+/);
   if (parts.length < 2) return null;
   const bestmove = parts[1];
-  if (!bestmove || bestmove === '(none)') {
+  if (!bestmove || bestmove === '(none)' || bestmove === '0000') {
     return { bestmove: null };
   }
   const ponderIdx = parts.indexOf('ponder');

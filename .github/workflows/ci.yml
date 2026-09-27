@@ -93,3 +93,11 @@ jobs:
           name: playwright-trace
           path: test-results/
           if-no-files-found: ignore
+
+      - name: Upload overlay verification screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: overlay-verification
+          path: test-results/**/ranked-overlay.png
+          if-no-files-found: ignore
