@@ -870,6 +870,9 @@ async function main() {
           console.log(`[server] eval cache cleared (${msg.name} changed)`);
         }
         safeSend(ws, { type: "option_set", name: msg.name, value: msg.value });
+        // Notify the owning board only after the option has actually been applied.
+        // Otherwise changing MultiPV leaves the previous single-line answer on screen.
+        if (msg.name === 'MultiPV') broadcast(ws, { type: 'option_set', name: msg.name, value: msg.value });
       }
 
       // ── Clear hash ─────────────────────────────────────

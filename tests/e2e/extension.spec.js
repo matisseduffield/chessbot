@@ -76,6 +76,8 @@ test('installed extension reads Chess.com and Lichess, routes sessions, and hide
     await panel.locator('#multipv-slider').press('Home');
     await panel.locator('#multipv-slider').press('ArrowRight');
     await panel.locator('#multipv-slider').press('ArrowRight');
+    await expect(panel.locator('#multipv-slider')).toHaveValue('3');
+    await expect.poll(() => panel.evaluate(() => window.state.currentData?.lines?.length)).toBe(3);
     await expect(chess.locator('#chessbot-arrow-svg path[data-from]')).toHaveCount(3);
     await expect(chess.locator('#chessbot-depth-badge')).toContainText(/Ready|Cached/);
     await chess.screenshot({

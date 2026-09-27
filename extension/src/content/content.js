@@ -1053,6 +1053,11 @@ function connectWS() {
         return;
       }
       // Handle settings broadcast from panel
+      if (msg.type === 'option_set' && msg.name === 'MultiPV') {
+        _currentMultiPV = Number(msg.value);
+        resendCurrentPosition();
+        return;
+      }
       if (msg.type === "set_run_engine_for" && msg.value) {
         const val = msg.value;
         if (["me", "opponent", "both"].includes(val)) {
